@@ -1,0 +1,82 @@
+{
+  "listeners": [
+    {
+      "type": "dnsServer",
+      "config": {
+        "listen": "0.0.0.0",
+        "port": "53",
+        "protocol": "tcp"
+      }
+    },
+    {
+      "type": "dnsServer",
+      "config": {
+        "listen": "0.0.0.0",
+        "port": "53",
+        "protocol": "udp"
+      }
+    }
+  ],
+  "resolvers": {
+    "concurrentNameServerList": {
+      "CloudflareDNS": [
+        "Cloudflare-DoT",
+        "Cloudflare-DoH"
+      ]
+    },
+    "doh": {
+      "Cloudflare-DoH": {
+        "url": "https://cloudflare-dns.com/dns-query"
+      }
+    },
+    "nameServer": {
+      "114DNS-main": {
+        "address": "114.114.114.114"
+      },
+      "114DNS-backup": {
+        "address": "114.114.115.115"
+      },
+      "Cloudflare-DoT-main": {
+        "address": "1.1.1.1",
+        "port": 853,
+        "protocol": "tcp-tls",
+        "tlsServerName": "cloudflare-dns.com"
+      },
+      "Cloudflare-DoT-backup": {
+        "address": "1.0.0.1",
+        "port": 853,
+        "protocol": "tcp-tls",
+        "tlsServerName": "cloudflare-dns.com"
+      }
+    },
+    "sequence": {
+      "114DNS": [
+        "114DNS-main",
+        "114DNS-backup"
+      ],
+      "Cloudflare-DoT": [
+        "Cloudflare-DoT-main",
+        "Cloudflare-DoT-backup"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "collection",
+      "config": [
+        {
+          "name": "\"cloudflare-dns.com\"",
+          "resolver": "Cloudflare-DoT"
+        }
+      ]
+    },
+    {
+      "type": "dnsmasqConf",
+      "config": {
+        "filePath": "accelerated-domains.china.conf",
+        "resolver": "114DNS"
+      }
+    }
+  ],
+  "defaultResolver": "CloudflareDNS"
+}
