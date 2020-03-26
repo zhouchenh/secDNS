@@ -45,12 +45,12 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 }
 
 func (d *DNS64) dns64(query *dns.Msg, depth int) (*dns.Msg, error) {
-	q := new(dns.Msg)
-	q.SetQuestion(query.Question[0].Name, dns.TypeA)
-	reply, err := d.Resolver.Resolve(q, depth-1)
+	query.Question[0].Qtype = dns.TypeA
+	reply, err := d.Resolver.Resolve(query, depth-1)
 	if err != nil {
 		return nil, err
 	}
+	reply.Question[0].Qtype = dns.TypeAAAA
 	if isNoErrorReply(reply) {
 		for i := range reply.Answer {
 			if a, ok := reply.Answer[i].(*dns.A); ok {
