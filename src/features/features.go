@@ -16,6 +16,7 @@ import (
 	_ "upstream/resolvers/address"
 	_ "upstream/resolvers/alias"
 	_ "upstream/resolvers/concurrent/nameserver/list"
+	_ "upstream/resolvers/dns64"
 	_ "upstream/resolvers/doh"
 	_ "upstream/resolvers/nameserver"
 	_ "upstream/resolvers/no/answer/resolver"
