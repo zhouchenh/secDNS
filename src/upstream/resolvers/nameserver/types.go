@@ -44,6 +44,7 @@ func (ns *NameServer) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		return nil, err
 	}
 	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(ns.QueryTimeout))
 	if err := connection.WriteMsg(query); err != nil {
 		return nil, err
 	}
