@@ -5,6 +5,7 @@ import (
 	"common"
 	"core"
 	"github.com/zhouchenh/go-descriptor"
+	"regexp"
 	"rules/provider"
 	"strings"
 	"upstream/resolver"
@@ -18,6 +19,7 @@ type DnsmasqConf struct {
 }
 
 var typeOfDnsmasqConf = descriptor.TypeOfNew(new(*DnsmasqConf))
+var commentRegEx = regexp.MustCompile("#.*$")
 
 func (d *DnsmasqConf) Type() descriptor.Type {
 	return typeOfDnsmasqConf
@@ -60,7 +62,7 @@ func (d *DnsmasqConf) Provide(receive func(name string, r resolver.Resolver), re
 		}
 	}
 	for d.index < len(d.fileContent) {
-		line := d.fileContent[d.index]
+		line := commentRegEx.ReplaceAllString(d.fileContent[d.index], "")
 		s := strings.Split(line, "/")
 		if len(s) < 2 {
 			d.index++
