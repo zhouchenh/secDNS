@@ -9,7 +9,7 @@ import (
 
 var (
 	name    = "secDNS"
-	version = "1.1.0"
+	version = "1.1.1"
 	build   = ""
 	intro   = "A DNS Resolver with custom rules."
 )
