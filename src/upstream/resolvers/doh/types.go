@@ -62,6 +62,7 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		request, e := http.NewRequest(http.MethodPost, urlString, bytes.NewReader(wireFormattedQuery))
 		if e != nil {
 			errCollector <- e
+			wg.Done()
 			return
 		}
 		request.Host = d.queryClient.serverName
@@ -70,6 +71,7 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		response, e := d.queryClient.httpClient.Do(request)
 		if e != nil {
 			errCollector <- e
+			wg.Done()
 			return
 		}
 		wireFormattedMsg, e := ioutil.ReadAll(response.Body)
@@ -78,6 +80,7 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		e = m.Unpack(wireFormattedMsg)
 		if e != nil {
 			errCollector <- e
+			wg.Done()
 			return
 		}
 		once.Do(func() {
@@ -95,7 +98,9 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 			resolvedURLs := d.resolveURL(depth - 1)
 			if len(resolvedURLs) < 1 {
 				if len(errCollector) < 1 {
-					errCollector <- UnknownHostError(d.URL.Hostname())
+					msg <- nil
+					err <- UnknownHostError(d.URL.Hostname())
+					return
 				}
 			} else {
 				d.queryClient.resolvedURLs = resolvedURLs
