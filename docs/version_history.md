@@ -1,5 +1,9 @@
 # Version History
 
+### v1.1.2 - 2020.10.20
+Bug Fix
+* Fix a bug in [doh](resolvers/doh.md) resolver where queries don't fail when error occurs.
+
 ### v1.1.1 - 2020.10.19
 Bug Fix
 * Fix a bug in [nameServer](resolvers/name_server.md) resolver where UDP queries don't timeout and fail when the server ignores the queries.
