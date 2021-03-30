@@ -1,4 +1,2 @@
-/bin/
-/src/github.com/
-/src/golang.org/
-/pkg/
+bin/
+vendor/
