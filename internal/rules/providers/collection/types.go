@@ -47,6 +47,7 @@ func init() {
 	if err := provider.RegisterProvider(&descriptor.Descriptor{
 		Type: typeOfCollection,
 		Filler: descriptor.ObjectFiller{
+			ObjectPath: descriptor.Path{"Rules"},
 			ValueSource: descriptor.ObjectAtPath{
 				ObjectPath: descriptor.Root,
 				AssignableKind: descriptor.ConvertibleKind{
@@ -69,7 +70,7 @@ func init() {
 							}
 							nameResolutionRules = append(nameResolutionRules, nameResolutionRule)
 						}
-						return descriptor.PointerOf(Collection{Rules: nameResolutionRules}), true
+						return nameResolutionRules, true
 					},
 				},
 			},
