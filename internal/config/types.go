@@ -143,7 +143,7 @@ func Descriptor() descriptor.Describable {
 									rules = append(rules, rule)
 								}
 								converted = rules
-								ok = errorCount < 1
+								ok = len(rules) > 0 || errorCount < 1
 								return
 							},
 						},
