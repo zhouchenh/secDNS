@@ -23,6 +23,7 @@ type DoH struct {
 	SendThrough   net.IP
 	Resolver      resolver.Resolver
 	queryClient   *client
+	initializing  bool
 }
 
 type client struct {
@@ -45,8 +46,13 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
+	if d.initializing {
+		return nil, ErrResolverNotReady
+	}
 	if d.queryClient == nil {
+		d.initializing = true
 		d.initClient()
+		d.initializing = false
 	}
 	wireFormattedQuery, e := query.Pack()
 	if e != nil {
