@@ -284,13 +284,22 @@ func init() {
 			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"Resolver"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Root,
-					AssignableKind: descriptor.AssignmentFunction(func(interface{}) (object interface{}, ok bool) {
-						object, s, f := resolver.Descriptor().Describe("")
-						ok = s > 0 && f < 1
-						return
-					}),
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"urlResolver"},
+						AssignableKind: descriptor.AssignmentFunction(func(i interface{}) (object interface{}, ok bool) {
+							object, s, f := resolver.Descriptor().Describe(i)
+							ok = s > 0 && f < 1
+							return
+						}),
+					},
+					descriptor.ObjectAtPath{
+						AssignableKind: descriptor.AssignmentFunction(func(interface{}) (object interface{}, ok bool) {
+							object, s, f := resolver.Descriptor().Describe("")
+							ok = s > 0 && f < 1
+							return
+						}),
+					},
 				},
 			},
 		},
