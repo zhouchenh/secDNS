@@ -2,9 +2,9 @@ package config
 
 import (
 	"encoding/json"
+	common2 "github.com/zhouchenh/secDNS/internal/common"
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
-	"github.com/zhouchenh/secDNS/pkg/common"
 	"io"
 	"io/ioutil"
 )
@@ -38,7 +38,7 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	instance.AddListener(config.Listeners...)
 	instance.AddListener()
 	for _, p := range config.Rules {
-		instance.AcceptProvider(p, common.ErrOutputErrorHandler)
+		instance.AcceptProvider(p, common2.ErrOutputErrorHandler)
 	}
 	instance.SetDefaultResolver(config.DefaultResolver)
 	instance.SetResolutionDepth(config.ResolutionDepth)

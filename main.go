@@ -3,10 +3,10 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/config"
 	"github.com/zhouchenh/secDNS/internal/core"
 	_ "github.com/zhouchenh/secDNS/internal/features"
-	"github.com/zhouchenh/secDNS/pkg/common"
 	"os"
 	"path/filepath"
 	"runtime"

@@ -2,8 +2,8 @@ package collection
 
 import (
 	"github.com/zhouchenh/go-descriptor"
+	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/rules/providers/collection/rule"
-	"github.com/zhouchenh/secDNS/pkg/common"
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 )

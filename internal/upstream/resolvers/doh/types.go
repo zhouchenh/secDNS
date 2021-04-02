@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
-	"github.com/zhouchenh/secDNS/pkg/common"
+	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"io/ioutil"
 	"net"

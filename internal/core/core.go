@@ -1,7 +1,7 @@
 package core
 
 import (
-	"github.com/zhouchenh/secDNS/pkg/common"
+	"github.com/zhouchenh/secDNS/internal/common"
 	"os"
 	"path/filepath"
 	"runtime"
