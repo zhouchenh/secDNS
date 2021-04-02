@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/config"
 	"github.com/zhouchenh/secDNS/internal/core"
@@ -21,7 +20,7 @@ var (
 func printVersion() {
 	version := core.VersionStatement()
 	for _, s := range version {
-		fmt.Println(s)
+		common.Output(s)
 	}
 }
 

@@ -3,7 +3,7 @@ package common
 import (
 	"fmt"
 	"github.com/miekg/dns"
-	"os"
+	"github.com/zhouchenh/secDNS/internal/logger"
 	"strings"
 )
 
@@ -20,15 +20,15 @@ var ServerErrorMessageHandler = func(query *dns.Msg) *dns.Msg {
 }
 
 var ErrOutputErrorHandler = func(err error) {
-	ErrOutput(err.Error())
+	ErrOutput(err)
 }
 
 func Output(a ...interface{}) {
-	_, _ = fmt.Fprintln(os.Stdout, a...)
+	_, _ = fmt.Fprintln(logger.Output(), a...)
 }
 
 func ErrOutput(a ...interface{}) {
-	_, _ = fmt.Fprintln(os.Stderr, a...)
+	logger.Error().Msg(fmt.Sprint(a...))
 }
 
 func IsDomainName(name string) (ok bool) {
