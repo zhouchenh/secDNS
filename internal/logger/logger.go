@@ -51,7 +51,7 @@ func Warning() *zerolog.Event {
 //
 // You must call Msg on the returned event in order to send the event.
 func Error() *zerolog.Event {
-	return stdoutLogger.Error()
+	return stderrLogger.Error()
 }
 
 // Err starts a new message with error level with err as a field if not nil or
@@ -59,7 +59,7 @@ func Error() *zerolog.Event {
 //
 // You must call Msg on the returned event in order to send the event.
 func Err(err error) *zerolog.Event {
-	return stdoutLogger.Err(err)
+	return stderrLogger.Err(err)
 }
 
 // Fatal starts a new message with fatal level. The os.Exit(1) function
@@ -67,7 +67,7 @@ func Err(err error) *zerolog.Event {
 //
 // You must call Msg on the returned event in order to send the event.
 func Fatal() *zerolog.Event {
-	return stdoutLogger.Fatal()
+	return stderrLogger.Fatal()
 }
 
 // Panic starts a new message with panic level. The panic() function
@@ -75,7 +75,7 @@ func Fatal() *zerolog.Event {
 //
 // You must call Msg on the returned event in order to send the event.
 func Panic() *zerolog.Event {
-	return stdoutLogger.Panic()
+	return stderrLogger.Panic()
 }
 
 // WithLevel starts a new message with level. Unlike Fatal and Panic
@@ -84,6 +84,9 @@ func Panic() *zerolog.Event {
 //
 // You must call Msg on the returned event in order to send the event.
 func WithLevel(level Level) *zerolog.Event {
+	if level >= ErrorLevel && level <= PanicLevel {
+		return stderrLogger.WithLevel(zerolog.Level(level))
+	}
 	return stdoutLogger.WithLevel(zerolog.Level(level))
 }
 
@@ -109,4 +112,8 @@ func Printf(format string, v ...interface{}) {
 
 func Writer() io.Writer {
 	return &stdoutLogger
+}
+
+func ErrorWriter() io.Writer {
+	return &stderrLogger
 }
