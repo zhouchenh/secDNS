@@ -26,7 +26,15 @@
     },
     "doh": {
       "Cloudflare-DoH": {
-        "url": "https://cloudflare-dns.com/dns-query"
+        "url": "https://cloudflare-dns.com/dns-query",
+        "tlsServerName": "cloudflare-dns.com",
+        "urlResolver": {
+          "type": "sequence",
+          "config": [
+            "CloudflareDNS",
+            "114DNS"
+          ]
+        }
       }
     },
     "nameServer": {
@@ -61,15 +69,6 @@
     }
   },
   "rules": [
-    {
-      "type": "collection",
-      "config": [
-        {
-          "name": "\"cloudflare-dns.com\"",
-          "resolver": "Cloudflare-DoT"
-        }
-      ]
-    },
     {
       "type": "dnsmasqConf",
       "config": {
