@@ -46,6 +46,6 @@ Default: `""`
 > `sendThrough`: String _(Optional)_
 
 An IP address for sending traffic out. The default value, "0.0.0.0" represents randomly choosing an IP address available
-on the host. Otherwise the value has to be an IP address from existing network interfaces.
+on the host. Otherwise, the value has to be an IP address from existing network interfaces.
 
 Default: `"0.0.0.0"`
