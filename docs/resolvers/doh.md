@@ -11,6 +11,7 @@ The `doh` resolver sends the queries to an upstream DNS server and sends back th
   "url": "https://dns.google/dns-query",
   "queryTimeout": 1.5,
   "tlsServerName": "dns.google",
+  "urlResolver": "",
   "sendThrough": "0.0.0.0"
 }
 ```
@@ -30,12 +31,21 @@ Default: `2`
 
 > `tlsServerName`: String _(Optional)_
 
-The server name of the upstream DNS server, usually a valid domain name. Only required when specifying the host using an IP address in `url`.
+The server name of the upstream DNS server, usually a valid domain name. Only required when specifying the host using an
+IP address in `url`.
+
+Default: `""`
+
+> `urlResolver`: String | [ResolverObject](../configuration.md#resolverobject) _(Optional)_
+
+(secDNS v1.1.3+) The resolver for resolving the domain name in `url`. Only used when specifying the host using a domain
+name in `url`.
 
 Default: `""`
 
 > `sendThrough`: String _(Optional)_
 
-An IP address for sending traffic out. The default value, "0.0.0.0" represents randomly choosing an IP address available on the host. Otherwise the value has to be an IP address from existing network interfaces.
+An IP address for sending traffic out. The default value, "0.0.0.0" represents randomly choosing an IP address available
+on the host. Otherwise the value has to be an IP address from existing network interfaces.
 
 Default: `"0.0.0.0"`
