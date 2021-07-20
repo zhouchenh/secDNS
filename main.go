@@ -24,10 +24,6 @@ func printVersion() {
 	}
 }
 
-func getConfigFilePath() string {
-	return *configFilePath
-}
-
 func open(filePath string) (*os.File, error) {
 	switch filePath {
 	case "":
@@ -55,15 +51,18 @@ func main() {
 	if *version {
 		return
 	}
-	configFilePath := getConfigFilePath()
 	envConfigDirPath := core.EnvKey("config", "dir", "path")
 	if _, isSet := os.LookupEnv(envConfigDirPath); !isSet {
 		if executablePath, err := os.Executable(); err == nil {
 			_ = os.Setenv(envConfigDirPath, filepath.Dir(executablePath))
 		}
 	}
-	file, err := open(configFilePath)
+	file, err := open(*configFilePath)
 	if err != nil {
+		if *configFilePath == "" {
+			flag.PrintDefaults()
+			os.Exit(0)
+		}
 		common.ErrOutput(common.Concatenate("config: Failed to open file: ", err))
 		os.Exit(1)
 	}
