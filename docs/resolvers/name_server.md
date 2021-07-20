@@ -32,7 +32,8 @@ Default: `53`
 
 > `protocol`: `"tcp"` | `"udp"` | `"tcp-tls"` _(Optional)_
 
-The type of the network protocol used to communicate with the upstream DNS server, `"tcp"`, `"udp"` or `"tcp-tls"` (DNS over TLS).
+The type of the network protocol used to communicate with the upstream DNS server, `"tcp"`, `"udp"` or `"tcp-tls"` (DNS
+over TLS).
 
 Default: `"udp"`
 
@@ -47,12 +48,14 @@ Default: `2`
 
 > `tlsServerName`: String _(Optional)_
 
-The server name of the upstream DNS server, usually a valid domain name. Only required when setting `protocol` to `"tcp-tls"` (DNS over TLS).
+The server name of the upstream DNS server, usually a valid domain name. Only required when setting `protocol`
+to `"tcp-tls"` (DNS over TLS).
 
 Default: `""`
 
 > `sendThrough`: String _(Optional)_
 
-An IP address for sending traffic out. The default value, "0.0.0.0" represents randomly choosing an IP address available on the host. Otherwise the value has to be an IP address from existing network interfaces.
+An IP address for sending traffic out. The default value, "0.0.0.0" represents randomly choosing an IP address available
+on the host. Otherwise, the value has to be an IP address from existing network interfaces.
 
 Default: `"0.0.0.0"`

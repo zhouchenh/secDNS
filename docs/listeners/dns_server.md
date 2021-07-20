@@ -16,7 +16,8 @@ The `dnsServer` listener listens for DNS queries and sends back answers.
 
 > `listen`: String
 
-The IP address to be listened on. Set to "0.0.0.0" to listen for incoming connections on all network interfaces. Otherwise the value has to be an IP address from existing network interfaces. 
+The IP address to be listened on. Set to "0.0.0.0" to listen for incoming connections on all network interfaces.
+Otherwise, the value has to be an IP address from existing network interfaces.
 
 > `port`: Number | String _(Optional)_
 

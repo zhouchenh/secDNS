@@ -20,7 +20,8 @@ resolver.
 A resolver for querying A resource records. Acceptable formats are:
 
 * String: The unique name of the resolver.
-* [ResolverObject](../configuration.md#resolverobject): A [ResolverObject](../configuration.md#resolverobject), defining an anonymous resolver.
+* [ResolverObject](../configuration.md#resolverobject): A [ResolverObject](../configuration.md#resolverobject), defining
+  an anonymous resolver.
 
 > `prefix`: String _(Optional)_
 

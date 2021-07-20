@@ -2,13 +2,14 @@
 
 * Type: `sequence`
 
-The `sequence` resolver forwards the queries to specific resolvers configured in [ResolverConfigObject](#resolverconfigobject), and forwards the replies back to the clients. If one resolver fails to process the queries, the next resolver will process these queries instead.
+The `sequence` resolver forwards the queries to specific resolvers configured
+in [ResolverConfigObject](#resolverconfigobject), and forwards the replies back to the clients. If one resolver fails to
+process the queries, the next resolver will process these queries instead.
 
 ## ResolverConfigObject
 
 ```json
 [
-
 ]
 ```
 
@@ -20,7 +21,7 @@ An array of configurations for resolvers.
 * [ResolverObject](../configuration.md#resolverobject): An anonymous resolver.
 
 > Example
-> 
+>
 > ```json
 > [
 >   "GooglePublicDNS",
@@ -32,5 +33,5 @@ An array of configurations for resolvers.
 >   }
 > ]
 > ```
-> 
+>
 > The example above is a ResolverConfigObject for `sequence` to use Google Public DNS. Note that `"GooglePublicDNS"` is the unique name of a pre-defined resolver in [this example](../configuration.md#example).

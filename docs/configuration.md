@@ -25,11 +25,13 @@ An array of [RuleObject](#ruleobject) as configuration for custom [rules](rules.
 
 > `defaultResolver`: String | [ResolverObject](#resolverobject)
 
-Configuration for default resolver. Can be the unique name of a resolver or specific configuration defined in a [ResolverObject](#resolverobject). This resolver will be used if no rule defined in `rules` is matched.
+Configuration for default resolver. Can be the unique name of a resolver or specific configuration defined in
+a [ResolverObject](#resolverobject). This resolver will be used if no rule defined in `rules` is matched.
 
 ## ListenerObject
 
-A ListenerObject defines a listener. It handles incoming connections to secDNS. Available types of listeners are listed [here](listeners.md).
+A ListenerObject defines a listener. It handles incoming connections to secDNS. Available types of listeners are
+listed [here](listeners.md).
 
 ```json
 {
@@ -48,7 +50,8 @@ Listener-specific configuration. See `ListenerConfigObject` defined in each type
 
 ## ResolverDefinitionObject
 
-The ResolverDefinitionObject is used to define named resolvers. Available types of resolvers are listed [here](resolvers.md).
+The ResolverDefinitionObject is used to define named resolvers. Available types of resolvers are
+listed [here](resolvers.md).
 
 ```json
 {
@@ -64,14 +67,18 @@ The ResolverDefinitionObject is used to define named resolvers. Available types 
 
 > `"resolver_type_example"`, `"resolver_type_..."`:
 
-The type of a resolver. Note that `"resolver_type_example"` and `"resolver_type_..."` should be replaced by the actual types of [resolvers](resolvers.md).
+The type of a resolver. Note that `"resolver_type_example"` and `"resolver_type_..."` should be replaced by the actual
+types of [resolvers](resolvers.md).
 
 > `"resolver_name_example"`, `"resolver_name_..."`: ResolverConfigObject
 
-Specify the name and the configuration of a resolver. Note that `"resolver_name_example"` and `"resolver_name_..."` should be replaced by any string literal representing a UNIQUE name for the resolver, except for the empty string `""`. The resolver configuration should be defined in a `ResolverConfigObject`. The format of `ResolverConfigObject` varies by resolver type.
+Specify the name and the configuration of a resolver. Note that `"resolver_name_example"` and `"resolver_name_..."`
+should be replaced by any string literal representing a UNIQUE name for the resolver, except for the empty string `""`.
+The resolver configuration should be defined in a `ResolverConfigObject`. The format of `ResolverConfigObject` varies by
+resolver type.
 
 > ##### Example
-> 
+>
 > ```json
 > {
 >   "nameServer": {
@@ -81,12 +88,13 @@ Specify the name and the configuration of a resolver. Note that `"resolver_name_
 >   }
 > }
 > ```
-> 
+>
 > The example above is a ResolverDefinitionObject which defines a `nameServer` resolver to use Google Public DNS.
 
 ## RuleObject
 
-A RuleObject defines a custom rule. It specifies resolvers to be used when resolving specific domain names. Available types of rules are listed [here](rules.md).
+A RuleObject defines a custom rule. It specifies resolvers to be used when resolving specific domain names. Available
+types of rules are listed [here](rules.md).
 
 ```json
 {
