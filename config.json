@@ -27,7 +27,6 @@
     "doh": {
       "Cloudflare-DoH": {
         "url": "https://cloudflare-dns.com/dns-query",
-        "tlsServerName": "cloudflare-dns.com",
         "urlResolver": {
           "type": "sequence",
           "config": [
