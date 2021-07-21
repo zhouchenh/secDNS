@@ -3,6 +3,7 @@ package nameserver
 import (
 	"crypto/tls"
 	"github.com/miekg/dns"
+	"github.com/txthinking/socks5"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
@@ -13,13 +14,23 @@ import (
 )
 
 type NameServer struct {
-	Address       net.IP
-	Port          uint16
-	Protocol      string
-	QueryTimeout  time.Duration
-	TlsServerName string
-	SendThrough   net.IP
-	queryClient   *dns.Client
+	Address        net.IP
+	Port           uint16
+	Protocol       string
+	QueryTimeout   time.Duration
+	TlsServerName  string
+	SendThrough    net.IP
+	Socks5Proxy    string
+	Socks5Username string
+	Socks5Password string
+	queryClient    *client
+}
+
+type client struct {
+	dialFunc     func(network, address string) (conn net.Conn, err error)
+	dialTLSFunc  func(network, address string) (conn net.Conn, err error)
+	socks5Client *socks5.Client
+	*dns.Client
 }
 
 var typeOfNameServer = descriptor.TypeOfNew(new(*NameServer))
@@ -67,16 +78,74 @@ func (ns *NameServer) initClient() {
 	default:
 		addr = nil
 	}
-	ns.queryClient = &dns.Client{
-		Net: ns.Protocol,
-		TLSConfig: &tls.Config{
-			ServerName: ns.TlsServerName,
-		},
-		Dialer: &net.Dialer{
-			LocalAddr: addr,
-			Timeout:   ns.QueryTimeout,
+	c := &client{
+		dialFunc:     nil,
+		socks5Client: nil,
+		Client: &dns.Client{
+			Net: ns.Protocol,
+			TLSConfig: &tls.Config{
+				ServerName: ns.TlsServerName,
+			},
+			Dialer: &net.Dialer{
+				LocalAddr: addr,
+				Timeout:   ns.QueryTimeout,
+			},
 		},
 	}
+	if ns.Socks5Proxy != "" {
+		c.socks5Client = &socks5.Client{
+			Server:     ns.Socks5Proxy,
+			UserName:   ns.Socks5Username,
+			Password:   ns.Socks5Password,
+			TCPTimeout: ns.socks5Timeout(ns.QueryTimeout),
+			UDPTimeout: ns.socks5Timeout(ns.QueryTimeout),
+		}
+		c.dialFunc = func(network, address string) (conn net.Conn, err error) {
+			return c.socks5Client.DialWithLocalAddr(network, c.Dialer.LocalAddr.String(), address, nil)
+		}
+		c.dialTLSFunc = func(network, address string) (conn net.Conn, err error) {
+			conn, err = c.dialFunc(network, address)
+			if err != nil {
+				return
+			}
+			conn = tls.Client(conn, c.TLSConfig)
+			return
+		}
+	} else {
+		c.dialFunc = c.Dialer.Dial
+		c.dialTLSFunc = func(network, address string) (conn net.Conn, err error) {
+			return tls.DialWithDialer(c.Dialer, network, address, c.TLSConfig)
+		}
+	}
+	ns.queryClient = c
+}
+
+func (ns *NameServer) socks5Timeout(timeout time.Duration) int {
+	d := timeout / time.Second
+	if d*time.Second < timeout {
+		return int(d) + 1
+	}
+	return int(d)
+}
+
+func (c *client) Dial(address string) (conn *dns.Conn, err error) {
+	network := c.Net
+	if network == "" {
+		network = "udp"
+	}
+	useTLS := strings.HasPrefix(network, "tcp") && strings.HasSuffix(network, "-tls")
+	conn = new(dns.Conn)
+	if useTLS {
+		network = strings.TrimSuffix(network, "-tls")
+		conn.Conn, err = c.dialTLSFunc(network, address)
+	} else {
+		conn.Conn, err = c.dialFunc(network, address)
+	}
+	if err != nil {
+		return nil, err
+	}
+	conn.UDPSize = c.UDPSize
+	return conn, nil
 }
 
 func init() {
@@ -207,6 +276,36 @@ func init() {
 						AssignableKind: convertibleKindIP,
 					},
 					descriptor.DefaultValue{Value: nil},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"Socks5Proxy"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"socks5Proxy"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"Socks5Username"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"socks5Username"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"Socks5Password"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"socks5Password"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
 				},
 			},
 		},

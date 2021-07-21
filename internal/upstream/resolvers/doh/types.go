@@ -17,13 +17,16 @@ import (
 )
 
 type DoH struct {
-	URL           *url.URL
-	QueryTimeout  time.Duration
-	TlsServerName string
-	SendThrough   net.IP
-	Resolver      resolver.Resolver
-	queryClient   *client
-	initializing  bool
+	URL            *url.URL
+	QueryTimeout   time.Duration
+	TlsServerName  string
+	SendThrough    net.IP
+	Resolver       resolver.Resolver
+	Socks5Proxy    string
+	Socks5Username string
+	Socks5Password string
+	queryClient    *client
+	initializing   bool
 }
 
 type client struct {
@@ -132,12 +135,28 @@ func (d *DoH) NameServerResolver() {}
 func (d *DoH) initClient() {
 	serverName := d.serverName()
 	resolvedURLs := d.resolveURL(64)
+	var proxyFunc func(*http.Request) (*url.URL, error)
+	if d.Socks5Proxy != "" {
+		var user *url.Userinfo
+		if d.Socks5Username != "" || d.Socks5Password != "" {
+			user = url.UserPassword(d.Socks5Username, d.Socks5Password)
+		}
+		u := &url.URL{
+			Scheme: "socks5",
+			User:   user,
+			Host:   d.Socks5Proxy,
+		}
+		proxyFunc = func(*http.Request) (*url.URL, error) {
+			return u, nil
+		}
+	}
 	d.queryClient = &client{
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					LocalAddr: &net.TCPAddr{IP: d.SendThrough},
 				}).DialContext,
+				Proxy: proxyFunc,
 				TLSClientConfig: &tls.Config{
 					ServerName: serverName,
 				},
@@ -300,6 +319,36 @@ func init() {
 							return
 						}),
 					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"Socks5Proxy"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"socks5Proxy"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"Socks5Username"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"socks5Username"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"Socks5Password"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"socks5Password"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
 				},
 			},
 		},
