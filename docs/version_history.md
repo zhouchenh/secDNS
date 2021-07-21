@@ -1,5 +1,11 @@
 # Version History
 
+### v1.1.4 - 2021.07.22
+
+New Feature
+
+* Add SOCKS5 proxy support for [nameServer](resolvers/name_server.md) and [doh](resolvers/doh.md).
+
 ### v1.1.3 - 2021.07.20
 
 New Feature
