@@ -51,7 +51,7 @@ func (addr *Address) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	case dns.TypeAAAA:
 		for _, ip := range addr[v6] {
 			msg.Answer = append(msg.Answer, &dns.AAAA{
-				Hdr:  dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+				Hdr:  dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
 				AAAA: ip,
 			})
 		}
