@@ -8,7 +8,12 @@ import (
 	"net"
 )
 
-type Address net.IP
+const (
+	v4 = 0
+	v6 = 1
+)
+
+type Address [2][]net.IP
 
 var typeOfAddress = descriptor.TypeOfNew(new(*Address))
 
@@ -20,6 +25,15 @@ func (addr *Address) TypeName() string {
 	return "address"
 }
 
+func makeAddress() Address {
+	var v4AddrList []net.IP
+	var v6AddrList []net.IP
+	var addrLists [2][]net.IP
+	addrLists[v4] = v4AddrList
+	addrLists[v6] = v6AddrList
+	return addrLists
+}
+
 func (addr *Address) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
@@ -28,19 +42,17 @@ func (addr *Address) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	msg.SetReply(query)
 	switch query.Question[0].Qtype {
 	case dns.TypeA:
-		ip := net.IP(*addr)
-		if ip = ip.To4(); ip != nil {
+		for _, ip := range addr[v4] {
 			msg.Answer = append(msg.Answer, &dns.A{
 				Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
 				A:   ip,
 			})
 		}
 	case dns.TypeAAAA:
-		ip := net.IP(*addr)
-		if len(ip) == net.IPv6len {
-			msg.Answer = append(msg.Answer, &dns.A{
-				Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
-				A:   ip,
+		for _, ip := range addr[v6] {
+			msg.Answer = append(msg.Answer, &dns.AAAA{
+				Hdr:  dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+				AAAA: ip,
 			})
 		}
 	}
@@ -53,16 +65,62 @@ func init() {
 		Filler: descriptor.ObjectFiller{
 			ValueSource: descriptor.ObjectAtPath{
 				ObjectPath: descriptor.Root,
-				AssignableKind: descriptor.ConvertibleKind{
-					Kind: descriptor.KindString,
-					ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-						str, ok := original.(string)
-						if !ok {
+				AssignableKind: descriptor.AssignableKinds{
+					descriptor.ConvertibleKind{
+						Kind: descriptor.KindString,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							var str string
+							str, ok = original.(string)
+							if !ok {
+								return
+							}
+							ip := common.ParseIPv4v6(str)
+							ok = ip != nil
+							if !ok {
+								return
+							}
+							address := makeAddress()
+							switch len(ip) {
+							case net.IPv4len:
+								address[v4] = append(address[v4], ip)
+							case net.IPv6len:
+								address[v6] = append(address[v6], ip)
+							default:
+								return nil, false
+							}
+							converted = &address
 							return
-						}
-						converted = descriptor.PointerOf(Address(net.ParseIP(str)))
-						ok = converted != nil
-						return
+						},
+					},
+					descriptor.ConvertibleKind{
+						Kind: descriptor.KindSlice,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							interfaces, ok := original.([]interface{})
+							if !ok {
+								return
+							}
+							address := makeAddress()
+							for _, i := range interfaces {
+								str, ok := i.(string)
+								if !ok {
+									continue
+								}
+								ip := common.ParseIPv4v6(str)
+								ok = ip != nil
+								if !ok {
+									continue
+								}
+								switch len(ip) {
+								case net.IPv4len:
+									address[v4] = append(address[v4], ip)
+								case net.IPv6len:
+									address[v6] = append(address[v6], ip)
+								default:
+									continue
+								}
+							}
+							return &address, true
+						},
 					},
 				},
 			},

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/secDNS/internal/logger"
+	"net"
 	"strings"
 )
 
@@ -29,6 +30,17 @@ func Output(a ...interface{}) {
 
 func ErrOutput(a ...interface{}) {
 	logger.Error().Msg(fmt.Sprint(a...))
+}
+
+func ParseIPv4v6(str string) (ip net.IP) {
+	ip = net.ParseIP(str)
+	if ip == nil {
+		return
+	}
+	if ipv4Addr := ip.To4(); ipv4Addr != nil {
+		return ipv4Addr
+	}
+	return
 }
 
 func IsDomainName(name string) (ok bool) {

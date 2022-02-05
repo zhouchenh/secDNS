@@ -116,16 +116,16 @@ func init() {
 						AssignableKind: descriptor.ConvertibleKind{
 							Kind: descriptor.KindString,
 							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
+								var str string
+								str, ok = original.(string)
 								if !ok {
 									return
 								}
-								ip := net.ParseIP(str)
-								if ok = ip != nil; !ok {
+								ip := common.ParseIPv4v6(str)
+								if ok = ip != nil && len(ip) == net.IPv6len; !ok {
 									return
 								}
 								converted = ip
-								ok = ip.To4() == nil
 								return
 							},
 						},
