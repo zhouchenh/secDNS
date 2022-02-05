@@ -102,3 +102,12 @@ func SnakeCaseConcatenate(a ...interface{}) string {
 func UpperString(s string) string {
 	return strings.ToUpper(s)
 }
+
+func FilterResourceRecords(records []dns.RR, predicate func(rr dns.RR) bool) (result []dns.RR) {
+	for _, record := range records {
+		if predicate(record) {
+			result = append(result, record)
+		}
+	}
+	return
+}

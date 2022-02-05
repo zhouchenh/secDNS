@@ -18,6 +18,8 @@ import (
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/concurrent/nameserver/list"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/dns64"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/doh"
+	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/filter/a"
+	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/filter/aaaa"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/nameserver"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/no/answer/resolver"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/not/exist/resolver"
