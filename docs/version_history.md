@@ -1,5 +1,17 @@
 # Version History
 
+### v1.1.5 - 2022.02.05
+
+New Feature
+
+* Add multiple addresses support for [address](resolvers/address.md) resolver.
+* Support resource record filtering for A and AAAA by adding new resolvers [filterA](resolvers/filterA.md)
+  and [filterAAAA](resolvers/filterAAAA.md).
+
+Bug Fix
+
+* Fix a bug in [address](resolvers/address.md) resolver which might cause error in type of answered resource records.
+
 ### v1.1.4 - 2021.07.22
 
 New Feature
@@ -27,7 +39,7 @@ Bug Fix
 
 Bug Fix
 
-* Fix a bug in [nameServer](resolvers/name_server.md) resolver where UDP queries don't timeout and fail when the server
+* Fix a bug in [nameServer](resolvers/name_server.md) resolver where UDP queries don't time out and fail when the server
   ignores the queries.
 
 ### v1.1.0 - 2020.03.26
