@@ -34,7 +34,7 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 			return d.dns64(query, depth)
 		} else {
 			reply, err := d.Resolver.Resolve(query, depth-1)
-			if err != nil || (isNoErrorReply(reply) && !hasAAAA(reply)) {
+			if err != nil || !isNoErrorReply(reply) || !hasAAAA(reply) {
 				return d.dns64(query, depth)
 			}
 			return reply, nil
@@ -47,6 +47,7 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 func (d *DNS64) dns64(query *dns.Msg, depth int) (*dns.Msg, error) {
 	query.Question[0].Qtype = dns.TypeA
 	reply, err := d.Resolver.Resolve(query, depth-1)
+	query.Question[0].Qtype = dns.TypeAAAA
 	if err != nil {
 		return nil, err
 	}
