@@ -1,12 +1,25 @@
 # Version History
 
-### v1.1.5 - 2022.02.05
+### v1.1.6 - 2024.11.13
 
 New Feature
 
+* Support conditional resource record filtering for A and AAAA by adding new
+  resolvers [filterOutAIfAAAAPresents](resolvers/filter_out_a_if_aaaa_presents.md)
+  and [filterOutAAAAIfAPresents](resolvers/filter_out_aaaa_if_a_presents.md).
+
+Naming Fixes
+
+* Rename resolver filterA to [filterOutA](resolvers/filter_out_a.md) for better comprehensibility.
+* Rename resolver filterAAAA to [filterOutAAAA](resolvers/filter_out_aaaa.md) for better comprehensibility.
+
+### v1.1.5 - 2022.02.05
+
+New Features
+
 * Add multiple addresses support for [address](resolvers/address.md) resolver.
-* Support resource record filtering for A and AAAA by adding new resolvers [filterA](resolvers/filterA.md)
-  and [filterAAAA](resolvers/filterAAAA.md).
+* Support resource record filtering for A and AAAA by adding new resolvers [filterA](resolvers/filter_out_a.md)
+  and [filterAAAA](resolvers/filter_out_aaaa.md).
 
 Bug Fix
 
