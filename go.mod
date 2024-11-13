@@ -1,6 +1,6 @@
 module github.com/zhouchenh/secDNS
 
-go 1.20
+go 1.23
 
 require (
 	github.com/miekg/dns v1.1.62
