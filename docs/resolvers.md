@@ -8,9 +8,11 @@ secDNS supports the following resolvers.
   concurrently.
 * [dns64](resolvers/dns64.md) - (secDNS v1.1.0+) Synthesize AAAA resource records from A resource records.
 * [doh](resolvers/doh.md) - Forward queries to an upstream DNS server, using DNS over HTTPS.
-* [filterA](resolvers/filterA.md) - (secDNS v1.1.5+) Filter out A resource records in replies from an upstream DNS
+* [filterOutA](resolvers/filter_out_a.md) - (secDNS v1.1.6+) Filter out A resource records in replies from an upstream
+  DNS
   server.
-* [filterAAAA](resolvers/filterAAAA.md) - (secDNS v1.1.5+) Filter out AAAA resource records in replies from an upstream
+* [filterOutAAAA](resolvers/filter_out_aaaa.md) - (secDNS v1.1.6+) Filter out AAAA resource records in replies from an
+  upstream
   DNS server.
 * [nameServer](resolvers/name_server.md) - Forward queries to an upstream DNS server.
 * [noAnswer](resolvers/no_answer.md) - Reply queries without any DNS record.

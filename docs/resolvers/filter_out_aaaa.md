@@ -1,8 +1,8 @@
-# filterA
+# filterOutAAAA
 
-* Type: `filterA`
+* Type: `filterOutAAAA`
 
-(secDNS v1.1.5+) The `filterA` resolver filters out A resource records in replies from an upstream DNS server.
+(secDNS v1.1.6+) The `filterOutAAAA` resolver filters out AAAA resource records in replies from an upstream DNS server.
 
 ## ResolverConfigObject
 

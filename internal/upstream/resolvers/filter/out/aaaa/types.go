@@ -7,21 +7,21 @@ import (
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 )
 
-type FilterAAAA struct {
+type FilterOutAAAA struct {
 	Resolver resolver.Resolver
 }
 
-var typeOfFilterAAAA = descriptor.TypeOfNew(new(*FilterAAAA))
+var typeOfFilterOutAAAA = descriptor.TypeOfNew(new(*FilterOutAAAA))
 
-func (fa *FilterAAAA) Type() descriptor.Type {
-	return typeOfFilterAAAA
+func (fa *FilterOutAAAA) Type() descriptor.Type {
+	return typeOfFilterOutAAAA
 }
 
-func (fa *FilterAAAA) TypeName() string {
-	return "filterAAAA"
+func (fa *FilterOutAAAA) TypeName() string {
+	return "filterOutAAAA"
 }
 
-func (fa *FilterAAAA) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
+func (fa *FilterOutAAAA) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
@@ -48,7 +48,7 @@ func (fa *FilterAAAA) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 
 func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
-		Type: typeOfFilterAAAA,
+		Type: typeOfFilterOutAAAA,
 		Filler: descriptor.ObjectFiller{
 			ObjectPath: descriptor.Path{"Resolver"},
 			ValueSource: descriptor.ObjectAtPath{
