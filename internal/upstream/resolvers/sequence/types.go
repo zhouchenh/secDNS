@@ -42,6 +42,8 @@ func (seq *Sequence) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	return msg, err
 }
 
+func (seq *Sequence) NameServerResolver() {}
+
 func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfSequence,
