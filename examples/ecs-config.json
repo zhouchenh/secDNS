@@ -1,0 +1,67 @@
+{
+  "listeners": [
+    {
+      "type": "dnsServer",
+      "config": {
+        "listen": "0.0.0.0",
+        "port": "53",
+        "protocol": "tcp"
+      }
+    },
+    {
+      "type": "dnsServer",
+      "config": {
+        "listen": "0.0.0.0",
+        "port": "53",
+        "protocol": "udp"
+      }
+    }
+  ],
+  "resolvers": {
+    "nameServer": {
+      "Cloudflare-Plain": {
+        "address": "1.1.1.1",
+        "comment": "No ECS configuration - passthrough mode (default)"
+      },
+      "Cloudflare-ECS-Add": {
+        "address": "1.1.1.1",
+        "ecsMode": "add",
+        "ecsClientSubnet": "192.168.1.0/24",
+        "comment": "Add ECS if client didn't send one"
+      },
+      "Cloudflare-ECS-Override": {
+        "address": "1.1.1.1",
+        "ecsMode": "override",
+        "ecsClientSubnet": "10.0.0.0/8",
+        "comment": "Always replace ECS with configured value"
+      },
+      "Google-ECS-IPv6": {
+        "address": "2001:4860:4860::8888",
+        "ecsMode": "add",
+        "ecsClientSubnet": "2001:db8::/32",
+        "comment": "ECS with IPv6 subnet"
+      }
+    },
+    "doh": {
+      "Cloudflare-DoH-ECS": {
+        "url": "https://cloudflare-dns.com/dns-query",
+        "ecsMode": "add",
+        "ecsClientSubnet": "192.168.0.0/16",
+        "comment": "DoH with ECS support"
+      },
+      "Google-DoH-Override": {
+        "url": "https://dns.google/dns-query",
+        "ecsMode": "override",
+        "ecsClientSubnet": "172.16.0.0/12",
+        "comment": "DoH with ECS override"
+      }
+    },
+    "sequence": {
+      "ECS-Resolvers": [
+        "Cloudflare-ECS-Add",
+        "Google-ECS-IPv6"
+      ]
+    }
+  },
+  "defaultResolver": "Cloudflare-ECS-Add"
+}

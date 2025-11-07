@@ -6,6 +6,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
+	"github.com/zhouchenh/secDNS/internal/edns/ecs"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"io/ioutil"
 	"net"
@@ -17,16 +18,19 @@ import (
 )
 
 type DoH struct {
-	URL            *url.URL
-	QueryTimeout   time.Duration
-	TlsServerName  string
-	SendThrough    net.IP
-	Resolver       resolver.Resolver
-	Socks5Proxy    string
-	Socks5Username string
-	Socks5Password string
-	queryClient    *client
-	initOnce       sync.Once
+	URL             *url.URL
+	QueryTimeout    time.Duration
+	TlsServerName   string
+	SendThrough     net.IP
+	Resolver        resolver.Resolver
+	Socks5Proxy     string
+	Socks5Username  string
+	Socks5Password  string
+	EcsMode         string
+	EcsClientSubnet string
+	ecsConfig       *ecs.Config
+	queryClient     *client
+	initOnce        sync.Once
 }
 
 type client struct {
@@ -53,6 +57,17 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	d.initOnce.Do(func() {
 		d.initClient()
 	})
+
+	// Apply ECS configuration to query if configured
+	if d.ecsConfig != nil {
+		// Create a copy of the query to avoid modifying the original
+		queryCopy := query.Copy()
+		if err := d.ecsConfig.ApplyToQuery(queryCopy); err != nil {
+			return nil, err
+		}
+		query = queryCopy
+	}
+
 	wireFormattedQuery, e := query.Pack()
 	if e != nil {
 		return nil, e
@@ -178,6 +193,16 @@ func (d *DoH) initClient() {
 		},
 		serverName:   serverName,
 		resolvedURLs: resolvedURLs,
+	}
+
+	// Initialize ECS configuration if specified
+	if d.EcsMode != "" || d.EcsClientSubnet != "" {
+		cfg, err := ecs.ParseConfig(d.EcsMode, d.EcsClientSubnet)
+		if err != nil {
+			common.ErrOutput(err)
+		} else {
+			d.ecsConfig = cfg
+		}
 	}
 }
 
@@ -359,6 +384,26 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath:     descriptor.Path{"socks5Password"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"EcsMode"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"ecsMode"},
+						AssignableKind: descriptor.KindString,
+					},
+					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"EcsClientSubnet"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath:     descriptor.Path{"ecsClientSubnet"},
 						AssignableKind: descriptor.KindString,
 					},
 					descriptor.DefaultValue{Value: ""},
