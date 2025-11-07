@@ -15,17 +15,19 @@ import (
 )
 
 type NameServer struct {
-	Address        net.IP
-	Port           uint16
-	Protocol       string
-	QueryTimeout   time.Duration
-	TlsServerName  string
-	SendThrough    net.IP
-	Socks5Proxy    string
-	Socks5Username string
-	Socks5Password string
-	queryClient    *client
-	initOnce       sync.Once
+	Address           net.IP
+	Port              uint16
+	Protocol          string
+	QueryTimeout      time.Duration
+	TlsServerName     string
+	SendThrough       net.IP
+	Socks5Proxy       string
+	Socks5Username    string
+	Socks5Password    string
+	queryClient       *client
+	tcpFallbackClient *client   // Cached TCP client for UDP→TCP fallback
+	initOnce          sync.Once
+	tcpFallbackOnce   sync.Once // Thread-safe TCP fallback client initialization
 }
 
 type client struct {
@@ -75,9 +77,20 @@ func (ns *NameServer) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 }
 
 func (ns *NameServer) queryWithProtocol(query *dns.Msg, address string, protocol string) (*dns.Msg, error) {
-	// Create a temporary client with the specified protocol if different from default
-	clientToUse := ns.queryClient
-	if protocol != ns.Protocol {
+	var clientToUse *client
+
+	// Select appropriate client based on protocol
+	if protocol == ns.Protocol {
+		// Use the primary client for the configured protocol
+		clientToUse = ns.queryClient
+	} else if protocol == "tcp" && ns.Protocol == "udp" {
+		// Use cached TCP fallback client (initialized once, reused for all truncated responses)
+		ns.tcpFallbackOnce.Do(func() {
+			ns.tcpFallbackClient = ns.createClientForProtocol("tcp")
+		})
+		clientToUse = ns.tcpFallbackClient
+	} else {
+		// Edge case: other protocol combinations (rare, create temporary client)
 		clientToUse = ns.createClientForProtocol(protocol)
 	}
 
