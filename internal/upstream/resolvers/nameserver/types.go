@@ -52,7 +52,36 @@ func (ns *NameServer) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	ns.initOnce.Do(func() {
 		ns.initClient()
 	})
-	connection, err := ns.queryClient.Dial(net.JoinHostPort(ns.Address.String(), strconv.Itoa(int(ns.Port))))
+
+	address := net.JoinHostPort(ns.Address.String(), strconv.Itoa(int(ns.Port)))
+
+	// Try with the configured protocol
+	msg, err := ns.queryWithProtocol(query, address, ns.Protocol)
+	if err != nil {
+		return nil, err
+	}
+
+	// If UDP response is truncated, retry with TCP
+	if msg.Truncated && ns.Protocol == "udp" {
+		tcpMsg, tcpErr := ns.queryWithProtocol(query, address, "tcp")
+		if tcpErr != nil {
+			// Return original truncated response if TCP fails
+			return msg, nil
+		}
+		return tcpMsg, nil
+	}
+
+	return msg, nil
+}
+
+func (ns *NameServer) queryWithProtocol(query *dns.Msg, address string, protocol string) (*dns.Msg, error) {
+	// Create a temporary client with the specified protocol if different from default
+	clientToUse := ns.queryClient
+	if protocol != ns.Protocol {
+		clientToUse = ns.createClientForProtocol(protocol)
+	}
+
+	connection, err := clientToUse.Dial(address)
 	if err != nil {
 		return nil, err
 	}
@@ -70,9 +99,9 @@ func (ns *NameServer) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 
 func (ns *NameServer) NameServerResolver() {}
 
-func (ns *NameServer) initClient() {
+func (ns *NameServer) createClientForProtocol(protocol string) *client {
 	var addr net.Addr
-	switch strings.TrimSuffix(ns.Protocol, "-tls") {
+	switch strings.TrimSuffix(protocol, "-tls") {
 	case "tcp":
 		addr = &net.TCPAddr{IP: ns.SendThrough}
 	case "udp":
@@ -84,7 +113,8 @@ func (ns *NameServer) initClient() {
 		dialFunc:     nil,
 		socks5Client: nil,
 		Client: &dns.Client{
-			Net: ns.Protocol,
+			Net: protocol,
+			UDPSize: 4096, // Enable EDNS0 for larger UDP responses
 			TLSConfig: &tls.Config{
 				ServerName: ns.TlsServerName,
 			},
@@ -119,7 +149,11 @@ func (ns *NameServer) initClient() {
 			return tls.DialWithDialer(c.Dialer, network, address, c.TLSConfig)
 		}
 	}
-	ns.queryClient = c
+	return c
+}
+
+func (ns *NameServer) initClient() {
+	ns.queryClient = ns.createClientForProtocol(ns.Protocol)
 }
 
 func (ns *NameServer) socks5Timeout(timeout time.Duration) int {

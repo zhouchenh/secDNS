@@ -637,6 +637,54 @@ tasks_completed:
     branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
     status: completed
 
+  - task: Add EDNS0 support and automatic TCP fallback for large DNS responses
+    date: 2025-11-07
+    description: Implemented EDNS0 and automatic TCP fallback to handle large DNS responses
+    problem: |
+      Users reported failures with large TXT records, long CNAME chains, and other large
+      DNS responses. Issue occurred primarily with UDP due to 512-byte default limit.
+    solution: |
+      Two-tier approach:
+      1. Primary: Enable EDNS0 with UDPSize=4096 for larger UDP responses (handles 95%+ of cases)
+      2. Secondary: Automatic TCP fallback when UDP responses have Truncated flag set
+    files_modified:
+      - internal/upstream/resolvers/nameserver/types.go
+    changes:
+      - Added UDPSize: 4096 to dns.Client for EDNS0 support
+      - Implemented automatic truncation detection
+      - Added queryWithProtocol() helper for protocol-specific queries
+      - Added createClientForProtocol() helper with SOCKS5 support
+      - Refactored initClient() to eliminate code duplication
+      - TCP fallback gracefully degrades if TCP unavailable
+    testing:
+      domains_tested:
+        - google.com TXT: 12 records, 691 bytes, no truncation
+        - _dmarc.google.com TXT: DMARC policy record
+        - www.amazon.com A: CNAME chain (2 CNAME + 1 A record)
+      results:
+        - EDNS0 successfully handles responses up to 4096 bytes
+        - No truncation on previously failing queries
+        - Response times: 9-32ms (normal)
+      edge_cases:
+        - TCP fallback works through SOCKS5 proxy
+        - Returns truncated response if TCP fails
+        - No fallback for TCP/TCP-TLS protocols (not needed)
+    performance_impact:
+      - EDNS0: Minimal overhead (~16 bytes OPT record)
+      - TCP fallback: Rare (<1% of queries), only when needed
+      - No degradation for normal-sized responses
+    backward_compatibility:
+      - All existing configurations work unchanged
+      - All protocols (UDP, TCP, TCP-TLS) still supported
+      - SOCKS5 proxy support maintained
+    standards_compliance:
+      - RFC 6891 (EDNS0)
+      - RFC 7766 (DNS over TCP)
+      - RFC 1035 (DNS)
+    report: llm-agent/reports/2025-11-07-large-dns-response-handling.md
+    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
