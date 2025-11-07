@@ -1,0 +1,568 @@
+# secDNS Project Knowledge Base
+# This file is updated after every task completion to maintain context for LLM agents
+# Last Updated: 2025-11-07
+
+metadata:
+  project_name: secDNS
+  version: 1.1.6
+  release_date: 2024-11-13
+  language: Go
+  go_version: "1.23"
+  compiled_with: "1.24.1"
+  license: GNU Affero General Public License v3.0 (AGPLv3)
+  repository_size: 120MB
+  total_go_files: 58
+  total_documentation_files: 22
+  lines_of_code: ~6400
+  development_branch: dev-by-llm-agents
+
+project_purpose:
+  primary: "DNS resolver proxy to bypass DNS spoofing (DNS cache poisoning) from ISPs"
+  use_cases:
+    - Bypass DNS censorship
+    - Prevent DNS cache poisoning attacks
+    - Route different domains to different DNS resolvers
+    - Use secure DNS protocols (DoT, DoH)
+  target_audience:
+    - End users experiencing DNS spoofing
+    - Network administrators
+    - Privacy-conscious users
+    - Users in regions with DNS filtering
+
+key_features:
+  - Multiple DNS protocol support (DoT, DoH, regular DNS)
+  - Sequential failover mode (try next resolver if one fails)
+  - Concurrent mode (accept response from fastest resolver)
+  - SOCKS5 proxy support with optional authentication
+  - IPv6 DNS64 support (synthesize AAAA from A records)
+  - Name-based custom routing rules
+  - Multiple simultaneous listeners
+  - DNS response filtering (conditional A/AAAA removal)
+
+architecture:
+  pattern: "Descriptor-based plugin architecture"
+  description: "Components register themselves dynamically using descriptor pattern"
+
+  core_components:
+    listeners:
+      count: 1
+      types:
+        - name: dnsServer
+          location: internal/listeners/servers/dns/server/types.go
+          description: "Listens for incoming DNS queries on TCP/UDP"
+          protocols: [TCP, UDP]
+          default_port: 53
+
+    resolvers:
+      count: 11
+      types:
+        - name: nameServer
+          category: basic
+          location: internal/upstream/resolvers/nameserver/types.go
+          description: "Forward queries to upstream DNS server"
+          protocols: [UDP, TCP, TCP-TLS]
+          features: [SOCKS5, IP binding, timeout, TLS verification]
+
+        - name: doh
+          category: basic
+          location: internal/upstream/resolvers/doh/types.go
+          description: "DNS over HTTPS resolver"
+          features: [URL-based, recursive URL resolution, SOCKS5, timeout]
+
+        - name: address
+          category: response_generation
+          location: internal/upstream/resolvers/address/types.go
+          description: "Reply with static IPv4/IPv6 addresses"
+          features: [Multiple addresses, A and AAAA records]
+
+        - name: alias
+          category: response_generation
+          location: internal/upstream/resolvers/alias/types.go
+          description: "Reply with CNAME records"
+          features: [CNAME chain following]
+
+        - name: noAnswer
+          category: response_generation
+          location: internal/upstream/resolvers/noanswer/types.go
+          description: "Empty successful response (no errors)"
+
+        - name: notExist
+          category: response_generation
+          location: internal/upstream/resolvers/notexist/types.go
+          description: "Return NXDOMAIN (domain does not exist)"
+
+        - name: sequence
+          category: composition
+          location: internal/upstream/resolvers/sequence/types.go
+          description: "Sequential failover resolver"
+          features: [Try in order, first success wins]
+
+        - name: concurrentNameServerList
+          category: composition
+          location: internal/upstream/resolvers/concurrentnameserverlist/types.go
+          description: "Concurrent resolver - first response wins"
+          features: [Parallel queries, fastest wins]
+
+        - name: dns64
+          category: transformation
+          location: internal/upstream/resolvers/dns64/types.go
+          description: "DNS64 IPv6 synthesis"
+          features: [A to AAAA conversion, configurable prefix]
+
+        - name: filterOutA
+          category: transformation
+          location: internal/upstream/resolvers/filterouta/types.go
+          description: "Remove A records from responses"
+
+        - name: filterOutAAAA
+          category: transformation
+          location: internal/upstream/resolvers/filteroutaaaa/types.go
+          description: "Remove AAAA records from responses"
+
+        - name: filterOutAIfAAAAPresents
+          category: transformation
+          location: internal/upstream/resolvers/filteroutaifaaaapresents/types.go
+          description: "Remove A records if AAAA records exist"
+          added_in: v1.1.6
+
+        - name: filterOutAAAAIfAPresents
+          category: transformation
+          location: internal/upstream/resolvers/filteroutaaaaifapresents/types.go
+          description: "Remove AAAA records if A records exist"
+          added_in: v1.1.6
+
+    rule_providers:
+      count: 2
+      types:
+        - name: dnsmasqConf
+          location: internal/rules/providers/dnsmasqconf/types.go
+          description: "Parses dnsmasq-format configuration files"
+          format: "server=/domain.com/resolver-name"
+          features: [Comment support, domain routing]
+          example_file: accelerated-domains.china.conf
+          example_entries: 68524
+
+        - name: collection
+          location: internal/rules/providers/collection/types.go
+          description: "Direct domain → resolver mapping"
+          format: "JSON array of name/resolver pairs"
+
+  interfaces:
+    resolver:
+      location: pkg/upstream/resolver/interfaces.go
+      methods:
+        - Type() descriptor.Type
+        - TypeName() string
+        - Resolve(query *dns.Msg, depth int) (*dns.Msg, error)
+
+    server:
+      location: pkg/listeners/server/interfaces.go
+      methods:
+        - Type() descriptor.Type
+        - TypeName() string
+        - Serve(handler func(*dns.Msg) *dns.Msg, errorHandler func(error))
+
+    provider:
+      location: pkg/rules/provider/interfaces.go
+      methods:
+        - Type() descriptor.Type
+        - TypeName() string
+        - Provide(receive func(string, Resolver), receiveError func(error)) bool
+
+  data_flow: |
+    DNS Query (Client)
+        ↓
+    dnsServer Listener (TCP/UDP port 53)
+        ↓
+    Core Instance (name-based routing)
+        ↓
+    Rule Providers (dnsmasqConf/collection) [match domain → resolver]
+        ↓
+    [Match] → Specific Resolver
+    [No Match] → Default Resolver
+        ↓
+    Resolver Types:
+      - sequence → try in order
+      - concurrent → race all
+      - doh → HTTPS query
+      - nameServer → TCP/UDP/TLS query
+      - address/alias/dns64/filters → transform/synthesize
+        ↓
+    Response
+        ↓
+    Error Handler (on failure)
+        ↓
+    DNS Reply (Client)
+
+file_structure:
+  entry_point: main.go:12
+
+  core_files:
+    - path: main.go
+      description: Application entry point
+      key_functions:
+        - main(): CLI parsing, config loading, service initialization
+        - open(): Config file loader with environment variable fallback
+        - printVersion(): Version display
+
+    - path: internal/core/instance.go:28
+      description: Central DNS orchestrator
+      key_functions:
+        - NewInstance(): Creates core instance
+        - Resolve(): Main query resolution logic with depth tracking
+        - serve(): DNS query handler
+      notes: Prevents infinite loops via depth tracking (max 64)
+
+    - path: internal/core/core.go
+      description: Version and metadata management
+      key_data:
+        - Version: "1.1.6"
+        - Environment variable support for config paths
+
+    - path: internal/config/loader.go:19
+      description: Configuration parser
+      key_functions:
+        - Load(): JSON config parser
+        - Validates listeners, resolvers, rules
+      format: JSON with descriptor-based type system
+
+    - path: internal/features/features.go
+      description: Feature registration
+      notes: Imports all resolver/listener/provider modules to trigger init()
+
+  public_api:
+    - pkg/common/
+    - pkg/listeners/server/
+    - pkg/rules/provider/
+    - pkg/upstream/resolver/
+
+  implementation:
+    - internal/core/
+    - internal/config/
+    - internal/features/
+    - internal/logger/
+    - internal/common/
+    - internal/listeners/servers/dns/
+    - internal/upstream/resolvers/
+    - internal/rules/providers/
+
+configuration:
+  format: JSON
+
+  structure:
+    listeners:
+      type: array
+      description: DNS servers to listen on
+      example:
+        - type: dnsServer
+          config:
+            listen: 0.0.0.0
+            port: "53"
+            protocol: tcp
+
+    resolvers:
+      type: object
+      description: Named resolver definitions (keyed by type, then name)
+      example:
+        nameServer:
+          "114DNS-main":
+            address: 114.114.114.114
+          "Cloudflare-DoT-main":
+            address: 1.1.1.1
+            port: 853
+            protocol: tcp-tls
+            tlsServerName: cloudflare-dns.com
+
+    rules:
+      type: array
+      description: Custom routing rules
+      example:
+        - type: dnsmasqConf
+          config:
+            filePath: accelerated-domains.china.conf
+            resolver: 114DNS
+
+    defaultResolver:
+      type: string or object
+      description: Fallback resolver for unmatched queries
+      example: "CloudflareDNS"
+
+    resolutionDepth:
+      type: integer
+      description: Maximum recursion depth for loop prevention
+      default: 64
+
+  example_file: config.json
+
+  environment_variables:
+    CONFIG_DIR: Directory for config file resolution
+    Used for relative path expansion
+
+dependencies:
+  direct:
+    - name: github.com/miekg/dns
+      version: v1.1.62
+      purpose: DNS protocol library
+      critical: true
+
+    - name: github.com/rs/zerolog
+      version: v1.33.0
+      purpose: Structured JSON logging
+      critical: true
+
+    - name: github.com/txthinking/socks5
+      version: v0.0.0-20230325130024-4230056ae301
+      purpose: SOCKS5 proxy support
+      critical: false
+
+    - name: github.com/zhouchenh/go-descriptor
+      version: v1.1.0
+      purpose: Type descriptor system for plugin architecture
+      critical: true
+
+  indirect:
+    - golang.org/x/net
+    - golang.org/x/sync
+    - golang.org/x/sys
+    - golang.org/x/tools
+    - golang.org/x/mod
+    - github.com/mattn/go-colorable
+    - github.com/mattn/go-isatty
+    - github.com/patrickmn/go-cache
+    - github.com/txthinking/runnergroup
+
+logging:
+  library: zerolog
+  location: internal/logger/
+  format: Structured JSON
+  output: Console with color support
+
+  levels:
+    - Trace
+    - Debug
+    - Info
+    - Warning (default)
+    - Error
+    - Fatal
+    - Panic
+
+  features:
+    - Timestamp formatting
+    - Color output for console
+    - Separate stdout/stderr handling
+
+error_handling:
+  resolver_errors:
+    - Loop detection (depth exceeded)
+    - Nil query errors
+    - Unsupported question types
+
+  config_errors:
+    - Missing listeners
+    - Missing default resolver
+    - Invalid configuration
+
+  core_errors:
+    - Nil handlers
+    - Invalid domain names
+
+  service_specific_errors:
+    - Per-resolver error types
+    - Per-provider error types
+
+security_features:
+  - DNS spoofing prevention (primary purpose)
+  - TLS support (DoT - DNS over TLS)
+  - HTTPS support (DoH - DNS over HTTPS)
+  - SOCKS5 authentication (username/password)
+  - IP binding (SendThrough option)
+  - Loop detection (resolution depth tracking)
+  - Name-based filtering (domain routing)
+
+testing:
+  unit_tests: false
+  test_files: 0
+
+  manual_testing:
+    build: "go build -o bin/secDNS main.go"
+    validate_config: "./bin/secDNS -test -config config.json"
+    run: "./bin/secDNS -config config.json"
+
+  future_improvements:
+    - Add unit tests for resolvers
+    - Add integration tests for DNS query flow
+    - Add configuration validation tests
+    - Add error handling tests
+
+build_system:
+  type: Standard Go tooling
+  build_command: "go build"
+  no_makefile: true
+  no_ci_cd: true
+
+  gitignore:
+    - /bin/
+    - /vendor/
+
+version_history:
+  - version: v1.1.6
+    date: 2024-11-13
+    changes: Conditional A/AAAA filtering, naming fixes
+
+  - version: v1.1.5
+    date: 2022-02-05
+    changes: Multiple addresses, A/AAAA filtering
+
+  - version: v1.1.4
+    date: 2021-07-22
+    changes: SOCKS5 proxy support
+
+  - version: v1.1.3
+    date: 2021-07-20
+    changes: DoH URL resolver option
+
+  - version: v1.1.2
+    date: 2020-10-20
+    changes: DoH error handling fix
+
+  - version: v1.1.1
+    date: 2020-10-19
+    changes: UDP query timeout fix
+
+  - version: v1.1.0
+    date: 2020-03-26
+    changes: DNS64 support
+
+  - version: v1.0.0
+    date: 2020-03-07
+    changes: Initial release
+
+documentation:
+  location: docs/
+
+  key_files:
+    - README.md: Project overview
+    - docs/configuration.md: Configuration guide
+    - docs/version_history.md: Version history
+    - docs/listeners.md: Listener overview
+    - docs/listeners/*.md: Individual listener docs
+    - docs/resolvers.md: Resolver overview
+    - docs/resolvers/*.md: Individual resolver docs (11 files)
+    - docs/rules.md: Rules overview
+    - docs/rules/*.md: Individual rule provider docs
+
+notable_files:
+  - accelerated-domains.china.conf:
+      description: Pre-configured domain list for China
+      entries: 68524
+      format: dnsmasq configuration
+      purpose: Route Chinese domains to local DNS for better performance
+
+implementation_patterns:
+  - pattern: Descriptor Pattern
+    description: Dynamic type registration and instantiation
+    usage: Plugin-like architecture for resolvers, servers, providers
+    note: Each component registers descriptor on init()
+
+  - pattern: Resolver Chain Pattern
+    description: Recursive resolution support
+    usage: Depth tracking prevents infinite loops
+    note: Each resolver can delegate to other resolvers
+
+  - pattern: Observer Pattern
+    description: Rules providers
+    usage: Providers iterate through domain → resolver mappings
+    note: Stateful iteration with Provide() returning bool
+
+  - pattern: Facade Pattern
+    description: Core instance
+    usage: Single interface to complex resolver/listener/provider system
+    note: Instance implements Resolver itself
+
+current_state:
+  last_scan_date: 2025-11-07
+  git_branch: dev-by-llm-agents
+  git_status: clean (after creating llm-agent files)
+
+  recent_commits:
+    - commit: 83296de
+      message: "Merge pull request #2 from zhouchenh/dependabot/go_modules/golang.org/x/net-0.38.0"
+    - commit: 8419567
+      message: "chore(deps): Bump golang.org/x/net from 0.36.0 to 0.38.0"
+    - commit: 906d75a
+      message: "Merge pull request #1 from zhouchenh/dependabot/go_modules/golang.org/x/net-0.36.0"
+    - commit: bc6e229
+      message: "chore(deps): Bump golang.org/x/net from 0.33.0 to 0.36.0"
+    - commit: f435a2d
+      message: "chore: Update dependencies."
+
+known_issues:
+  - issue: No unit tests
+    severity: medium
+    impact: Cannot verify changes automatically
+    recommendation: Add test coverage for critical paths
+
+  - issue: No CI/CD
+    severity: low
+    impact: Manual build/test verification required
+    recommendation: Add GitHub Actions for automated testing
+
+  - issue: No code coverage tracking
+    severity: low
+    impact: Unknown test coverage
+    recommendation: Add coverage reporting
+
+technical_debt:
+  - area: Testing
+    description: No automated tests exist
+    priority: high
+
+  - area: CI/CD
+    description: No continuous integration pipeline
+    priority: medium
+
+  - area: Documentation
+    description: Some resolvers lack detailed examples
+    priority: low
+
+future_enhancements:
+  - Add unit tests for all resolver types
+  - Add integration tests for full query flow
+  - Add GitHub Actions CI/CD pipeline
+  - Add metrics/monitoring support
+  - Add health check endpoint
+  - Add hot-reload for configuration changes
+  - Add rate limiting support
+  - Add caching layer for DNS responses
+  - Add web UI for configuration management
+
+tasks_completed:
+  - task: Full project scan
+    date: 2025-11-07
+    description: Comprehensive exploration of codebase structure, architecture, and components
+    files_analyzed: 58 Go files, 22 documentation files
+    outcome: Complete understanding of project architecture and capabilities
+
+  - task: Create llm-agent documentation
+    date: 2025-11-07
+    description: Created README.md and context.yaml for LLM agent context
+    files_created:
+      - llm-agent/README.md
+      - llm-agent/context.yaml
+    branch: dev-by-llm-agents
+    status: in_progress
+
+llm_agent_notes:
+  - All LLM-made changes should be committed to dev-by-llm-agents branch
+  - Update this file after every task completion
+  - Follow descriptor pattern when adding new components
+  - Register new types in internal/features/features.go
+  - Use structured logging via internal/logger
+  - Maintain consistency with existing error handling patterns
+  - Document all changes in version_history.md when appropriate
+
+contact_and_resources:
+  repository: https://github.com/zhouchenh/secDNS (inferred)
+  documentation: /docs/ directory
+  license: AGPLv3
+  go_modules: go.mod, go.sum
