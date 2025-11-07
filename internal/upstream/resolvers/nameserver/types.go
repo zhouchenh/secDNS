@@ -385,8 +385,21 @@ func init() {
 				ObjectPath: descriptor.Path{"EcsMode"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
-						ObjectPath:     descriptor.Path{"ecsMode"},
-						AssignableKind: descriptor.KindString,
+						ObjectPath: descriptor.Path{"ecsMode"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return
+								}
+								// Validate mode
+								if !ecs.ValidateMode(str) {
+									return nil, false
+								}
+								return str, true
+							},
+						},
 					},
 					descriptor.DefaultValue{Value: ""},
 				},
@@ -395,8 +408,26 @@ func init() {
 				ObjectPath: descriptor.Path{"EcsClientSubnet"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
-						ObjectPath:     descriptor.Path{"ecsClientSubnet"},
-						AssignableKind: descriptor.KindString,
+						ObjectPath: descriptor.Path{"ecsClientSubnet"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return
+								}
+								// Empty string is valid (will be validated with mode later)
+								if str == "" {
+									return str, true
+								}
+								// Validate CIDR format
+								_, _, err := ecs.ParseClientSubnet(str)
+								if err != nil {
+									return nil, false
+								}
+								return str, true
+							},
+						},
 					},
 					descriptor.DefaultValue{Value: ""},
 				},

@@ -1,5 +1,17 @@
 # Version History
 
+### v1.1.9 - 2025.11.07
+
+New Feature
+
+* Add EDNS Client Subnet (ECS) support as defined in RFC 7871 for [nameServer](resolvers/name_server.md) and
+  [doh](resolvers/doh.md) resolvers. ECS enables geographic load balancing and optimized DNS responses by including client
+  subnet information in queries.
+* Support three ECS handling modes: `passthrough` (default, no modification), `add` (add ECS if not present), and
+  `override` (always replace ECS with configured value).
+* Support both IPv4 and IPv6 client subnets in CIDR notation.
+* Add comprehensive [EDNS Client Subnet documentation](EDNS-CLIENT-SUBNET.md) with configuration examples and use cases.
+
 ### v1.1.8 - 2025.11.07
 
 Bug Fixes
