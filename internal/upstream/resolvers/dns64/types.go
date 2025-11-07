@@ -94,6 +94,8 @@ func hasAAAA(reply *dns.Msg) bool {
 	return false
 }
 
+func (d *DNS64) NameServerResolver() {}
+
 func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfDNS64,

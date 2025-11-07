@@ -46,6 +46,8 @@ func (fa *FilterOutAAAA) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	}
 }
 
+func (fa *FilterOutAAAA) NameServerResolver() {}
+
 func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfFilterOutAAAA,

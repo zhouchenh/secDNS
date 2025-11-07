@@ -77,6 +77,8 @@ func hasA(reply *dns.Msg) bool {
 	return false
 }
 
+func (fa *FilterOutAAAAIfAPresents) NameServerResolver() {}
+
 func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfFilterOutAAAAIfAPresents,
