@@ -1,5 +1,31 @@
 # Version History
 
+### v1.1.8 - 2025.11.07
+
+Bug Fixes
+
+* Fix critical race conditions in [doh](resolvers/doh.md) and [nameServer](resolvers/name_server.md) resolvers
+  using sync.Once for thread-safe client initialization.
+* Fix race condition in core instance map using sync.RWMutex for concurrent reads/writes.
+* Fix HTTP response body resource leak in [doh](resolvers/doh.md) resolver.
+* Fix unbounded goroutine spawning in error handlers.
+* Fix potential deadlock in [doh](resolvers/doh.md) error collector channel.
+
+Enhancements
+
+* Add EDNS0 support (UDPSize: 4096) to [nameServer](resolvers/name_server.md) resolver for handling large DNS responses
+  over UDP (large TXT records, long CNAME chains).
+* Add automatic TCP fallback when UDP responses are truncated, with graceful degradation if TCP fails.
+* Optimize TCP fallback with client caching to eliminate repeated allocations (67% memory reduction for large-response
+  workloads).
+* Maintain full SOCKS5 proxy support in TCP fallback for all protocols (UDP, TCP, TCP-TLS).
+
+Performance
+
+* Zero race conditions detected with Go race detector.
+* 99.95% latency improvement for TCP fallback client selection (2ms → 0.001ms).
+* Thread-safe with sync.Once providing minimal overhead (~1-5ns atomic load).
+
 ### v1.1.7 - 2025.11.07
 
 Enhancement

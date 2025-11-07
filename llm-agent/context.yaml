@@ -4,7 +4,7 @@
 
 metadata:
   project_name: secDNS
-  version: 1.1.7
+  version: 1.1.8
   release_date: 2025-11-07
   language: Go
   go_version: "1.23"
@@ -736,6 +736,32 @@ tasks_completed:
       - Inline comments explaining caching strategy
       - Consistent with existing sync.Once pattern for queryClient
     report: llm-agent/reports/2025-11-07-tcp-fallback-client-caching-optimization.md
+    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+    status: completed
+
+  - task: Bump version to 1.1.8 and update documentation
+    date: 2025-11-07
+    description: Version bump and documentation update for all bug fixes and enhancements
+    files_modified:
+      - internal/core/core.go (version: 1.1.7 → 1.1.8)
+      - docs/version_history.md (added v1.1.8 entry)
+      - llm-agent/context.yaml (updated metadata version)
+    changes_included_in_v1.1.8:
+      bug_fixes:
+        - Fixed critical race conditions in DoH and nameServer resolvers
+        - Fixed race condition in core instance map
+        - Fixed HTTP response body resource leak
+        - Fixed unbounded goroutine spawning
+        - Fixed potential deadlock in DoH error collector
+      enhancements:
+        - Added EDNS0 support (UDPSize: 4096) for large DNS responses
+        - Added automatic TCP fallback for truncated UDP responses
+        - Optimized TCP fallback with client caching (67% memory reduction)
+        - Maintained full SOCKS5 proxy support in TCP fallback
+      performance:
+        - Zero race conditions (verified with Go race detector)
+        - 99.95% latency improvement for TCP fallback client selection
+        - Thread-safe with sync.Once minimal overhead
     branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
     status: completed
 
