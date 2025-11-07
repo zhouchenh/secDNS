@@ -559,6 +559,31 @@ tasks_completed:
     status: completed
     notes: Initially created on dev-by-llm-agents branch, then cherry-picked to correct branch
 
+  - task: Fix concurrentNameServerList to accept composition resolvers
+    date: 2025-11-07
+    description: Added NameServerResolver() marker to enable sequence and wrapper resolvers in concurrentNameServerList
+    problem: concurrentNameServerList type check rejected sequence/dns64/filter resolvers despite being thread-safe
+    solution: Added NameServerResolver() marker method to composition and wrapper resolvers
+    files_modified:
+      - internal/upstream/resolvers/sequence/types.go
+      - internal/upstream/resolvers/dns64/types.go
+      - internal/upstream/resolvers/filter/out/a/types.go
+      - internal/upstream/resolvers/filter/out/aaaa/types.go
+      - internal/upstream/resolvers/filter/out/a/if/aaaa/presents/types.go
+      - internal/upstream/resolvers/filter/out/aaaa/if/a/presents/types.go
+    testing:
+      - Configuration with sequence in concurrentNameServerList validates successfully
+      - DNS queries resolve without "Nil name server" errors
+      - Response time ~91ms for www.google.com
+    rationale: |
+      Composition resolvers (sequence) and wrappers (dns64, filters) that delegate
+      to nameserver resolvers should preserve the nameserver capability. All these
+      resolvers are thread-safe and suitable for concurrent execution.
+    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+    commit: db15479
+    report: llm-agent/reports/2025-11-07-concurrent-nameserver-list-type-restriction-fix.md
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
