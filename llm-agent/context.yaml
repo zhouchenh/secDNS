@@ -4,8 +4,8 @@
 
 metadata:
   project_name: secDNS
-  version: 1.1.6
-  release_date: 2024-11-13
+  version: 1.1.7
+  release_date: 2025-11-07
   language: Go
   go_version: "1.23"
   compiled_with: "1.24.1"

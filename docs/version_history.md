@@ -1,5 +1,16 @@
 # Version History
 
+### v1.1.7 - 2025.11.07
+
+Enhancement
+
+* Enable [sequence](resolvers/sequence.md), [dns64](resolvers/dns64.md), and filter resolvers
+  ([filterOutA](resolvers/filter_out_a.md), [filterOutAAAA](resolvers/filter_out_aaaa.md),
+  [filterOutAIfAAAAPresents](resolvers/filter_out_a_if_aaaa_presents.md),
+  [filterOutAAAAIfAPresents](resolvers/filter_out_aaaa_if_a_presents.md))
+  to be used in [concurrentNameServerList](resolvers/concurrent_name_server_list.md)
+  by implementing the nameserver.Resolver interface.
+
 ### v1.1.6 - 2024.11.13
 
 New Feature
