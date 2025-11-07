@@ -10,6 +10,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type NameServer struct {
 	Socks5Username string
 	Socks5Password string
 	queryClient    *client
+	initOnce       sync.Once
 }
 
 type client struct {
@@ -47,9 +49,9 @@ func (ns *NameServer) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
-	if ns.queryClient == nil {
+	ns.initOnce.Do(func() {
 		ns.initClient()
-	}
+	})
 	connection, err := ns.queryClient.Dial(net.JoinHostPort(ns.Address.String(), strconv.Itoa(int(ns.Port))))
 	if err != nil {
 		return nil, err

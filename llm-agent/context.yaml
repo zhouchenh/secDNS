@@ -584,6 +584,59 @@ tasks_completed:
     report: llm-agent/reports/2025-11-07-concurrent-nameserver-list-type-restriction-fix.md
     status: completed
 
+  - task: Comprehensive concurrency analysis and fixes
+    date: 2025-11-07
+    description: Analyzed and fixed all race conditions, resource leaks, and deadlock risks
+    problem: Potential race conditions, resource leaks, and unbounded goroutine spawning
+    analysis_report: llm-agent/reports/2025-11-07-concurrency-analysis-deadlock-memory-leak-detection.md
+    issues_found:
+      critical:
+        - DoH resolver initialization race (queryClient field)
+        - DoH resolver URL list race (resolvedURLs field)
+        - Core instance map race (nameResolverMap)
+        - HTTP response body resource leak
+        - Unbounded goroutine spawning in error handlers
+        - errCollector potential deadlock
+        - nameServer resolver initialization race
+      moderate:
+        - Deep recursion with concurrentNameServerList (expected behavior)
+    fixes_applied:
+      - file: internal/upstream/resolvers/doh/types.go
+        changes:
+          - Added initOnce sync.Once for thread-safe initialization
+          - Added urlMutex sync.RWMutex for URL list protection
+          - Fixed HTTP response body leak with defer Close()
+          - Fixed errCollector deadlock with safety check
+      - file: internal/core/instance.go
+        changes:
+          - Added mapMutex sync.RWMutex for map protection
+          - Protected all map reads with RLock
+          - Protected all map writes with Lock
+          - Removed go keyword from error handlers to prevent unbounded goroutines
+      - file: internal/upstream/resolvers/nameserver/types.go
+        changes:
+          - Added initOnce sync.Once for thread-safe initialization
+          - Replaced unsafe nil check with sync.Once pattern
+    testing:
+      method: Go race detector (go build -race)
+      test_scenario: 30 concurrent DNS queries (10 per domain)
+      domains_tested:
+        - www.google.com
+        - www.cloudflare.com
+        - www.github.com
+      results:
+        - All 30 queries completed successfully
+        - Zero race conditions detected
+        - Zero data races reported
+        - Clean race detector output
+    performance_impact:
+      - sync.Once: Zero overhead after first call (uses atomic operations)
+      - sync.RWMutex: Minimal overhead for read-heavy workload
+      - defer Close(): Ensures resource cleanup, prevents leaks
+      - Synchronous error handlers: Reduces goroutine count, improves debuggability
+    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions

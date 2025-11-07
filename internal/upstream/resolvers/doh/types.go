@@ -26,13 +26,14 @@ type DoH struct {
 	Socks5Username string
 	Socks5Password string
 	queryClient    *client
-	initializing   bool
+	initOnce       sync.Once
 }
 
 type client struct {
 	httpClient   *http.Client
 	serverName   string
 	resolvedURLs []string
+	urlMutex     sync.RWMutex
 }
 
 var typeOfDoH = descriptor.TypeOfNew(new(*DoH))
@@ -49,29 +50,31 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
-	if d.initializing {
-		return nil, ErrResolverNotReady
-	}
-	if d.queryClient == nil {
-		d.initializing = true
+	d.initOnce.Do(func() {
 		d.initClient()
-		d.initializing = false
-	}
+	})
 	wireFormattedQuery, e := query.Pack()
 	if e != nil {
 		return nil, e
 	}
+
+	// Get a snapshot of URLs with read lock
+	d.queryClient.urlMutex.RLock()
+	urls := make([]string, len(d.queryClient.resolvedURLs))
+	copy(urls, d.queryClient.resolvedURLs)
+	d.queryClient.urlMutex.RUnlock()
+
 	once := new(sync.Once)
 	msg := make(chan *dns.Msg)
 	err := make(chan error)
-	errCollector := make(chan error, len(d.queryClient.resolvedURLs))
+	errCollector := make(chan error, len(urls))
 	wg := new(sync.WaitGroup)
-	wg.Add(len(d.queryClient.resolvedURLs))
+	wg.Add(len(urls))
 	sendRequest := func(urlString string) {
+		defer wg.Done()
 		request, e := http.NewRequest(http.MethodPost, urlString, bytes.NewReader(wireFormattedQuery))
 		if e != nil {
 			errCollector <- e
-			wg.Done()
 			return
 		}
 		request.Host = d.queryClient.serverName
@@ -80,25 +83,26 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		response, e := d.queryClient.httpClient.Do(request)
 		if e != nil {
 			errCollector <- e
-			wg.Done()
 			return
 		}
+		defer response.Body.Close()
 		wireFormattedMsg, e := ioutil.ReadAll(response.Body)
-		response.Body.Close()
+		if e != nil {
+			errCollector <- e
+			return
+		}
 		m := new(dns.Msg)
 		e = m.Unpack(wireFormattedMsg)
 		if e != nil {
 			errCollector <- e
-			wg.Done()
 			return
 		}
 		once.Do(func() {
 			msg <- m
 			err <- nil
 		})
-		wg.Done()
 	}
-	for _, urlString := range d.queryClient.resolvedURLs {
+	for _, urlString := range urls {
 		go sendRequest(urlString)
 	}
 	go func() {
@@ -112,7 +116,11 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 					return
 				}
 			} else {
+				// Update URL list with write lock
+				d.queryClient.urlMutex.Lock()
 				d.queryClient.resolvedURLs = resolvedURLs
+				d.queryClient.urlMutex.Unlock()
+
 				if len(errCollector) < 1 {
 					m, e := d.Resolve(query, depth-1)
 					msg <- m
@@ -121,10 +129,15 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 				}
 			}
 			msg <- nil
-			for len(errCollector) > 1 {
-				<-errCollector
+			// Safely drain errCollector
+			if len(errCollector) > 0 {
+				for len(errCollector) > 1 {
+					<-errCollector
+				}
+				err <- <-errCollector
+			} else {
+				err <- UnknownHostError(d.URL.Hostname())
 			}
-			err <- <-errCollector
 		})
 	}()
 	return <-msg, <-err

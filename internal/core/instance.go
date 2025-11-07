@@ -23,6 +23,7 @@ type Instance interface {
 type instance struct {
 	listeners       []server.Server
 	nameResolverMap map[string]resolver.Resolver // fully qualified names are required
+	mapMutex        sync.RWMutex
 	defaultResolver resolver.Resolver
 	resolutionDepth int
 }
@@ -49,12 +50,13 @@ func (i *instance) AcceptProvider(rulesProvider provider.Provider, errorHandler 
 		if r == nil {
 			return
 		}
-		if _, hasKey := i.nameResolverMap[name]; hasKey {
-			return
+		i.mapMutex.Lock()
+		if _, hasKey := i.nameResolverMap[name]; !hasKey {
+			i.nameResolverMap[name] = r
 		}
-		i.nameResolverMap[name] = r
+		i.mapMutex.Unlock()
 	}, func(err error) {
-		go handleIfError(err, errorHandler)
+		handleIfError(err, errorHandler)
 	}) {
 	}
 }
@@ -101,12 +103,12 @@ func (i *instance) Listen(clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, s
 func listen(s server.Server, r resolver.Resolver, resolutionDepth int, clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, serverErrorMsgHandler func(query *dns.Msg) *dns.Msg, errorHandler func(err error), wait *sync.WaitGroup) {
 	s.Serve(func(query *dns.Msg) (reply *dns.Msg) {
 		if err := resolver.QueryCheck(query); err != nil {
-			go handleIfError(err, errorHandler)
+			handleIfError(err, errorHandler)
 			return clientErrorMsgHandler(query)
 		}
 		reply, err := r.Resolve(query, resolutionDepth)
 		if err != nil {
-			go handleIfError(err, errorHandler)
+			handleIfError(err, errorHandler)
 			return serverErrorMsgHandler(query)
 		}
 		return
@@ -131,15 +133,25 @@ func (i *instance) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if len(labels) < 2 {
 		return nil, ErrInvalidDomainName
 	}
-	if r, ok := i.nameResolverMap["\""+name+"\""]; ok {
+
+	// Check exact match with quotes
+	i.mapMutex.RLock()
+	r, ok := i.nameResolverMap["\""+name+"\""]
+	i.mapMutex.RUnlock()
+	if ok {
 		msg, err := r.Resolve(query, depth-1)
 		if err == nil && msg != nil {
 			return msg, nil
 		}
 	}
+
+	// Check domain hierarchy
 	for level := 0; level < len(labels)-1; level++ {
 		domainName := strings.Join(labels[level:], ".")
-		if r, ok := i.nameResolverMap[domainName]; ok {
+		i.mapMutex.RLock()
+		r, ok := i.nameResolverMap[domainName]
+		i.mapMutex.RUnlock()
+		if ok {
 			msg, err := r.Resolve(query, depth-1)
 			if err != nil {
 				continue
@@ -147,6 +159,7 @@ func (i *instance) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 			return msg, nil
 		}
 	}
+
 	msg, err := i.defaultResolver.Resolve(query, depth-1)
 	if err != nil {
 		return nil, err
