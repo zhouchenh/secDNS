@@ -1,0 +1,169 @@
+{
+  "comment": "secDNS Cache Resolver Configuration Examples",
+  "version": "1.2.0",
+
+  "examples": {
+
+    "basic_cache": {
+      "description": "Basic caching with default settings",
+      "type": "cache",
+      "resolver": {
+        "type": "nameServer",
+        "address": "8.8.8.8"
+      }
+    },
+
+    "production_cache": {
+      "description": "Production-ready caching with TTL bounds and large cache size",
+      "type": "cache",
+      "resolver": {
+        "type": "doh",
+        "url": "https://dns.google/dns-query"
+      },
+      "maxEntries": 50000,
+      "minTTL": 60,
+      "maxTTL": 7200,
+      "negativeTTL": 600,
+      "cleanupInterval": 120
+    },
+
+    "cache_with_fallback": {
+      "description": "Cache with automatic fallback to secondary DNS",
+      "type": "cache",
+      "resolver": {
+        "type": "sequence",
+        "resolvers": [
+          {
+            "type": "nameServer",
+            "address": "1.1.1.1",
+            "queryTimeout": 2
+          },
+          {
+            "type": "nameServer",
+            "address": "8.8.8.8",
+            "queryTimeout": 2
+          }
+        ]
+      },
+      "maxEntries": 20000,
+      "minTTL": 30,
+      "maxTTL": 3600
+    },
+
+    "aggressive_caching": {
+      "description": "Aggressive caching for slow or unreliable networks",
+      "type": "cache",
+      "resolver": {
+        "type": "nameServer",
+        "address": "1.1.1.1"
+      },
+      "maxEntries": 100000,
+      "minTTL": 300,
+      "maxTTL": 86400,
+      "negativeTTL": 1800,
+      "cleanupInterval": 300
+    },
+
+    "privacy_focused_cache": {
+      "description": "Cache with DNS-over-HTTPS and ECS privacy",
+      "type": "cache",
+      "resolver": {
+        "type": "doh",
+        "url": "https://cloudflare-dns.com/dns-query",
+        "queryTimeout": 3
+      },
+      "maxEntries": 30000,
+      "minTTL": 60,
+      "maxTTL": 3600,
+      "negativeTTL": 300
+    },
+
+    "low_memory_cache": {
+      "description": "Minimal cache for memory-constrained environments",
+      "type": "cache",
+      "resolver": {
+        "type": "nameServer",
+        "address": "8.8.8.8"
+      },
+      "maxEntries": 1000,
+      "minTTL": 0,
+      "maxTTL": 0,
+      "negativeTTL": 60,
+      "cleanupInterval": 30
+    },
+
+    "cache_with_dns64": {
+      "description": "Cache DNS64 responses for IPv6-only networks",
+      "type": "cache",
+      "resolver": {
+        "type": "dns64",
+        "resolver": {
+          "type": "nameServer",
+          "address": "8.8.8.8"
+        },
+        "prefix": "64:ff9b::/96"
+      },
+      "maxEntries": 15000,
+      "minTTL": 120,
+      "maxTTL": 3600
+    },
+
+    "cache_with_filtering": {
+      "description": "Cache with IPv4/IPv6 filtering",
+      "type": "cache",
+      "resolver": {
+        "type": "filterOutAIfAAAAPresents",
+        "resolver": {
+          "type": "nameServer",
+          "address": "1.1.1.1"
+        }
+      },
+      "maxEntries": 10000,
+      "minTTL": 60,
+      "maxTTL": 3600
+    }
+  },
+
+  "complete_server_config": {
+    "description": "Complete secDNS server configuration with caching",
+    "listen": [
+      {
+        "address": "127.0.0.1",
+        "port": 53,
+        "protocol": "udp"
+      },
+      {
+        "address": "127.0.0.1",
+        "port": 53,
+        "protocol": "tcp"
+      }
+    ],
+    "resolver": {
+      "type": "cache",
+      "resolver": {
+        "type": "sequence",
+        "resolvers": [
+          {
+            "type": "doh",
+            "url": "https://dns.google/dns-query",
+            "queryTimeout": 2,
+            "ecsMode": "add",
+            "ecsClientSubnet": "192.168.1.0/24"
+          },
+          {
+            "type": "nameServer",
+            "address": "1.1.1.1",
+            "protocol": "tcp-tls",
+            "tlsServerName": "1dot1dot1dot1.cloudflare-dns.com",
+            "queryTimeout": 3
+          }
+        ]
+      },
+      "maxEntries": 50000,
+      "minTTL": 60,
+      "maxTTL": 7200,
+      "negativeTTL": 600,
+      "cleanupInterval": 120
+    }
+  }
+}

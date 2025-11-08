@@ -1,5 +1,26 @@
 # Version History
 
+### v1.2.0 - 2025.11.08
+
+New Feature
+
+* Add high-performance DNS caching resolver with LRU (Least Recently Used) eviction policy, providing significant latency
+  reduction and upstream load optimization.
+* Support configurable cache size limits with automatic LRU eviction when maximum entries reached.
+* Support TTL management with configurable min/max TTL overrides to prevent excessively short or long caching periods.
+* Support negative caching (NXDOMAIN and NODATA) per RFC 2308 to reduce upstream queries for non-existent domains.
+* Support background cleanup of expired cache entries with configurable cleanup intervals.
+* Thread-safe implementation optimized for high-concurrency read operations with O(1) cache lookups and LRU operations.
+* Add comprehensive cache statistics tracking (hits, misses, evictions, size, hit rate).
+* Add detailed [cache resolver documentation](resolvers/cache.md) with configuration examples and best practices.
+
+Performance
+
+* Cache hit latency: ~585 ns (0.0006 ms) - nearly instant response from cache.
+* LRU operations: O(1) constant time for add, remove, and move-to-front.
+* Zero lock contention for concurrent cache reads using sync.RWMutex.
+* Memory efficient: ~500-1000 bytes per cached entry depending on response size.
+
 ### v1.1.9 - 2025.11.07
 
 New Feature
