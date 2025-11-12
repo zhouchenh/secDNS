@@ -4,6 +4,8 @@ secDNS supports the following resolvers.
 
 * [address](resolvers/address.md) - Reply queries with an IPv4 or IPv6 address.
 * [alias](resolvers/alias.md) - Reply queries with a CNAME.
+* [cache](resolvers/cache.md) - (secDNS v1.2.0+) Cache DNS responses from an upstream resolver with LRU eviction, TTL
+  management, and negative caching for improved performance.
 * [concurrentNameServerList](resolvers/concurrent_name_server_list.md) - Forward queries to specific resolvers
   concurrently.
 * [dns64](resolvers/dns64.md) - (secDNS v1.1.0+) Synthesize AAAA resource records from A resource records.

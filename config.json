@@ -18,6 +18,21 @@
     }
   ],
   "resolvers": {
+    "cache": {
+      "CachedCloudflare": {
+        "resolver": "CloudflareDNS",
+        "maxEntries": 10000,
+        "minTTL": 60,
+        "maxTTL": 3600,
+        "negativeTTL": 300
+      },
+      "Cached114DNS": {
+        "resolver": "114DNS",
+        "maxEntries": 5000,
+        "minTTL": 30,
+        "maxTTL": 7200
+      }
+    },
     "concurrentNameServerList": {
       "CloudflareDNS": [
         "Cloudflare-DoT",
@@ -72,9 +87,9 @@
       "type": "dnsmasqConf",
       "config": {
         "filePath": "accelerated-domains.china.conf",
-        "resolver": "114DNS"
+        "resolver": "Cached114DNS"
       }
     }
   ],
-  "defaultResolver": "CloudflareDNS"
+  "defaultResolver": "CachedCloudflare"
 }

@@ -8,6 +8,7 @@ secDNS is a DNS resolver to help you bypass DNS spoofing (aka DNS cache poisonin
 * Support query over SOCKS5 proxy.
 * Support DNS64.
 * Support EDNS Client Subnet (ECS) for geographic load balancing and optimized DNS responses.
+* Support high-performance DNS caching with LRU (Least Recently Used) eviction, TTL management, and negative caching.
 * Multiple listeners and upstream resolvers can be configured.
 * Queries to a group of upstream resolvers can be either queued (failover, trying the next resolver if one fails) or
   concurrent (accepting results from the fastest resolver).
