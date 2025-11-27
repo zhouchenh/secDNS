@@ -828,6 +828,29 @@ tasks_completed:
       - go test -mod=readonly ./...
     status: completed
 
+  - task: Phase 3 cache polish
+    date: 2025-11-07
+    description: Added TTL jitter, request prefetching, warmup queries, cache-control hints, and per-domain stats to the cache resolver
+    problems_addressed:
+      - Simultaneous expirations caused thundering herds (#12)
+      - No ability to refresh popular entries ahead of expiry (#8)
+      - No observability into domain-level cache performance (#11)
+      - No cache-control hook for upstream hints (#14)
+      - No warm cache during startup (#9)
+    key_changes:
+      - Added configurable TTL jitter, default positive/fallback TTLs, and NXDOMAIN/NODATA overrides
+      - Added per-entry access counters, prefetch threshold logic, and background refresh via singleflight
+      - Added EDNS0 local option parsing for cache-control hints (nocache, ttl=, noprefetch, nostale)
+      - Added optional warmupQueries config and ServeStale/StaleDuration controls
+      - Added domain statistics API and tests for cache-control, warmup, and stats tracking
+    files_modified:
+      - internal/upstream/resolvers/cache/types.go
+      - internal/upstream/resolvers/cache/types_test.go
+    tests:
+      - go test -mod=readonly ./internal/upstream/resolvers/cache
+      - go test -mod=readonly ./...
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
