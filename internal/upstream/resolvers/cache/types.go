@@ -193,7 +193,7 @@ func (c *Cache) get(key string) (*dns.Msg, *Entry, uint32, bool, bool) {
 	remainingTTL := c.calculateRemainingTTL(entry)
 	stale := false
 	if remainingTTL <= 0 {
-		if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
+		if c.ServeStale && !entry.DisableStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
 			stale = true
 		} else {
 			c.mutex.RUnlock()

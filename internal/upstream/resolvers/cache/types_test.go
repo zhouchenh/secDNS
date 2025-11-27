@@ -633,6 +633,105 @@ func TestCacheControlNoCache(t *testing.T) {
 	}
 }
 
+func TestCacheControlTTLOVerride(t *testing.T) {
+	response := new(dns.Msg)
+	response.SetQuestion("ttl.example.", dns.TypeA)
+	response.Answer = []dns.RR{
+		&dns.A{
+			Hdr: dns.RR_Header{
+				Name:   "ttl.example.",
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    300,
+			},
+			A: []byte{2, 2, 2, 2},
+		},
+	}
+	response.SetEdns0(4096, false)
+	opt := response.IsEdns0()
+	opt.Option = append(opt.Option, &dns.EDNS0_LOCAL{
+		Code: cacheControlOptionCode,
+		Data: []byte("ttl=30"),
+	})
+
+	mock := &mockResolver{response: response}
+	cache := newTestCache(mock)
+	cache.CacheControlEnabled = true
+	defer cache.Stop()
+
+	query := new(dns.Msg)
+	query.SetQuestion("ttl.example.", dns.TypeA)
+
+	resp, err := cache.Resolve(query, 10)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if ttl := resp.Answer[0].Header().Ttl; ttl != 30 {
+		t.Fatalf("response TTL = %d, want 30", ttl)
+	}
+
+	key := makeCacheKey(query)
+	cache.mutex.RLock()
+	entry, ok := cache.entries[key]
+	cache.mutex.RUnlock()
+	if !ok {
+		t.Fatalf("expected cache entry for %s", key)
+	}
+	if entry.OriginalTTL != 30 {
+		t.Fatalf("stored TTL = %d, want 30", entry.OriginalTTL)
+	}
+}
+
+func TestCacheControlNoStale(t *testing.T) {
+	response := new(dns.Msg)
+	response.SetQuestion("nostale.example.", dns.TypeA)
+	response.Answer = []dns.RR{
+		&dns.A{
+			Hdr: dns.RR_Header{
+				Name:   "nostale.example.",
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    1,
+			},
+			A: []byte{9, 9, 9, 9},
+		},
+	}
+	response.SetEdns0(4096, false)
+	opt := response.IsEdns0()
+	opt.Option = append(opt.Option, &dns.EDNS0_LOCAL{
+		Code: cacheControlOptionCode,
+		Data: []byte("nostale"),
+	})
+
+	mock := &mockResolver{response: response}
+	cache := newTestCache(mock)
+	cache.CacheControlEnabled = true
+	cache.ServeStale = true
+	cache.StaleDuration = 5 * time.Second
+	defer cache.Stop()
+
+	query := new(dns.Msg)
+	query.SetQuestion("nostale.example.", dns.TypeA)
+
+	if _, err := cache.Resolve(query, 10); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	time.Sleep(1200 * time.Millisecond) // expire TTL but remain within stale window
+
+	if _, err := cache.Resolve(query, 10); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	stats := cache.Stats()
+	if stats.Hits != 0 {
+		t.Fatalf("expected no cache hits when nostale directive present, got %d", stats.Hits)
+	}
+	if mock.calls < 2 {
+		t.Fatalf("expected second upstream call when stale serving disabled, got %d", mock.calls)
+	}
+}
+
 func TestCacheDomainStats(t *testing.T) {
 	response := new(dns.Msg)
 	response.SetQuestion("example.com.", dns.TypeA)

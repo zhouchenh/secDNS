@@ -94,6 +94,15 @@ func TestParseRequestMissingName(t *testing.T) {
 	}
 }
 
+func TestParseRequestUnsupportedMethod(t *testing.T) {
+	req := httptestRequest(http.MethodDelete, "", url.Values{"name": {"example.com"}})
+	h := &HTTPServer{}
+	_, err := h.parseRequest(req)
+	if !errors.Is(err, ErrUnsupportedMethod) {
+		t.Fatalf("expected ErrUnsupportedMethod, got %v", err)
+	}
+}
+
 func TestToHTTPResponse(t *testing.T) {
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)
@@ -221,6 +230,53 @@ func TestHandleResolveJSONBody(t *testing.T) {
 	}
 	if got := payload.Question[0]; got.Type != "AAAA" || got.Class != "CH" {
 		t.Fatalf("unexpected question payload: %+v", got)
+	}
+}
+
+func TestHandleResolveFormBody(t *testing.T) {
+	server := &HTTPServer{}
+	values := url.Values{
+		"name":  {"form.example"},
+		"type":  {"15"},
+		"class": {"1"},
+	}
+	req := httptestRequest(http.MethodPost, values.Encode(), nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	server.handleResolve(rec, req, func(query *dns.Msg) *dns.Msg {
+		if q := query.Question[0]; q.Qtype != dns.TypeMX || q.Qclass != dns.ClassINET {
+			t.Fatalf("unexpected query type/class: %+v", q)
+		}
+		resp := new(dns.Msg)
+		resp.SetQuestion(query.Question[0].Name, query.Question[0].Qtype)
+		resp.Answer = []dns.RR{
+			&dns.MX{
+				Hdr: dns.RR_Header{
+					Name:   query.Question[0].Name,
+					Rrtype: dns.TypeMX,
+					Class:  dns.ClassINET,
+					Ttl:    30,
+				},
+				Preference: 10,
+				Mx:         "mail.form.example.",
+			},
+		}
+		return resp
+	}, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload messageJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("response JSON decode failed: %v", err)
+	}
+	if got := payload.Question[0]; got.Type != "MX" || got.Class != "IN" {
+		t.Fatalf("unexpected question payload: %+v", got)
+	}
+	if len(payload.Answer) != 1 || payload.Answer[0].Type != "MX" {
+		t.Fatalf("unexpected answer payload: %+v", payload.Answer)
 	}
 }
 
