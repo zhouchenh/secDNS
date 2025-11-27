@@ -862,6 +862,16 @@ tasks_completed:
       - go test -mod=readonly ./...
     status: completed
 
+  - task: Convert common issues catalog to markdown
+    date: 2025-11-07
+    description: Split `llm-agent/possible-common-issues.json` categories into Markdown checklists for easier triage
+    files_created:
+      - llm-agent/common-issues/todo/00-concurrency_bugs.md (… through … /21-testing_quality.md)
+    notes: |
+      A simple Python helper parsed each category, created `00-<category>.md` under `llm-agent/common-issues/todo/`,
+      and listed every issue with context/symptom/root_cause/fix fields for future agents.
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
