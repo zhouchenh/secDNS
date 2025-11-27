@@ -34,6 +34,12 @@ func (d *DnsmasqConf) Provide(receive func(name string, r resolver.Resolver), re
 		return false
 	}
 	canReceiveError := receiveError != nil
+	if d.Resolver == nil {
+		if canReceiveError {
+			receiveError(NilResolverError(d.FilePath))
+		}
+		return false
+	}
 	if d.fileContent == nil {
 		file, err := core.OpenFile(d.FilePath)
 		if err != nil {
@@ -45,6 +51,7 @@ func (d *DnsmasqConf) Provide(receive func(name string, r resolver.Resolver), re
 			}
 			return false
 		}
+		defer func() { _ = file.Close() }()
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			d.fileContent = append(d.fileContent, scanner.Text())

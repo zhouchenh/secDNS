@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -16,11 +17,46 @@ func TestCacheKey(t *testing.T) {
 		qtype    uint16
 		qclass   uint16
 		expected string
+		mutate   func(msg *dns.Msg)
 	}{
-		{"A record", "example.com.", dns.TypeA, dns.ClassINET, "example.com.:1:1"},
-		{"AAAA record", "example.com.", dns.TypeAAAA, dns.ClassINET, "example.com.:28:1"},
-		{"Case insensitive", "Example.Com.", dns.TypeA, dns.ClassINET, "example.com.:1:1"},
-		{"Different type", "test.org.", dns.TypeMX, dns.ClassINET, "test.org.:15:1"},
+		{"A record", "example.com.", dns.TypeA, dns.ClassINET, "example.com.:1:1", nil},
+		{"AAAA record", "example.com.", dns.TypeAAAA, dns.ClassINET, "example.com.:28:1", nil},
+		{"Case insensitive", "Example.Com.", dns.TypeA, dns.ClassINET, "example.com.:1:1", nil},
+		{"Different type", "test.org.", dns.TypeMX, dns.ClassINET, "test.org.:15:1", nil},
+		{
+			name:     "ECS IPv4 subnet",
+			qname:    "ecs.example.com.",
+			qtype:    dns.TypeA,
+			qclass:   dns.ClassINET,
+			expected: "ecs.example.com.:1:1:ecs:1:24:203.0.113.0",
+			mutate: func(msg *dns.Msg) {
+				msg.SetEdns0(4096, false)
+				opt := msg.IsEdns0()
+				opt.Option = append(opt.Option, &dns.EDNS0_SUBNET{
+					Code:          dns.EDNS0SUBNET,
+					Family:        1,
+					SourceNetmask: 24,
+					Address:       net.ParseIP("203.0.113.45"),
+				})
+			},
+		},
+		{
+			name:     "ECS IPv6 subnet",
+			qname:    "ipv6.example.com.",
+			qtype:    dns.TypeAAAA,
+			qclass:   dns.ClassINET,
+			expected: "ipv6.example.com.:28:1:ecs:2:48:2001:db8:abcd::",
+			mutate: func(msg *dns.Msg) {
+				msg.SetEdns0(4096, false)
+				opt := msg.IsEdns0()
+				opt.Option = append(opt.Option, &dns.EDNS0_SUBNET{
+					Code:          dns.EDNS0SUBNET,
+					Family:        2,
+					SourceNetmask: 48,
+					Address:       net.ParseIP("2001:db8:abcd:1234::1"),
+				})
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -28,6 +64,9 @@ func TestCacheKey(t *testing.T) {
 			query := new(dns.Msg)
 			query.SetQuestion(tt.qname, tt.qtype)
 			query.Question[0].Qclass = tt.qclass
+			if tt.mutate != nil {
+				tt.mutate(query)
+			}
 
 			key := makeCacheKey(query)
 			if key != tt.expected {

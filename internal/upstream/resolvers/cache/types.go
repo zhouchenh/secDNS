@@ -6,6 +6,7 @@ import (
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,39 +130,47 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 // get retrieves a cached entry and returns a copy with adjusted TTL.
 // Returns (response, true) on hit, (nil, false) on miss.
 func (c *Cache) get(key string) (*dns.Msg, bool) {
-	// Fast read lock for lookup
+	// Fast read lock for lookup and creating a response snapshot
 	c.mutex.RLock()
 	entry, exists := c.entries[key]
-	c.mutex.RUnlock()
-
 	if !exists {
+		c.mutex.RUnlock()
 		return nil, false
 	}
 
-	// Check expiration (outside lock to minimize contention)
+	// Check expiration while the entry is guaranteed to exist
 	remainingTTL := c.calculateRemainingTTL(entry)
 	if remainingTTL <= 0 {
-		// Expired - remove it
-		c.mutex.Lock()
-		// Double-check it still exists (another goroutine might have removed it)
-		if _, stillExists := c.entries[key]; stillExists {
-			delete(c.entries, key)
-			c.lru.Remove(entry.lruNode)
-		}
-		c.mutex.Unlock()
+		c.mutex.RUnlock()
+		c.removeEntryIfCurrent(key, entry)
 		return nil, false
 	}
 
-	// Update LRU (move to front = most recently used)
+	// Copy the response while read lock is held so mutations can't race
+	response := entry.Response.Copy()
+	c.mutex.RUnlock()
+
+	// Update LRU (move to front = most recently used) if entry still current
 	c.mutex.Lock()
-	c.lru.MoveToFront(entry.lruNode)
+	if current, ok := c.entries[key]; ok && current == entry {
+		c.lru.MoveToFront(entry.lruNode)
+	}
 	c.mutex.Unlock()
 
-	// Create a copy of the response with adjusted TTL
-	response := entry.Response.Copy()
 	c.adjustTTL(response, remainingTTL)
 
 	return response, true
+}
+
+// removeEntryIfCurrent deletes the cache entry if it still matches the provided pointer.
+func (c *Cache) removeEntryIfCurrent(key string, entry *CacheEntry) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if current, ok := c.entries[key]; ok && current == entry {
+		delete(c.entries, key)
+		c.lru.Remove(entry.lruNode)
+	}
 }
 
 // set stores a DNS response in the cache.
@@ -223,7 +232,51 @@ func makeCacheKey(query *dns.Msg) string {
 	}
 	q := query.Question[0]
 	// Lowercase the name for case-insensitive matching (RFC 4343)
-	return fmt.Sprintf("%s:%d:%d", strings.ToLower(q.Name), q.Qtype, q.Qclass)
+	key := fmt.Sprintf("%s:%d:%d", strings.ToLower(q.Name), q.Qtype, q.Qclass)
+
+	if ecsKey := extractECSKey(query); ecsKey != "" {
+		key = key + ":" + ecsKey
+	}
+	return key
+}
+
+// extractECSKey produces a stable text representation of the ECS option for cache keys.
+func extractECSKey(query *dns.Msg) string {
+	opt := query.IsEdns0()
+	if opt == nil {
+		return ""
+	}
+	for _, option := range opt.Option {
+		if ecsOption, ok := option.(*dns.EDNS0_SUBNET); ok {
+			return formatECSCacheKey(ecsOption)
+		}
+	}
+	return ""
+}
+
+func formatECSCacheKey(opt *dns.EDNS0_SUBNET) string {
+	if opt == nil {
+		return ""
+	}
+	family := opt.Family
+	mask := opt.SourceNetmask
+	if mask == 0 {
+		return fmt.Sprintf("ecs:%d:%d", family, mask)
+	}
+
+	var ip net.IP
+	if family == 1 {
+		ip = opt.Address.To4()
+	} else {
+		ip = opt.Address.To16()
+	}
+	if ip == nil {
+		return fmt.Sprintf("ecs:%d:%d", family, mask)
+	}
+
+	maskBytes := net.CIDRMask(int(mask), len(ip)*8)
+	network := ip.Mask(maskBytes)
+	return fmt.Sprintf("ecs:%d:%d:%s", family, mask, network.String())
 }
 
 // calculateRemainingTTL calculates how much TTL remains for a cache entry.

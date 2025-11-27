@@ -23,3 +23,12 @@ type ReadFileError struct {
 func (e ReadFileError) Error() string {
 	return "rules/providers/dnsmasq/conf: An error occurred while reading dnsmasq conf file \"" + e.filePath + "\" " + e.err.Error()
 }
+
+type NilResolverError string
+
+func (e NilResolverError) Error() string {
+	if e == "" {
+		return "rules/providers/dnsmasq/conf: Resolver is nil"
+	}
+	return "rules/providers/dnsmasq/conf: Resolver is nil for file \"" + string(e) + "\""
+}

@@ -765,6 +765,29 @@ tasks_completed:
     branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
     status: completed
 
+  - task: Phase 1 cache and dnsmasq fixes
+    date: 2025-11-07
+    description: Implemented highest-priority fixes from IMPROVEMENTS_ANALYSIS (cache get race, ECS-aware cache keys, dnsmasqConf resource handling)
+    problems_addressed:
+      - Cache get() used entry pointer after releasing lock, risking stale pointer access (#1)
+      - Cache keys ignored EDNS Client Subnet data, causing incorrect sharing (#2)
+      - dnsmasqConf leaked file descriptors and allowed nil resolvers (#3, #16)
+    key_changes:
+      - Guarded cache entry removal with pointer checks and moved LRU updates after snapshot copy
+      - Extended cache keys with canonical ECS representation (family/netmask/network)
+      - Added helper to drop expired entries safely
+      - Ensured dnsmasqConf closes opened files and reports NilResolverError early
+      - Added regression tests for ECS cache keys and nil resolver handling
+    files_modified:
+      - internal/upstream/resolvers/cache/types.go
+      - internal/upstream/resolvers/cache/types_test.go
+      - internal/rules/providers/dnsmasq/conf/types.go
+      - internal/rules/providers/dnsmasq/conf/errors.go
+      - internal/rules/providers/dnsmasq/conf/types_test.go
+    tests:
+      - go test -mod=readonly ./...
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
