@@ -7,19 +7,17 @@ import (
 	"github.com/zhouchenh/secDNS/internal/core"
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
-	"regexp"
 	"strings"
 )
 
 type DnsmasqConf struct {
-	FilePath    string
-	Resolver    resolver.Resolver
-	fileContent []string
-	index       int
+	FilePath string
+	Resolver resolver.Resolver
+	entries  []string
+	index    int
 }
 
 var typeOfDnsmasqConf = descriptor.TypeOfNew(new(*DnsmasqConf))
-var commentRegEx = regexp.MustCompile("#.*$")
 
 func (d *DnsmasqConf) Type() descriptor.Type {
 	return typeOfDnsmasqConf
@@ -40,54 +38,76 @@ func (d *DnsmasqConf) Provide(receive func(name string, r resolver.Resolver), re
 		}
 		return false
 	}
-	if d.fileContent == nil {
-		file, err := core.OpenFile(d.FilePath)
-		if err != nil {
-			if canReceiveError {
-				receiveError(OpenFileError{
-					filePath: d.FilePath,
-					err:      err,
-				})
-			}
-			return false
-		}
-		defer func() { _ = file.Close() }()
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			d.fileContent = append(d.fileContent, scanner.Text())
-		}
-		if err := scanner.Err(); err != nil {
-			if canReceiveError {
-				receiveError(OpenFileError{
-					filePath: d.FilePath,
-					err:      err,
-				})
-			}
-		}
-		if len(d.fileContent) < 1 {
-			return false
-		}
+	if !d.ensureEntries(canReceiveError, receiveError) {
+		return false
 	}
-	for d.index < len(d.fileContent) {
-		line := commentRegEx.ReplaceAllString(d.fileContent[d.index], "")
-		s := strings.Split(line, "/")
-		if len(s) < 2 {
-			d.index++
+	if d.index >= len(d.entries) {
+		return false
+	}
+	receive(d.entries[d.index], d.Resolver)
+	d.index++
+	return d.index < len(d.entries)
+}
+
+// Reset makes the provider reusable from the start of the file.
+func (d *DnsmasqConf) Reset() {
+	d.index = 0
+}
+
+func (d *DnsmasqConf) ensureEntries(canReceiveError bool, receiveError func(err error)) bool {
+	if d.entries != nil {
+		return len(d.entries) > 0
+	}
+	file, err := core.OpenFile(d.FilePath)
+	if err != nil {
+		if canReceiveError {
+			receiveError(OpenFileError{
+				filePath: d.FilePath,
+				err:      err,
+			})
+		}
+		return false
+	}
+	defer func() { _ = file.Close() }()
+
+	var entries []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if idx := strings.IndexByte(line, '#'); idx >= 0 {
+			line = line[:idx]
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		name := s[1]
-		if !common.IsDomainName(name) {
+		parts := strings.Split(line, "/")
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[1])
+		if strings.ContainsAny(name, " \t") || !common.IsDomainName(name) {
 			if canReceiveError {
 				receiveError(InvalidDomainNameError(name))
 			}
-			d.index++
 			continue
 		}
-		receive(common.EnsureFQDN(name), d.Resolver)
-		d.index++
-		break
+		entries = append(entries, common.EnsureFQDN(name))
 	}
-	return d.index < len(d.fileContent)
+	if err := scanner.Err(); err != nil {
+		if canReceiveError {
+			receiveError(ReadFileError{
+				filePath: d.FilePath,
+				err:      err,
+			})
+		}
+	}
+	if len(entries) == 0 {
+		return false
+	}
+	d.entries = entries
+	d.index = 0
+	return true
 }
 
 func init() {
