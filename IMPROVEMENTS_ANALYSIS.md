@@ -119,11 +119,14 @@ type CacheEntry struct {
     OriginalTTL uint32
     CachedAt    time.Time
     lruNode     *LRUNode
-    AccessCount uint32  // NEW: track popularity
+    AccessCount uint64  // NEW: track popularity (uint64 to prevent overflow)
 }
 
+// In get() - increment atomically
+atomic.AddUint64(&entry.AccessCount, 1)
+
 // In cleanup goroutine, check for entries to prefetch:
-if entry.AccessCount >= popularityThreshold {
+if atomic.LoadUint64(&entry.AccessCount) >= popularityThreshold {
     elapsed := time.Since(entry.CachedAt)
     percentExpired := float64(elapsed) / float64(entry.OriginalTTL * time.Second)
     if percentExpired >= 0.90 {  // 90% expired
@@ -131,6 +134,9 @@ if entry.AccessCount >= popularityThreshold {
     }
 }
 ```
+
+**Why uint64?**
+Popular domains can receive thousands of queries per second. With uint32 (max 4.3 billion), a domain receiving 500 queries/second could overflow in ~99 days of continuous operation. Using uint64 (max 18 quintillion) makes overflow essentially impossible.
 
 **Benefits:**
 - Zero cache-miss latency for popular domains
