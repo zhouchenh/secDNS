@@ -851,6 +851,17 @@ tasks_completed:
       - go test -mod=readonly ./...
     status: completed
 
+  - task: Add HTTP API listener
+    date: 2025-11-07
+    description: Implemented an HTTP listener that exposes DNS resolution via REST-style JSON API
+    key_changes:
+      - Added `httpAPIServer` listener (`internal/listeners/servers/http/server`) with GET/POST handling and JSON responses
+      - Registered the listener in `internal/features/features.go`
+      - Documented configuration and request/response formats (`docs/listeners/http_api_server.md`, `docs/listeners.md`)
+    tests:
+      - go test -mod=readonly ./...
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
