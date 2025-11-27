@@ -7,6 +7,7 @@ import (
 	"github.com/miekg/dns"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -120,6 +121,145 @@ func TestToHTTPResponse(t *testing.T) {
 	}
 	if !strings.Contains(resp.Answer[0].Data, "93.184.216.34") {
 		t.Fatalf("answer data = %s, want IP", resp.Answer[0].Data)
+	}
+}
+
+func TestHandleResolveGETRoundTrip(t *testing.T) {
+	server := &HTTPServer{}
+	rec := httptest.NewRecorder()
+	req := httptestRequest(http.MethodGet, "", url.Values{
+		"name": {"example.com"},
+		"type": {"TXT"},
+	})
+
+	var captured *dns.Msg
+	handler := func(query *dns.Msg) *dns.Msg {
+		captured = query.Copy()
+		resp := new(dns.Msg)
+		resp.SetQuestion(query.Question[0].Name, query.Question[0].Qtype)
+		resp.Question[0].Qclass = query.Question[0].Qclass
+		resp.Answer = []dns.RR{
+			&dns.TXT{
+				Hdr: dns.RR_Header{
+					Name:   query.Question[0].Name,
+					Rrtype: dns.TypeTXT,
+					Class:  dns.ClassINET,
+					Ttl:    120,
+				},
+				Txt: []string{"hello"},
+			},
+		}
+		return resp
+	}
+
+	server.handleResolve(rec, req, handler, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if captured == nil {
+		t.Fatalf("handler was not invoked")
+	}
+	if got := captured.Question[0]; got.Name != "example.com." || got.Qtype != dns.TypeTXT {
+		t.Fatalf("unexpected query forwarded: %+v", got)
+	}
+
+	var payload messageJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("response JSON decode failed: %v", err)
+	}
+	if len(payload.Answer) != 1 {
+		t.Fatalf("expected 1 answer, got %d", len(payload.Answer))
+	}
+	if payload.Answer[0].TTL != 120 || payload.Answer[0].Type != "TXT" {
+		t.Fatalf("unexpected answer payload: %+v", payload.Answer[0])
+	}
+}
+
+func TestHandleResolveJSONBody(t *testing.T) {
+	server := &HTTPServer{}
+	body := map[string]string{
+		"name":  "api.example",
+		"type":  "AAAA",
+		"class": "CH",
+	}
+	data, _ := json.Marshal(body)
+	rawBody := string(data)
+	req := httptestRequest(http.MethodPost, rawBody, nil)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	checkReq := httptestRequest(http.MethodPost, rawBody, nil)
+	checkReq.Header.Set("Content-Type", "application/json")
+	parsed, err := server.parseRequest(checkReq)
+	if err != nil {
+		t.Fatalf("parseRequest error = %v", err)
+	}
+	if parsed.qClass() != dns.ClassCHAOS {
+		t.Fatalf("expected parsed class CHAOS, got %d", parsed.qClass())
+	}
+
+	server.handleResolve(rec, req, func(query *dns.Msg) *dns.Msg {
+		if query.Question[0].Qclass != dns.ClassCHAOS {
+			t.Fatalf("expected class CHAOS, got %d", query.Question[0].Qclass)
+		}
+		resp := new(dns.Msg)
+		resp.SetQuestion(query.Question[0].Name, query.Question[0].Qtype)
+		resp.Question[0].Qclass = query.Question[0].Qclass
+		if resp.Question[0].Qclass != dns.ClassCHAOS {
+			t.Fatalf("reply question class = %d", resp.Question[0].Qclass)
+		}
+		return resp
+	}, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload messageJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("response JSON decode failed: %v", err)
+	}
+	if got := payload.Question[0]; got.Type != "AAAA" || got.Class != "CH" {
+		t.Fatalf("unexpected question payload: %+v", got)
+	}
+}
+
+func TestHandleResolveErrorResponses(t *testing.T) {
+	server := &HTTPServer{}
+	rec := httptest.NewRecorder()
+	req := httptestRequest(http.MethodGet, "", url.Values{})
+
+	server.handleResolve(rec, req, func(query *dns.Msg) *dns.Msg {
+		return nil
+	}, nil)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing name status = %d, want 400", rec.Code)
+	}
+	var errPayload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &errPayload); err != nil {
+		t.Fatalf("decode error payload: %v", err)
+	}
+	if errPayload["error"] != ErrMissingName.Error() {
+		t.Fatalf("unexpected error payload: %v", errPayload)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptestRequest(http.MethodGet, "", url.Values{"name": {"example.com"}})
+
+	server.handleResolve(rec, req, func(query *dns.Msg) *dns.Msg {
+		return nil
+	}, nil)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("nil reply status = %d, want 502", rec.Code)
+	}
+	errPayload = map[string]string{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &errPayload); err != nil {
+		t.Fatalf("decode error payload: %v", err)
+	}
+	if errPayload["error"] != errNilReply.Error() {
+		t.Fatalf("unexpected error payload: %v", errPayload)
 	}
 }
 
