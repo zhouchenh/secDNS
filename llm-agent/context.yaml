@@ -810,6 +810,24 @@ tasks_completed:
       - go test -mod=readonly ./...
     status: completed
 
+  - task: dnsmasq provider hardening
+    date: 2025-11-07
+    description: Improved dnsmasqConf provider performance and diagnostics plus duplicate rule warnings
+    key_changes:
+      - Added DuplicateRuleWarning from core.AcceptProvider so conflicting domains surface via error handler
+      - Reworked dnsmasqConf parsing to strip comments via simple slicing, cache validated entries, and expose Reset()
+      - Added upfront validation to report malformed domains once per file
+      - Added unit tests for dnsmasq provider parsing, invalid domain reporting, and reuse
+    files_modified:
+      - internal/core/errors.go
+      - internal/core/instance.go
+      - internal/core/instance_test.go
+      - internal/rules/providers/dnsmasq/conf/types.go
+      - internal/rules/providers/dnsmasq/conf/types_test.go
+    tests:
+      - go test -mod=readonly ./...
+    status: completed
+
 llm_agent_notes:
   - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
   - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
