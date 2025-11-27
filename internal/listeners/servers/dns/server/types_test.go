@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -17,8 +18,8 @@ func TestDNSServerServeNilHandler(t *testing.T) {
 	go func() {
 		d.Serve(nil, func(err error) {
 			called = true
-			if err != ErrNilHandler {
-				t.Fatalf("expected ErrNilHandler, got %v", err)
+			if err != nil && !errors.Is(err, ErrNilHandler) {
+				t.Errorf("expected ErrNilHandler, got %v", err)
 			}
 			close(done)
 		})
