@@ -97,8 +97,8 @@ These should be configurable fields.
 - Upstream failures don't immediately impact clients
 - Better user experience during TTL transitions
 
-#### 8. **No Auto-Update for Popular Expired Domains (Prefetching)**
-For frequently accessed entries nearing expiration, proactively refresh them in the background before they expire.
+#### 8. **No Prefetching for Popular Domains**
+Proactively refresh frequently accessed entries in the background before they expire.
 
 **Current behavior:**
 - Entry expires at TTL=0
@@ -248,7 +248,7 @@ The `index` field persists across `Provide()` calls. While this works for the cu
 
 ### Phase 3: Quality of Life
 9. Add duplicate rule warnings (#17)
-10. Add auto-update for popular domains (#8)
+10. Add prefetching for popular domains (#8)
 11. Add cache warming support (#9)
 12. Add per-domain statistics (#11)
 
@@ -265,14 +265,14 @@ The `index` field persists across `Provide()` calls. While this works for the cu
 - **#4 (Request coalescing):** 4-6 hours - requires sync primitives and careful design
 - **#5 (Cleanup optimization):** 3-4 hours - implement timer wheel or min-heap
 - **#7 (Stale-while-revalidate):** 6-8 hours - complex feature, needs background refresh
-- **#8 (Auto-update/Prefetching):** 6-8 hours - access tracking, background refresh goroutines, rate limiting
+- **#8 (Prefetching):** 6-8 hours - access tracking, background refresh goroutines, rate limiting
 
-## Synergy: Auto-Update + Stale-While-Revalidate
+## Synergy: Prefetch + Stale-While-Revalidate
 
 **Best Practice:** Combine features #7 and #8 for optimal user experience:
 
 **Tier 1 - Popular Domains (>10 accesses):**
-- Auto-update at 90% TTL via prefetching
+- Prefetch at 90% TTL
 - Clients always get fresh data
 - Zero cache misses
 
