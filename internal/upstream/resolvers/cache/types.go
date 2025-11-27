@@ -8,6 +8,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"golang.org/x/sync/singleflight"
+	"math/rand"
 	"net"
 	"strconv"
 	"strings"
@@ -19,18 +20,23 @@ import (
 // Cache implements a high-performance, thread-safe DNS caching resolver with LRU eviction.
 type Cache struct {
 	// Configuration (immutable after init)
-	Resolver           resolver.Resolver // Upstream resolver
-	MaxEntries         int               // Maximum cache entries (0 = unlimited)
-	MinTTL             time.Duration     // Minimum TTL override (0 = no override)
-	MaxTTL             time.Duration     // Maximum TTL override (0 = no override)
-	NegativeTTL        time.Duration     // TTL for negative responses (NXDOMAIN, NODATA)
-	NXDomainTTL        time.Duration     // Override TTL for NXDOMAIN
-	NoDataTTL          time.Duration     // Override TTL for NODATA
-	CleanupInterval    time.Duration     // How often to run cleanup (default 60s)
-	ServeStale         bool              // Serve stale responses while refreshing
-	StaleDuration      time.Duration     // How long stale responses are valid
-	DefaultPositiveTTL time.Duration     // Default TTL for positive responses lacking TTLs
-	DefaultFallbackTTL time.Duration     // Fallback TTL when no records contain TTL
+	Resolver            resolver.Resolver // Upstream resolver
+	MaxEntries          int               // Maximum cache entries (0 = unlimited)
+	MinTTL              time.Duration     // Minimum TTL override (0 = no override)
+	MaxTTL              time.Duration     // Maximum TTL override (0 = no override)
+	NegativeTTL         time.Duration     // TTL for negative responses (NXDOMAIN, NODATA)
+	NXDomainTTL         time.Duration     // Override TTL for NXDOMAIN
+	NoDataTTL           time.Duration     // Override TTL for NODATA
+	CleanupInterval     time.Duration     // How often to run cleanup (default 60s)
+	ServeStale          bool              // Serve stale responses while refreshing
+	StaleDuration       time.Duration     // How long stale responses are valid
+	DefaultPositiveTTL  time.Duration     // Default TTL for positive responses lacking TTLs
+	DefaultFallbackTTL  time.Duration     // Fallback TTL when no records contain TTL
+	TTLJitterPercent    float64           // Randomize expirations to avoid thundering herd
+	PrefetchThreshold   uint64            // Access count threshold for background refresh
+	PrefetchPercent     float64           // Fraction of TTL elapsed before prefetching
+	WarmupQueries       []WarmupQuery     // Optional warmup queries to load on start
+	CacheControlEnabled bool              // Honor cache-control hints from upstream
 
 	// Cache state (protected by mutex)
 	entries map[string]*CacheEntry
@@ -48,15 +54,23 @@ type Cache struct {
 	stopCleanup chan struct{}
 	cleanupDone sync.WaitGroup
 	requests    singleflight.Group
+	rng         *rand.Rand
+	rngMutex    sync.Mutex
+
+	domainStats sync.Map
 }
 
 // CacheEntry represents a single cached DNS response.
 type CacheEntry struct {
-	Response    *dns.Msg  // Deep copy of DNS response
-	OriginalTTL uint32    // Original TTL from upstream (in seconds)
-	CachedAt    time.Time // When this entry was cached
-	ExpiresAt   time.Time // When entry expires
-	lruNode     *LRUNode  // Pointer to LRU list node
+	Response        *dns.Msg  // Deep copy of DNS response
+	OriginalTTL     uint32    // Original TTL from upstream (in seconds)
+	CachedAt        time.Time // When this entry was cached
+	ExpiresAt       time.Time // When entry expires
+	lruNode         *LRUNode  // Pointer to LRU list node
+	AccessCount     uint64
+	prefetching     uint32
+	DisablePrefetch bool
+	DisableStale    bool
 }
 
 // CacheStats represents cache statistics.
@@ -68,7 +82,38 @@ type CacheStats struct {
 	HitRate   float64 // Cache hit rate (hits / total requests)
 }
 
+// DomainStats captures per-domain cache behavior.
+type DomainStats struct {
+	Hits        uint64
+	Misses      uint64
+	Prefetches  uint64
+	StaleServed uint64
+}
+
+// WarmupQuery describes a query to prime during startup.
+type WarmupQuery struct {
+	Name  string
+	Type  uint16
+	Class uint16
+}
+
 var typeOfCache = descriptor.TypeOfNew(new(*Cache))
+
+const cacheControlOptionCode = 0xFDE9
+
+type domainStatsCounters struct {
+	hits        uint64
+	misses      uint64
+	prefetches  uint64
+	staleServed uint64
+}
+
+type cacheControlDirectives struct {
+	skipCache       bool
+	disablePrefetch bool
+	disableStale    bool
+	ttlOverride     *uint32
+}
 
 // Type returns the descriptor type for the Cache resolver.
 func (c *Cache) Type() descriptor.Type {
@@ -102,19 +147,25 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		return c.Resolver.Resolve(query, depth-1)
 	}
 
+	qName := strings.ToLower(query.Question[0].Name)
+
 	// Try cache lookup
-	if response, stale, found := c.get(key); found {
+	if response, entry, _, stale, found := c.get(key); found {
 		atomic.AddUint64(&c.hits, 1)
+		c.recordDomainHit(qName, stale)
 		// Set the query ID to match the incoming query
 		response.Id = query.Id
 		if stale {
 			go c.triggerRefresh(key, query.Copy(), depth-1)
+		} else {
+			c.maybePrefetch(key, entry, query.Copy(), depth-1)
 		}
 		return response, nil
 	}
 
 	// Cache miss - query upstream
 	atomic.AddUint64(&c.misses, 1)
+	c.recordDomainMiss(qName)
 	value, err, _ := c.requests.Do(key, func() (interface{}, error) {
 		return c.fetchAndStore(query.Copy(), depth-1, key)
 	})
@@ -128,14 +179,14 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 }
 
 // get retrieves a cached entry and returns a copy with adjusted TTL.
-// Returns (response, stale, true) on hit, (nil, false, false) on miss.
-func (c *Cache) get(key string) (*dns.Msg, bool, bool) {
+// Returns (response, entry, remainingTTL, stale, true) on hit, (nil, nil, 0, false, false) on miss.
+func (c *Cache) get(key string) (*dns.Msg, *CacheEntry, uint32, bool, bool) {
 	// Fast read lock for lookup and creating a response snapshot
 	c.mutex.RLock()
 	entry, exists := c.entries[key]
 	if !exists {
 		c.mutex.RUnlock()
-		return nil, false, false
+		return nil, nil, 0, false, false
 	}
 
 	// Check expiration while the entry is guaranteed to exist
@@ -147,12 +198,13 @@ func (c *Cache) get(key string) (*dns.Msg, bool, bool) {
 		} else {
 			c.mutex.RUnlock()
 			c.removeEntryIfCurrent(key, entry)
-			return nil, false, false
+			return nil, nil, 0, false, false
 		}
 	}
 
 	// Copy the response while read lock is held so mutations can't race
 	response := entry.Response.Copy()
+	atomic.AddUint64(&entry.AccessCount, 1)
 	c.mutex.RUnlock()
 
 	// Update LRU (move to front = most recently used) if entry still current
@@ -168,7 +220,7 @@ func (c *Cache) get(key string) (*dns.Msg, bool, bool) {
 		c.adjustTTL(response, remainingTTL)
 	}
 
-	return response, stale, true
+	return response, entry, remainingTTL, stale, true
 }
 
 // removeEntryIfCurrent deletes the cache entry if it still matches the provided pointer.
@@ -184,6 +236,10 @@ func (c *Cache) removeEntryIfCurrent(key string, entry *CacheEntry) {
 
 // set stores a DNS response in the cache.
 func (c *Cache) set(key string, response *dns.Msg) {
+	c.setWithDirectives(key, response, cacheControlDirectives{})
+}
+
+func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cacheControlDirectives) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -191,9 +247,17 @@ func (c *Cache) set(key string, response *dns.Msg) {
 	if existing, exists := c.entries[key]; exists {
 		// Update existing entry
 		existing.Response = response.Copy()
-		existing.OriginalTTL = c.extractTTLWithOverrides(response)
+		newTTL := c.applyTTLJitter(c.extractTTLWithOverrides(response))
+		if directives.ttlOverride != nil && *directives.ttlOverride > 0 && *directives.ttlOverride < newTTL {
+			newTTL = *directives.ttlOverride
+		}
+		existing.OriginalTTL = newTTL
 		existing.CachedAt = time.Now()
 		existing.ExpiresAt = existing.CachedAt.Add(time.Duration(existing.OriginalTTL) * time.Second)
+		existing.AccessCount = 0
+		existing.prefetching = 0
+		existing.DisablePrefetch = directives.disablePrefetch
+		existing.DisableStale = directives.disableStale
 		c.lru.MoveToFront(existing.lruNode)
 		heap.Push(&c.queue, expirationItem{key: key, expiresAt: existing.ExpiresAt})
 		return
@@ -210,10 +274,15 @@ func (c *Cache) set(key string, response *dns.Msg) {
 
 	// Create new entry with TTL overrides applied
 	entry := &CacheEntry{
-		Response:    response.Copy(), // CRITICAL: Deep copy to avoid mutation
-		OriginalTTL: c.extractTTLWithOverrides(response),
-		CachedAt:    time.Now(),
-		lruNode:     c.lru.AddToFront(key),
+		Response:        response.Copy(), // CRITICAL: Deep copy to avoid mutation
+		OriginalTTL:     c.applyTTLJitter(c.extractTTLWithOverrides(response)),
+		CachedAt:        time.Now(),
+		lruNode:         c.lru.AddToFront(key),
+		DisablePrefetch: directives.disablePrefetch,
+		DisableStale:    directives.disableStale,
+	}
+	if directives.ttlOverride != nil && *directives.ttlOverride > 0 && *directives.ttlOverride < entry.OriginalTTL {
+		entry.OriginalTTL = *directives.ttlOverride
 	}
 	entry.ExpiresAt = entry.CachedAt.Add(time.Duration(entry.OriginalTTL) * time.Second)
 
@@ -229,11 +298,15 @@ func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, 
 	if err != nil {
 		return nil, err
 	}
-	if c.shouldCache(response) {
-		c.set(key, response)
+	control := cacheControlDirectives{}
+	if c.CacheControlEnabled {
+		control = c.parseCacheControl(response)
+	}
+	if !control.skipCache && c.shouldCache(response) {
+		c.setWithDirectives(key, response, control)
 	}
 	resp := response.Copy()
-	c.applyTTLOverrides(resp)
+	c.applyTTLOverrides(resp, control.ttlOverride)
 	return resp, nil
 }
 
@@ -317,6 +390,24 @@ func formatECSCacheKey(opt *dns.EDNS0_SUBNET) string {
 	maskBytes := net.CIDRMask(int(mask), len(ip)*8)
 	network := ip.Mask(maskBytes)
 	return fmt.Sprintf("ecs:%d:%d:%s", family, mask, network.String())
+}
+
+func (c *Cache) applyTTLJitter(ttl uint32) uint32 {
+	if ttl == 0 || c.TTLJitterPercent <= 0 || c.rng == nil {
+		return ttl
+	}
+	jitterRange := int(float64(ttl) * c.TTLJitterPercent)
+	if jitterRange <= 0 {
+		return ttl
+	}
+	c.rngMutex.Lock()
+	defer c.rngMutex.Unlock()
+	delta := c.rng.Intn(2*jitterRange+1) - jitterRange
+	adjusted := int(ttl) + delta
+	if adjusted < 1 {
+		adjusted = 1
+	}
+	return uint32(adjusted)
 }
 
 // calculateRemainingTTL calculates how much TTL remains for a cache entry.
@@ -444,11 +535,41 @@ func (c *Cache) shouldCache(response *dns.Msg) bool {
 	return false
 }
 
-func (c *Cache) applyTTLOverrides(response *dns.Msg) {
-	if c.MinTTL == 0 && c.MaxTTL == 0 {
-		return
+func (c *Cache) parseCacheControl(response *dns.Msg) cacheControlDirectives {
+	d := cacheControlDirectives{}
+	opt := response.IsEdns0()
+	if opt == nil {
+		return d
 	}
+	for _, option := range opt.Option {
+		local, ok := option.(*dns.EDNS0_LOCAL)
+		if !ok || local.Code != cacheControlOptionCode {
+			continue
+		}
+		directive := strings.ToLower(string(local.Data))
+		switch {
+		case directive == "nocache":
+			d.skipCache = true
+		case directive == "noprefetch":
+			d.disablePrefetch = true
+		case directive == "nostale":
+			d.disableStale = true
+		case strings.HasPrefix(directive, "ttl="):
+			value := strings.TrimPrefix(directive, "ttl=")
+			if secs, err := strconv.Atoi(value); err == nil && secs > 0 {
+				v := uint32(secs)
+				d.ttlOverride = &v
+			}
+		}
+	}
+	return d
+}
+
+func (c *Cache) applyTTLOverrides(response *dns.Msg, override *uint32) {
 	ttl := c.extractTTL(response)
+	if override != nil && *override > 0 && *override < ttl {
+		ttl = *override
+	}
 	if c.MinTTL > 0 && ttl < uint32(c.MinTTL.Seconds()) {
 		ttl = uint32(c.MinTTL.Seconds())
 	}
@@ -482,12 +603,25 @@ func (c *Cache) init() {
 	if c.DefaultFallbackTTL == 0 {
 		c.DefaultFallbackTTL = 5 * time.Minute
 	}
+	if c.TTLJitterPercent == 0 {
+		c.TTLJitterPercent = 0.05
+	}
+	if c.PrefetchPercent == 0 {
+		c.PrefetchPercent = 0.9
+	}
 	if c.StaleDuration == 0 {
 		c.StaleDuration = 30 * time.Second
+	}
+	if c.PrefetchThreshold == 0 {
+		c.PrefetchThreshold = 10
+	}
+	if c.rng == nil {
+		c.rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 
 	// Start background cleanup goroutine
 	c.startCleanup()
+	c.startWarmup()
 }
 
 // startCleanup starts a background goroutine that periodically removes expired entries.
@@ -506,6 +640,23 @@ func (c *Cache) startCleanup() {
 			case <-c.stopCleanup:
 				return
 			}
+		}
+	}()
+}
+
+func (c *Cache) startWarmup() {
+	if len(c.WarmupQueries) == 0 {
+		return
+	}
+	go func() {
+		for _, q := range c.WarmupQueries {
+			msg := new(dns.Msg)
+			name := common.EnsureFQDN(q.Name)
+			msg.SetQuestion(name, q.Type)
+			if q.Class != 0 {
+				msg.Question[0].Qclass = q.Class
+			}
+			_, _ = c.Resolve(msg, 64)
 		}
 	}()
 }
@@ -577,6 +728,101 @@ func (c *Cache) Clear() {
 	c.entries = make(map[string]*CacheEntry)
 	c.lru.Clear()
 	c.queue = expirationHeap{}
+}
+
+// DomainStatsFor returns statistics for a specific domain.
+func (c *Cache) DomainStatsFor(name string) DomainStats {
+	entry, ok := c.domainStats.Load(strings.ToLower(name))
+	if !ok {
+		return DomainStats{}
+	}
+	stats := entry.(*domainStatsCounters)
+	return DomainStats{
+		Hits:        atomic.LoadUint64(&stats.hits),
+		Misses:      atomic.LoadUint64(&stats.misses),
+		Prefetches:  atomic.LoadUint64(&stats.prefetches),
+		StaleServed: atomic.LoadUint64(&stats.staleServed),
+	}
+}
+
+// AllDomainStats returns a snapshot of every tracked domain.
+func (c *Cache) AllDomainStats() map[string]DomainStats {
+	snapshot := make(map[string]DomainStats)
+	c.domainStats.Range(func(key, value interface{}) bool {
+		stats := value.(*domainStatsCounters)
+		snapshot[key.(string)] = DomainStats{
+			Hits:        atomic.LoadUint64(&stats.hits),
+			Misses:      atomic.LoadUint64(&stats.misses),
+			Prefetches:  atomic.LoadUint64(&stats.prefetches),
+			StaleServed: atomic.LoadUint64(&stats.staleServed),
+		}
+		return true
+	})
+	return snapshot
+}
+
+func (c *Cache) recordDomainHit(name string, stale bool) {
+	stats := c.domainStatsEntry(name)
+	atomic.AddUint64(&stats.hits, 1)
+	if stale {
+		atomic.AddUint64(&stats.staleServed, 1)
+	}
+}
+
+func (c *Cache) recordDomainMiss(name string) {
+	stats := c.domainStatsEntry(name)
+	atomic.AddUint64(&stats.misses, 1)
+}
+
+func (c *Cache) recordPrefetch(name string) {
+	stats := c.domainStatsEntry(name)
+	atomic.AddUint64(&stats.prefetches, 1)
+}
+
+func (c *Cache) domainStatsEntry(name string) *domainStatsCounters {
+	key := strings.ToLower(name)
+	if entry, ok := c.domainStats.Load(key); ok {
+		return entry.(*domainStatsCounters)
+	}
+	stats := &domainStatsCounters{}
+	actual, _ := c.domainStats.LoadOrStore(key, stats)
+	return actual.(*domainStatsCounters)
+}
+
+func (c *Cache) maybePrefetch(key string, entry *CacheEntry, query *dns.Msg, depth int) {
+	if entry == nil || query == nil {
+		return
+	}
+	if entry.DisablePrefetch || c.PrefetchThreshold == 0 || c.PrefetchPercent <= 0 {
+		return
+	}
+	totalTTL := time.Duration(entry.OriginalTTL) * time.Second
+	if totalTTL <= 0 {
+		return
+	}
+	if atomic.LoadUint64(&entry.AccessCount) < c.PrefetchThreshold {
+		return
+	}
+	elapsed := time.Since(entry.CachedAt)
+	if elapsed <= 0 {
+		return
+	}
+	fraction := elapsed.Seconds() / totalTTL.Seconds()
+	if fraction < c.PrefetchPercent {
+		return
+	}
+	if !atomic.CompareAndSwapUint32(&entry.prefetching, 0, 1) {
+		return
+	}
+	go func(name, cacheKey string, e *CacheEntry) {
+		defer atomic.StoreUint32(&e.prefetching, 0)
+		_, err, _ := c.requests.Do(cacheKey, func() (interface{}, error) {
+			return c.fetchAndStore(query, depth, cacheKey)
+		})
+		if err == nil {
+			c.recordPrefetch(name)
+		}
+	}(strings.ToLower(query.Question[0].Name), key, entry)
 }
 
 type expirationItem struct {
@@ -964,6 +1210,159 @@ func init() {
 							},
 						},
 					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"TTLJitterPercent"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"ttlJitterPercent"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return num, true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"ttlJitterPercent"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 {
+									return nil, false
+								}
+								return num, true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"PrefetchThreshold"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"prefetchThreshold"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return uint64(num), true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"prefetchThreshold"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseUint(str, 10, 64)
+								if err != nil {
+									return nil, false
+								}
+								return num, true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"PrefetchPercent"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"prefetchPercent"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 || num > 1 {
+									return nil, false
+								}
+								return num, true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"prefetchPercent"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 || num > 1 {
+									return nil, false
+								}
+								return num, true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"WarmupQueries"},
+				ValueSource: descriptor.ObjectAtPath{
+					ObjectPath: descriptor.Path{"warmupQueries"},
+					AssignableKind: descriptor.AssignmentFunction(func(i interface{}) (object interface{}, ok bool) {
+						raw, ok := i.([]interface{})
+						if !ok {
+							return nil, false
+						}
+						queries := make([]WarmupQuery, 0, len(raw))
+						for _, elem := range raw {
+							entry, ok := elem.(map[string]interface{})
+							if !ok {
+								continue
+							}
+							name, _ := entry["name"].(string)
+							if name == "" {
+								continue
+							}
+							qType := uint16(dns.TypeA)
+							if v, ok := entry["type"].(float64); ok {
+								qType = uint16(v)
+							} else if v, ok := entry["type"].(string); ok {
+								if parsed, err := strconv.Atoi(v); err == nil {
+									qType = uint16(parsed)
+								}
+							}
+							qClass := uint16(dns.ClassINET)
+							if v, ok := entry["class"].(float64); ok {
+								qClass = uint16(v)
+							} else if v, ok := entry["class"].(string); ok {
+								if parsed, err := strconv.Atoi(v); err == nil {
+									qClass = uint16(parsed)
+								}
+							}
+							queries = append(queries, WarmupQuery{Name: name, Type: qType, Class: qClass})
+						}
+						return queries, true
+					}),
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"CacheControlEnabled"},
+				ValueSource: descriptor.ObjectAtPath{
+					ObjectPath:     descriptor.Path{"cacheControlEnabled"},
+					AssignableKind: descriptor.KindBool,
 				},
 			},
 		},
