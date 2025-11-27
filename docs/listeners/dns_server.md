@@ -2,7 +2,7 @@
 
 * Type: `dnsServer`
 
-The `dnsServer` listener listens for DNS queries and sends back answers.
+The `dnsServer` listener listens for DNS queries and sends back answers over classic DNS transports (UDP or TCP). It does **not** terminate DNS-over-TLS (DoT); if you require DoT, use a resolver that speaks DoT upstream while keeping this listener on the LAN edge.
 
 ## ListenerConfigObject
 
@@ -30,6 +30,6 @@ Default: `53`
 
 > `protocol`: `"tcp"` | `"udp"` _(Optional)_
 
-The type of acceptable network protocol, `"tcp"` or `"udp"`.
+The type of acceptable network protocol, `"tcp"` or `"udp"`. DoT is not supported on listener sockets; keep TLS encryption on the resolver side.
 
 Default: `"udp"`

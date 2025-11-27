@@ -1,5 +1,7 @@
 # cache
 
+_Available in secDNS v1.2.0 and later._
+
 * Type: `cache`
 
 The `cache` resolver provides high-performance DNS response caching with LRU (Least Recently Used) eviction, TTL management, and negative caching support. It caches responses from an upstream resolver to reduce latency and upstream load.

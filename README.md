@@ -9,14 +9,22 @@ secDNS is a DNS resolver to help you bypass DNS spoofing (aka DNS cache poisonin
 * Support DNS64.
 * Support EDNS Client Subnet (ECS) for geographic load balancing and optimized DNS responses.
 * Support high-performance DNS caching with LRU (Least Recently Used) eviction, TTL management, and negative caching.
-* Multiple listeners and upstream resolvers can be configured.
+* Multiple listeners and upstream resolvers can be configured, including an HTTP/JSON API endpoint for automation.
 * Queries to a group of upstream resolvers can be either queued (failover, trying the next resolver if one fails) or
   concurrent (accepting results from the fastest resolver).
 * Support name-based custom rules, enabling the possibility to customize the DNS results.
 
 ## Configuration
 
-See [docs/configuration.md](docs/configuration.md).
+See [docs/configuration.md](docs/configuration.md) for the overall JSON schema.
+
+## Documentation
+
+* [Configuration](docs/configuration.md) – JSON schema, object layout, and examples.
+* [Listeners](docs/listeners.md) – Available listeners such as `dnsServer` and the HTTP API, with version notes.
+* [Resolvers](docs/resolvers.md) – All upstream resolver types, capabilities, and minimum supported versions.
+* [Rules](docs/rules.md) – Rule engines for routing queries to specific resolvers.
+* [Version history](docs/version_history.md) – Feature timeline and component availability across releases.
 
 ## Version History
 

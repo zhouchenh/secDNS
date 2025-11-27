@@ -1,6 +1,7 @@
 package address
 
 import (
+	"errors"
 	"github.com/miekg/dns"
 	resolverpkg "github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"net"
@@ -57,7 +58,7 @@ func TestAddressResolveAAAA(t *testing.T) {
 func TestAddressResolveDepthLimit(t *testing.T) {
 	addr := makeAddress()
 	res := &addr
-	if _, err := res.Resolve(newQuery("example.com", dns.TypeA), -1); err != resolverpkg.ErrLoopDetected {
+	if _, err := res.Resolve(newQuery("example.com", dns.TypeA), -1); !errors.Is(err, resolverpkg.ErrLoopDetected) {
 		t.Fatalf("expected ErrLoopDetected, got %v", err)
 	}
 }

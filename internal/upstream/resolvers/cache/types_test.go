@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
@@ -398,24 +399,23 @@ func TestCacheConcurrency(t *testing.T) {
 
 	// Run 100 concurrent queries
 	var wg sync.WaitGroup
-	errors := make(chan error, 100)
+	errCh := make(chan error, 100)
 
 	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := cache.Resolve(query, 10)
-			if err != nil {
-				errors <- err
+			if _, err := cache.Resolve(query, 10); err != nil {
+				errCh <- err
 			}
 		}()
 	}
 
 	wg.Wait()
-	close(errors)
+	close(errCh)
 
 	// Check for errors
-	for err := range errors {
+	for err := range errCh {
 		t.Errorf("Concurrent query error: %v", err)
 	}
 
@@ -469,7 +469,7 @@ func TestCacheDepthCheck(t *testing.T) {
 
 	// Query with negative depth should fail
 	_, err := cache.Resolve(query, -1)
-	if err != resolver.ErrLoopDetected {
+	if !errors.Is(err, resolver.ErrLoopDetected) {
 		t.Errorf("Expected ErrLoopDetected, got %v", err)
 	}
 }

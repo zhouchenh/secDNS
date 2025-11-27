@@ -1,5 +1,7 @@
 # filterOutAAAAIfAPresents
 
+_Available in secDNS v1.1.6 and later._
+
 * Type: `filterOutAAAAIfAPresents`
 
 (secDNS v1.1.6+) The `filterOutAAAAIfAPresents` resolver filters out AAAA resource records in replies from an upstream

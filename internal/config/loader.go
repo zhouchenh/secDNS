@@ -6,11 +6,10 @@ import (
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
 	"io"
-	"io/ioutil"
 )
 
 func LoadConfig(r io.Reader) (core.Instance, error) {
-	rawData, err := ioutil.ReadAll(r)
+	rawData, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,7 @@
 # dns64
 
+_Available in secDNS v1.1.0 and later._
+
 * Type: `dns64`
 
 (secDNS v1.1.0+) The `dns64` resolver synthesizes AAAA resource records from A resource records returned by another

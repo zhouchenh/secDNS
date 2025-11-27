@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"github.com/miekg/dns"
 	"net"
 	"net/http"
@@ -87,7 +88,7 @@ func TestParseRequestMissingName(t *testing.T) {
 	req := httptestRequest(http.MethodGet, "", url.Values{})
 	h := &HTTPServer{}
 	_, err := h.parseRequest(req)
-	if err != ErrMissingName {
+	if !errors.Is(err, ErrMissingName) {
 		t.Fatalf("expected ErrMissingName, got %v", err)
 	}
 }

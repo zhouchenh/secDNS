@@ -1,5 +1,7 @@
 # httpAPIServer
 
+_Available in secDNS v1.2.1 and later._
+
 * Type: `httpAPIServer`
 
 The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS queries via HTTP GET or POST and returns JSON-formatted DNS responses. This is useful for integrating secDNS with web applications, monitoring systems, or custom tooling without speaking the DNS wire protocol.

@@ -92,7 +92,7 @@ func (c *Config) ApplyToQuery(query *dns.Msg) error {
 
 	// Find existing ECS option
 	var existingECS *dns.EDNS0_SUBNET
-	var ecsIndex int = -1
+	ecsIndex := -1
 	for i, option := range opt.Option {
 		if ecs, ok := option.(*dns.EDNS0_SUBNET); ok {
 			existingECS = ecs

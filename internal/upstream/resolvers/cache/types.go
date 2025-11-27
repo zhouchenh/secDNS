@@ -39,7 +39,7 @@ type Cache struct {
 	CacheControlEnabled bool              // Honor cache-control hints from upstream
 
 	// Cache state (protected by mutex)
-	entries map[string]*CacheEntry
+	entries map[string]*Entry
 	lru     *LRUList
 	mutex   sync.RWMutex
 	queue   expirationHeap
@@ -60,8 +60,8 @@ type Cache struct {
 	domainStats sync.Map
 }
 
-// CacheEntry represents a single cached DNS response.
-type CacheEntry struct {
+// Entry represents a single cached DNS response.
+type Entry struct {
 	Response        *dns.Msg  // Deep copy of DNS response
 	OriginalTTL     uint32    // Original TTL from upstream (in seconds)
 	CachedAt        time.Time // When this entry was cached
@@ -73,8 +73,8 @@ type CacheEntry struct {
 	DisableStale    bool
 }
 
-// CacheStats represents cache statistics.
-type CacheStats struct {
+// Stats represents cache statistics.
+type Stats struct {
 	Hits      uint64  // Total cache hits
 	Misses    uint64  // Total cache misses
 	Evictions uint64  // Total LRU evictions
@@ -180,7 +180,7 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 
 // get retrieves a cached entry and returns a copy with adjusted TTL.
 // Returns (response, entry, remainingTTL, stale, true) on hit, (nil, nil, 0, false, false) on miss.
-func (c *Cache) get(key string) (*dns.Msg, *CacheEntry, uint32, bool, bool) {
+func (c *Cache) get(key string) (*dns.Msg, *Entry, uint32, bool, bool) {
 	// Fast read lock for lookup and creating a response snapshot
 	c.mutex.RLock()
 	entry, exists := c.entries[key]
@@ -224,7 +224,7 @@ func (c *Cache) get(key string) (*dns.Msg, *CacheEntry, uint32, bool, bool) {
 }
 
 // removeEntryIfCurrent deletes the cache entry if it still matches the provided pointer.
-func (c *Cache) removeEntryIfCurrent(key string, entry *CacheEntry) {
+func (c *Cache) removeEntryIfCurrent(key string, entry *Entry) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
@@ -273,7 +273,7 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 	}
 
 	// Create new entry with TTL overrides applied
-	entry := &CacheEntry{
+	entry := &Entry{
 		Response:        response.Copy(), // CRITICAL: Deep copy to avoid mutation
 		OriginalTTL:     c.applyTTLJitter(c.extractTTLWithOverrides(response)),
 		CachedAt:        time.Now(),
@@ -412,7 +412,7 @@ func (c *Cache) applyTTLJitter(ttl uint32) uint32 {
 
 // calculateRemainingTTL calculates how much TTL remains for a cache entry.
 // Returns 0 if expired.
-func (c *Cache) calculateRemainingTTL(entry *CacheEntry) uint32 {
+func (c *Cache) calculateRemainingTTL(entry *Entry) uint32 {
 	remaining := entry.ExpiresAt.Sub(time.Now()).Seconds()
 	if remaining <= 0 {
 		return 0
@@ -581,7 +581,7 @@ func (c *Cache) applyTTLOverrides(response *dns.Msg, override *uint32) {
 
 // init initializes the cache and starts background cleanup.
 func (c *Cache) init() {
-	c.entries = make(map[string]*CacheEntry)
+	c.entries = make(map[string]*Entry)
 	c.lru = NewLRUList()
 	c.queue = expirationHeap{}
 	heap.Init(&c.queue)
@@ -696,7 +696,7 @@ func (c *Cache) Stop() {
 }
 
 // Stats returns current cache statistics.
-func (c *Cache) Stats() CacheStats {
+func (c *Cache) Stats() Stats {
 	hits := atomic.LoadUint64(&c.hits)
 	misses := atomic.LoadUint64(&c.misses)
 	evictions := atomic.LoadUint64(&c.evictions)
@@ -711,7 +711,7 @@ func (c *Cache) Stats() CacheStats {
 		hitRate = float64(hits) / float64(total)
 	}
 
-	return CacheStats{
+	return Stats{
 		Hits:      hits,
 		Misses:    misses,
 		Evictions: evictions,
@@ -725,7 +725,7 @@ func (c *Cache) Clear() {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	c.entries = make(map[string]*CacheEntry)
+	c.entries = make(map[string]*Entry)
 	c.lru.Clear()
 	c.queue = expirationHeap{}
 }
@@ -789,7 +789,7 @@ func (c *Cache) domainStatsEntry(name string) *domainStatsCounters {
 	return actual.(*domainStatsCounters)
 }
 
-func (c *Cache) maybePrefetch(key string, entry *CacheEntry, query *dns.Msg, depth int) {
+func (c *Cache) maybePrefetch(key string, entry *Entry, query *dns.Msg, depth int) {
 	if entry == nil || query == nil {
 		return
 	}
@@ -814,7 +814,7 @@ func (c *Cache) maybePrefetch(key string, entry *CacheEntry, query *dns.Msg, dep
 	if !atomic.CompareAndSwapUint32(&entry.prefetching, 0, 1) {
 		return
 	}
-	go func(name, cacheKey string, e *CacheEntry) {
+	go func(name, cacheKey string, e *Entry) {
 		defer atomic.StoreUint32(&e.prefetching, 0)
 		_, err, _ := c.requests.Do(cacheKey, func() (interface{}, error) {
 			return c.fetchAndStore(query, depth, cacheKey)
@@ -832,9 +832,11 @@ type expirationItem struct {
 
 type expirationHeap []expirationItem
 
-func (h expirationHeap) Len() int           { return len(h) }
-func (h expirationHeap) Less(i, j int) bool { return h[i].expiresAt.Before(h[j].expiresAt) }
-func (h expirationHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *expirationHeap) Len() int { return len(*h) }
+func (h *expirationHeap) Less(i, j int) bool {
+	return (*h)[i].expiresAt.Before((*h)[j].expiresAt)
+}
+func (h *expirationHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
 
 func (h *expirationHeap) Push(x interface{}) {
 	item := x.(expirationItem)
@@ -1336,7 +1338,7 @@ func init() {
 							if name == "" {
 								continue
 							}
-							qType := uint16(dns.TypeA)
+							var qType uint16 = dns.TypeA
 							if v, ok := entry["type"].(float64); ok {
 								qType = uint16(v)
 							} else if v, ok := entry["type"].(string); ok {
@@ -1344,7 +1346,7 @@ func init() {
 									qType = uint16(parsed)
 								}
 							}
-							qClass := uint16(dns.ClassINET)
+							var qClass uint16 = dns.ClassINET
 							if v, ok := entry["class"].(float64); ok {
 								qClass = uint16(v)
 							} else if v, ok := entry["class"].(string); ok {

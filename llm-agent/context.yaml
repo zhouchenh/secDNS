@@ -1,11 +1,11 @@
 # secDNS Project Knowledge Base
 # This file is updated after every task completion to maintain context for LLM agents
-# Last Updated: 2025-11-07
+# Last Updated: 2025-11-08
 
 metadata:
   project_name: secDNS
-  version: 1.1.8
-  release_date: 2025-11-07
+  version: 1.2.1
+  release_date: 2025-11-08
   language: Go
   go_version: "1.23"
   compiled_with: "1.24.1"
@@ -31,10 +31,12 @@ project_purpose:
 
 key_features:
   - Multiple DNS protocol support (DoT, DoH, regular DNS)
+  - HTTP API listener (`httpAPIServer`) exposing DNS-as-JSON for automation and monitoring
   - Sequential failover mode (try next resolver if one fails)
   - Concurrent mode (accept response from fastest resolver)
   - SOCKS5 proxy support with optional authentication
   - IPv6 DNS64 support (synthesize AAAA from A records)
+  - High-performance cache resolver with prefetching, warmup queries, stale serving, and TTL jitter
   - Name-based custom routing rules
   - Multiple simultaneous listeners
   - DNS response filtering (conditional A/AAAA removal)
@@ -45,16 +47,22 @@ architecture:
 
   core_components:
     listeners:
-      count: 1
+      count: 2
       types:
         - name: dnsServer
           location: internal/listeners/servers/dns/server/types.go
-          description: "Listens for incoming DNS queries on TCP/UDP"
+          description: "Listens for incoming DNS queries on UDP or TCP sockets (no DoT termination)"
           protocols: [TCP, UDP]
           default_port: 53
 
+        - name: httpAPIServer
+          location: internal/listeners/servers/http/server/types.go
+          description: "Exposes a REST-style endpoint that accepts GET/POST requests and returns DNS answers as JSON"
+          protocols: [HTTP]
+          default_port: 8080
+
     resolvers:
-      count: 11
+      count: 12
       types:
         - name: nameServer
           category: basic
@@ -74,6 +82,13 @@ architecture:
           location: internal/upstream/resolvers/address/types.go
           description: "Reply with static IPv4/IPv6 addresses"
           features: [Multiple addresses, A and AAAA records]
+
+        - name: cache
+          category: optimization
+          location: internal/upstream/resolvers/cache/types.go
+          description: "High-performance caching layer with LRU eviction, TTL controls, warmup queries, and prefetching"
+          features: [Stale serving, prefetchThreshold/prefetchPercent, warmupQueries, per-domain stats]
+          added_in: v1.2.0
 
         - name: alias
           category: response_generation
@@ -870,6 +885,21 @@ tasks_completed:
     notes: |
       A simple Python helper parsed each category, created `00-<category>.md` under `llm-agent/common-issues/todo/`,
       and listed every issue with context/symptom/root_cause/fix fields for future agents.
+    status: completed
+
+  - task: Address inspection warnings
+    date: 2025-11-07
+    description: Fixed gofmt/go vet warnings (deprecated io usage, error comparisons, heap receivers)
+    files_modified:
+      - internal/config/loader.go
+      - internal/upstream/resolvers/doh/types.go
+      - internal/listeners/servers/http/server/types_test.go
+      - internal/listeners/servers/dns/server/types_test.go
+      - internal/upstream/resolvers/address/types_test.go
+      - internal/upstream/resolvers/cache/types.go
+      - internal/upstream/resolvers/cache/types_test.go
+    tests:
+      - go test -mod=readonly ./...
     status: completed
 
 llm_agent_notes:

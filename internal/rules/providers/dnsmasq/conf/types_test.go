@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,7 +36,8 @@ func TestProvideNilResolver(t *testing.T) {
 	if more {
 		t.Fatalf("Provide() should stop when resolver is nil")
 	}
-	if _, ok := receivedErr.(NilResolverError); !ok {
+	var nilErr NilResolverError
+	if !errors.As(receivedErr, &nilErr) {
 		t.Fatalf("Provide() error = %v, want NilResolverError", receivedErr)
 	}
 }
@@ -83,7 +85,8 @@ func TestProvideInvalidDomainReported(t *testing.T) {
 		invalidErr = err
 	})
 
-	if _, ok := invalidErr.(InvalidDomainNameError); !ok {
+	var domainErr InvalidDomainNameError
+	if !errors.As(invalidErr, &domainErr) {
 		t.Fatalf("want InvalidDomainNameError, got %v", invalidErr)
 	}
 }

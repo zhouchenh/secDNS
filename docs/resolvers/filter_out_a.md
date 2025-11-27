@@ -1,5 +1,7 @@
 # filterOutA
 
+_Available in secDNS v1.1.6 and later._
+
 * Type: `filterOutA`
 
 (secDNS v1.1.6+) The `filterOutA` resolver filters out A resource records in replies from an upstream DNS server.

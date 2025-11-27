@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
@@ -49,7 +50,8 @@ func TestAcceptProviderDuplicateWarning(t *testing.T) {
 	if len(warnings) != 1 {
 		t.Fatalf("expected 1 duplicate warning, got %d", len(warnings))
 	}
-	if _, ok := warnings[0].(DuplicateRuleWarning); !ok {
+	var dup DuplicateRuleWarning
+	if !errors.As(warnings[0], &dup) {
 		t.Fatalf("expected DuplicateRuleWarning, got %v", warnings[0])
 	}
 }

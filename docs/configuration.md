@@ -129,3 +129,50 @@ The type of the resolver. See each individual listed [here](resolvers.md) for av
 > `config`: ResolverConfigObject
 
 Resolver-specific configuration. See `ResolverConfigObject` defined in each type of the resolver.
+
+## Example: HTTP API With Cache Prefetch
+
+The following snippet wires the HTTP API listener to a cache resolver that prefetches popular domains and warms the cache at startup. See [listeners/http_api_server.md](listeners/http_api_server.md) and [resolvers/cache.md](resolvers/cache.md) for the detailed option reference.
+
+```json
+{
+  "listeners": [
+    {
+      "type": "httpAPIServer",
+      "config": {
+        "listen": "127.0.0.1",
+        "port": 8080,
+        "path": "/resolve"
+      }
+    }
+  ],
+  "resolvers": {
+    "cache": {
+      "edgeCache": {
+        "resolver": {
+          "type": "nameServer",
+          "config": {
+            "address": "1.1.1.1",
+            "timeout": 3000
+          }
+        },
+        "maxEntries": 50000,
+        "prefetchThreshold": 15,
+        "prefetchPercent": 0.9,
+        "serveStale": true,
+        "staleDuration": 45,
+        "warmupQueries": [
+          {"name": "example.com.", "type": 1},
+          {"name": "cloudflare.com.", "type": 28},
+          {"name": "cdn.example.net.", "type": 1}
+        ]
+      }
+    }
+  },
+  "defaultResolver": "edgeCache"
+}
+```
+
+* `warmupQueries` primes the resolver with known-hot domains on start.
+* `prefetchThreshold`/`prefetchPercent` refresh popular entries before they expire.
+* The HTTP API exposes the cached answers via `/resolve` so monitoring systems can hit a single endpoint.

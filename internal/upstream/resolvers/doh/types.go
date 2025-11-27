@@ -8,7 +8,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/edns/ecs"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -101,7 +101,7 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 			return
 		}
 		defer response.Body.Close()
-		wireFormattedMsg, e := ioutil.ReadAll(response.Body)
+		wireFormattedMsg, e := io.ReadAll(response.Body)
 		if e != nil {
 			errCollector <- e
 			return
