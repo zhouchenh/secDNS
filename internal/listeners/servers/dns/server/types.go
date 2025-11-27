@@ -28,6 +28,7 @@ func (d *DNSServer) TypeName() string {
 func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
 	if handler == nil {
 		handleIfError(ErrNilHandler, errorHandler)
+		return
 	}
 	handleIfError(dns.ListenAndServe(net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), d.Protocol, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
 		handleIfError(w.WriteMsg(handler(query)), errorHandler)

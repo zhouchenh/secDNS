@@ -3,6 +3,7 @@ package server
 import (
 	"net"
 	"testing"
+	"time"
 )
 
 func TestDNSServerServeNilHandler(t *testing.T) {
@@ -12,13 +13,22 @@ func TestDNSServerServeNilHandler(t *testing.T) {
 		Port:     0,
 		Protocol: "udp",
 	}
-	d.Serve(nil, func(err error) {
-		called = true
-		if err != ErrNilHandler {
-			t.Fatalf("expected ErrNilHandler, got %v", err)
+	done := make(chan struct{})
+	go func() {
+		d.Serve(nil, func(err error) {
+			called = true
+			if err != ErrNilHandler {
+				t.Fatalf("expected ErrNilHandler, got %v", err)
+			}
+			close(done)
+		})
+	}()
+	select {
+	case <-done:
+		if !called {
+			t.Fatalf("expected error handler to be called")
 		}
-	})
-	if !called {
-		t.Fatalf("expected error handler to be called")
+	case <-time.After(time.Second):
+		t.Fatalf("Serve should return immediately when handler is nil")
 	}
 }
