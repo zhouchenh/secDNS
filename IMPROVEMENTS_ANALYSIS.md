@@ -1,5 +1,19 @@
 # secDNS Improvements Analysis
 
+## Executive Summary
+
+This document identifies **20 issues and improvements** for the secDNS cache resolver and rule system, categorized by severity and impact.
+
+**Critical Issues (4):** Security and stability bugs that could cause crashes, data corruption, or resource leaks
+**High Priority (4):** Performance and functionality improvements with significant user impact
+**Medium Priority (6):** Quality-of-life enhancements and optimization opportunities
+**Low Priority (6):** Nice-to-have features and polish
+
+**Estimated Total Effort:** ~30-40 hours for all phases
+**Phase 1 (Critical):** ~4 hours - **Recommended to implement immediately**
+
+---
+
 ## Cache Resolver Improvements
 
 ### Critical Issues
@@ -315,6 +329,31 @@ Overall effective hit rate: 97%
 Overall average latency: <1ms (vs 20-50ms upstream)
 ```
 
+## Quick Reference Table
+
+| # | Issue | Severity | Effort | Phase |
+|---|-------|----------|--------|-------|
+| 1 | Race condition in get() | Critical | 1h | 1 |
+| 2 | EDNS0 not in cache key | High | 2-3h | 1 |
+| 3 | File descriptor leak | Critical | 5min | 1 |
+| 4 | No request coalescing | High | 4-6h | 2 |
+| 5 | Inefficient cleanup | High | 3-4h | 2 |
+| 6 | Hardcoded default TTLs | High | 1h | 2 |
+| 7 | No stale-while-revalidate | Medium | 6-8h | 2 |
+| 8 | No prefetching | Medium | 6-8h | 3 |
+| 9 | No cache warming | Medium | 2-3h | 3 |
+| 10 | Memory leak if Stop() not called | Medium | 1h | 3 |
+| 11 | No per-domain statistics | Low | 3-4h | 3 |
+| 12 | No TTL jitter | Low | 1h | 4 |
+| 13 | No negative response differentiation | Low | 2h | 4 |
+| 14 | No cache-control hints | Low | 2-3h | 4 |
+| 15 | FD leak in dnsmasqConf | Critical | 5min | 1 |
+| 16 | No nil resolver check | Critical | 15min | 1 |
+| 17 | Silent duplicate rule handling | Medium | 1h | 3 |
+| 18 | Inefficient regex in dnsmasqConf | Medium | 30min | 4 |
+| 19 | No validation during parse | Medium | 2h | 4 |
+| 20 | State preserved across calls | Low | 2-3h | 4 |
+
 ## Testing Requirements
 
 Each fix should include:
@@ -322,3 +361,27 @@ Each fix should include:
 - Unit tests verifying the fix
 - Race detector tests (`go test -race`)
 - Benchmark tests to verify performance improvements
+
+## Conclusion
+
+The secDNS cache resolver is well-architected but has several critical issues that should be addressed before production use:
+
+### Must Fix (Phase 1)
+The **race condition (#1)**, **EDNS0 cache key bug (#2)**, and **file descriptor leak (#3)** are critical bugs that affect correctness and stability. The EDNS0 issue is particularly urgent as it breaks the ECS feature shipped in v1.2.0.
+
+### High Impact (Phase 2)
+**Request coalescing (#4)** and **cleanup optimization (#5)** will significantly improve performance under load. **Stale-while-revalidate (#7)** dramatically improves user experience during cache expiration.
+
+### Strategic Enhancements (Phase 3)
+**Prefetching (#8)** combined with stale-while-revalidate creates a tier-based caching strategy that can achieve >97% effective hit rate with <1ms latency. This is the biggest opportunity for performance improvement.
+
+### Long-term Polish (Phase 4)
+The remaining items improve robustness, observability, and edge case handling.
+
+**Recommended Approach:**
+1. Implement Phase 1 immediately (~4 hours)
+2. Plan Phase 2 for next sprint (~20 hours)
+3. Consider Phase 3 prefetching as a strategic feature
+4. Address Phase 4 items as time permits
+
+See [OVERFLOW_ANALYSIS.md](OVERFLOW_ANALYSIS.md) for detailed analysis of the AccessCount overflow issue.
