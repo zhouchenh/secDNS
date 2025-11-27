@@ -1,0 +1,716 @@
+{
+  "domain": "High-Performance DNS Server (Go)",
+  "meta": {
+    "format_version": "1.0",
+    "intended_use": "LLM agent consumption for code review, bug hunting, and architectural analysis in Go-based DNS servers",
+    "contribution_guidelines": "Add items with: issue, context, symptom, root_cause, fix fields; avoid duplicate issues; keep descriptions concrete and implementation-oriented."
+  },
+  "categories": [
+    {
+      "id": "CONCURRENCY_BUGS",
+      "description": "Issues related to Go's scheduler, goroutine management, and shared state.",
+      "items": [
+        {
+          "issue": "Unbounded Goroutine Spawning",
+          "context": "UDP packet handling",
+          "symptom": "OOM (Out of Memory) crash during DDoS or high load; scheduler thrashing.",
+          "root_cause": "Spawning `go handler(pkt)` for every incoming UDP packet without a worker pool or semaphore.",
+          "fix": "Implement `sem := make(chan struct{}, maxWorkers)` or use a fixed-size worker pool."
+        },
+        {
+          "issue": "Configuration Hot-Reload Race Condition",
+          "context": "Runtime zone file updates",
+          "symptom": "Inconsistent DNS answers; sporadic panic (nil pointer dereference) during reads.",
+          "root_cause": "Modifying a map/slice in global config struct while readers access it without `RWMutex` or `atomic.Value`.",
+          "fix": "Use `sync/atomic.Value` to swap the entire config pointer or `RWMutex`."
+        },
+        {
+          "issue": "Channel deadlock in Graceful Shutdown",
+          "context": "Server termination",
+          "symptom": "Process hangs indefinitely during SIGTERM.",
+          "root_cause": "Workers waiting on a channel that is never closed, or main loop waiting on `Wait()` without signaling workers to exit.",
+          "fix": "Propagate `context.Context` for cancellation; ensure `close(quitChan)` happens before `wg.Wait()`."
+        }
+      ]
+    },
+    {
+      "id": "MEMORY_MANAGEMENT",
+      "description": "Pitfalls in heap allocation, buffer reuse, and GC pressure.",
+      "items": [
+        {
+          "issue": "Dirty Buffer Reuse (sync.Pool)",
+          "context": "Packet serialization/deserialization",
+          "symptom": "DNS responses contain garbage data from previous requests; unexpected truncated packets.",
+          "root_cause": "Putting a `[]byte` buffer back into `sync.Pool` without resetting its length (`buf = buf[:0]`) or zeroing sensitive fields.",
+          "fix": "Always `Reset()` buffers before `Put()`; checking length on `Get()`."
+        },
+        {
+          "issue": "Slice Memory Leak (The 'Slice Trap')",
+          "context": "Parsing large zone files",
+          "symptom": "High memory usage even after releasing large datasets.",
+          "root_cause": "Keeping a small sub-slice of a large backing array (e.g., `record.Name = line[10:20]`), keeping the entire large array in memory.",
+          "fix": "Copy string data to new memory: `string(byteSlice)` or `strings.Clone()`."
+        }
+      ]
+    },
+    {
+      "id": "DNS_PROTOCOL_SPECIFIC",
+      "description": "Violations of RFCs or networking edge cases.",
+      "items": [
+        {
+          "issue": "UDP Truncation Mismatch",
+          "context": "Large responses (DNSSEC/TXT)",
+          "symptom": "Clients hanging or timing out; `SERVFAIL` on large records.",
+          "root_cause": "Failing to set the `TC` (Truncated) bit when response > 512 bytes (or > EDNS buffer size), preventing TCP retry.",
+          "fix": "Check `msg.Len()` against client's advertised EDNS buffer size; set `TC=1` if exceeded."
+        },
+        {
+          "issue": "IPv6/IPv4 Dual-Stack Logic Error",
+          "context": "Binding listeners",
+          "symptom": "Server fails to bind IPv4 port if IPv6 binds `[::]:53` without `IPV6_V6ONLY` set.",
+          "root_cause": "Linux defaults to binding both v4 and v6 on a wildcard v6 listener, causing 'address already in use' for the v4 bind.",
+          "fix": "Explicitly set socket option `syscall.IPV6_V6ONLY` to 1 or bind specific IPs."
+        }
+      ]
+    },
+    {
+      "id": "CONCURRENCY_BUGS",
+      "description": "Issues related to Go's scheduler, goroutine management, and shared state.",
+      "items": [
+        {
+          "issue": "Unbounded Goroutine Spawning",
+          "context": "UDP packet handling",
+          "symptom": "OOM crash during DDoS or high load; scheduler thrashing.",
+          "root_cause": "Spawning `go handler(pkt)` for every incoming UDP packet without a worker pool or semaphore.",
+          "fix": "Implement `sem := make(chan struct{}, maxWorkers)` or use a fixed-size worker pool."
+        },
+        {
+          "issue": "Configuration Hot-Reload Race Condition",
+          "context": "Runtime zone file updates",
+          "symptom": "Inconsistent DNS answers; sporadic panic (nil pointer dereference) during reads.",
+          "root_cause": "Modifying a map/slice in global config struct while readers access it without `RWMutex` or `atomic.Value`.",
+          "fix": "Use `sync/atomic.Value` to swap the entire config pointer or `RWMutex`."
+        },
+        {
+          "issue": "Channel Deadlock in Graceful Shutdown",
+          "context": "Server termination",
+          "symptom": "Process hangs indefinitely during SIGTERM.",
+          "root_cause": "Workers waiting on a channel that is never closed, or main loop waiting on `Wait()` without signaling workers to exit.",
+          "fix": "Propagate `context.Context` for cancellation; ensure `close(quitChan)` happens before `wg.Wait()`."
+        },
+        {
+          "issue": "Lock Contention on Hot Paths",
+          "context": "Cache access, metrics counters",
+          "symptom": "High CPU with low throughput; goroutines blocked on mutex acquisition.",
+          "root_cause": "Using a single `sync.Mutex` for cache lookups shared across all goroutines.",
+          "fix": "Use sharded locks, `sync.Map` for read-heavy workloads, or lock-free structures with `atomic` operations."
+        },
+        {
+          "issue": "Goroutine Leak in Upstream Resolver",
+          "context": "Recursive/forwarding queries",
+          "symptom": "Gradual memory increase; goroutine count grows unbounded.",
+          "root_cause": "Goroutine spawned for upstream query but context timeout not enforced; upstream never responds, goroutine waits forever.",
+          "fix": "Always use `context.WithTimeout`; select on `ctx.Done()` alongside response channel."
+        }
+      ]
+    },
+    {
+      "id": "MEMORY_MANAGEMENT",
+      "description": "Pitfalls in heap allocation, buffer reuse, and GC pressure.",
+      "items": [
+        {
+          "issue": "Dirty Buffer Reuse (sync.Pool)",
+          "context": "Packet serialization/deserialization",
+          "symptom": "DNS responses contain garbage data from previous requests; unexpected truncated packets.",
+          "root_cause": "Putting a `[]byte` buffer back into `sync.Pool` without resetting its length (`buf = buf[:0]`) or zeroing sensitive fields.",
+          "fix": "Always `Reset()` buffers before `Put()`; check length on `Get()`."
+        },
+        {
+          "issue": "Slice Memory Leak (The 'Slice Trap')",
+          "context": "Parsing large zone files",
+          "symptom": "High memory usage even after releasing large datasets.",
+          "root_cause": "Keeping a small sub-slice of a large backing array (e.g., `record.Name = line[10:20]`), keeping the entire large array in memory.",
+          "fix": "Copy string data to new memory: `string(byteSlice)` or `strings.Clone()`."
+        },
+        {
+          "issue": "Excessive Allocations in Hot Path",
+          "context": "Per-query processing",
+          "symptom": "High GC pause times; reduced throughput under load.",
+          "root_cause": "Creating new slices, maps, or string concatenations for every DNS query instead of reusing.",
+          "fix": "Pre-allocate structures; use `sync.Pool`; prefer `[]byte` operations over string manipulation."
+        },
+        {
+          "issue": "Cache Unbounded Growth",
+          "context": "Response caching",
+          "symptom": "OOM after extended runtime; memory grows monotonically.",
+          "root_cause": "Cache entries added but never evicted; TTL expiration not enforced.",
+          "fix": "Implement LRU/LFU eviction; background goroutine for TTL-based cleanup; set max cache size."
+        }
+      ]
+    },
+    {
+      "id": "DNS_PROTOCOL_SPECIFIC",
+      "description": "Violations of RFCs or networking edge cases.",
+      "items": [
+        {
+          "issue": "UDP Truncation Mismatch",
+          "context": "Large responses (DNSSEC/TXT)",
+          "symptom": "Clients hanging or timing out; `SERVFAIL` on large records.",
+          "root_cause": "Failing to set the `TC` (Truncated) bit when response > 512 bytes (or > EDNS buffer size), preventing TCP retry.",
+          "fix": "Check `msg.Len()` against client's advertised EDNS buffer size; set `TC=1` if exceeded."
+        },
+        {
+          "issue": "IPv6/IPv4 Dual-Stack Logic Error",
+          "context": "Binding listeners",
+          "symptom": "Server fails to bind IPv4 port if IPv6 binds `[::]:53` without `IPV6_V6ONLY` set.",
+          "root_cause": "Linux defaults to binding both v4 and v6 on a wildcard v6 listener, causing 'address already in use' for the v4 bind.",
+          "fix": "Explicitly set socket option `syscall.IPV6_V6ONLY` to 1 or bind specific IPs."
+        },
+        {
+          "issue": "EDNS0 Buffer Size Mismatch",
+          "context": "DNSSEC responses",
+          "symptom": "Fragmented UDP packets dropped by middleboxes; intermittent resolution failures.",
+          "root_cause": "Advertising large EDNS buffer (4096) but network path has lower MTU; no fallback logic.",
+          "fix": "Implement EDNS buffer size negotiation; consider 1232-byte safe default per RFC 8020."
+        },
+        {
+          "issue": "Case Sensitivity in Domain Comparison",
+          "context": "Zone lookups, caching",
+          "symptom": "Cache misses for same domain; duplicate cache entries.",
+          "root_cause": "Comparing domain names with `==` instead of case-insensitive comparison (DNS is case-insensitive per RFC 1035).",
+          "fix": "Normalize to lowercase before comparison/storage; use `strings.EqualFold()` or pre-lowercase all keys."
+        },
+        {
+          "issue": "Incorrect TTL Handling",
+          "context": "Caching, response generation",
+          "symptom": "Stale records served; TTL=0 records cached indefinitely.",
+          "root_cause": "Caching absolute TTL from response instead of computing expiration time; not decrementing TTL on cache hit.",
+          "fix": "Store `expireAt = time.Now().Add(ttl)`; compute remaining TTL on retrieval."
+        },
+        {
+          "issue": "Missing QNAME Minimization",
+          "context": "Recursive resolution",
+          "symptom": "Privacy leak; full query name sent to all authoritative servers in chain.",
+          "root_cause": "Sending full query name to root/TLD servers instead of minimal necessary labels.",
+          "fix": "Implement RFC 7816 QNAME minimization in resolver logic."
+        }
+      ]
+    },
+    {
+      "id": "NETWORK_IO",
+      "description": "Socket handling, connection management, and I/O errors.",
+      "items": [
+        {
+          "issue": "TCP Connection Exhaustion",
+          "context": "TCP fallback handling",
+          "symptom": "File descriptor exhaustion; 'too many open files' errors.",
+          "root_cause": "Not closing TCP connections after response; no connection timeout; no limit on concurrent TCP connections.",
+          "fix": "Set `SetDeadline()` on connections; implement connection pool with max size; defer `conn.Close()`."
+        },
+        {
+          "issue": "UDP Read Buffer Too Small",
+          "context": "Receiving large EDNS packets",
+          "symptom": "Truncated queries; unable to process DNSSEC-enabled requests.",
+          "root_cause": "Using default 512-byte buffer for `ReadFromUDP()` when clients send larger EDNS-enabled queries.",
+          "fix": "Allocate buffers matching max EDNS size (typically 4096 bytes); use `SO_RCVBUF` socket option."
+        },
+        {
+          "issue": "Ignoring Partial Writes",
+          "context": "TCP response sending",
+          "symptom": "Clients receive incomplete responses; protocol errors.",
+          "root_cause": "Not checking return value of `Write()` for bytes written; assuming single write completes full message.",
+          "fix": "Loop until all bytes written or use `io.WriteString()`; handle `io.ErrShortWrite`."
+        },
+        {
+          "issue": "Source Port Randomization Failure",
+          "context": "Upstream queries (resolver mode)",
+          "symptom": "Vulnerability to DNS cache poisoning attacks.",
+          "root_cause": "Reusing same source port for all upstream queries; predictable transaction IDs.",
+          "fix": "Let OS assign ephemeral ports; randomize TXID; validate response matches query."
+        }
+      ]
+    },
+    {
+      "id": "ERROR_HANDLING",
+      "description": "Improper error management leading to silent failures or crashes.",
+      "items": [
+        {
+          "issue": "Panic in Request Handler",
+          "context": "Malformed packet processing",
+          "symptom": "Server crash on crafted malicious packets; DoS vulnerability.",
+          "root_cause": "Missing bounds checks; no `recover()` in handler goroutines.",
+          "fix": "Add `defer recover()` in handlers; validate all slice accesses; use fuzz testing."
+        },
+        {
+          "issue": "Silent Error Swallowing",
+          "context": "Zone file parsing, upstream queries",
+          "symptom": "Missing records; silent resolution failures; hard to debug issues.",
+          "root_cause": "`if err != nil { return }` without logging or propagating error.",
+          "fix": "Implement structured logging; return errors with context (`fmt.Errorf(\"parsing zone %s: %w\", name, err)`)."
+        },
+        {
+          "issue": "Timeout Not Propagated",
+          "context": "Chained operations (cache miss → upstream → cache store)",
+          "symptom": "Requests hang; client timeouts; goroutine accumulation.",
+          "root_cause": "Outer timeout set but not passed to inner operations; each operation has independent timeout.",
+          "fix": "Pass `context.Context` through entire call chain; use single deadline for full request lifecycle."
+        }
+      ]
+    },
+    {
+      "id": "OBSERVABILITY",
+      "description": "Monitoring, metrics, and debugging issues.",
+      "items": [
+        {
+          "issue": "Metrics Cardinality Explosion",
+          "context": "Prometheus metrics",
+          "symptom": "OOM in metrics collection; slow scrapes; high memory usage.",
+          "root_cause": "Using unbounded labels (query name, client IP) in metrics; creating new metric per unique query.",
+          "fix": "Use bounded label sets (query type, response code, zone); aggregate client IPs into subnets."
+        },
+        {
+          "issue": "Missing Request Tracing",
+          "context": "Debugging resolution failures",
+          "symptom": "Unable to trace why specific queries fail; blind spots in recursive resolution.",
+          "root_cause": "No request ID propagation; logs not correlated across resolution steps.",
+          "fix": "Generate request ID; propagate via context; include in all log entries for request."
+        },
+        {
+          "issue": "Health Check False Positives",
+          "context": "Load balancer integration",
+          "symptom": "Unhealthy server receives traffic; cascading failures.",
+          "root_cause": "Health endpoint returns 200 but doesn't verify actual DNS resolution capability.",
+          "fix": "Health check should perform actual DNS query; verify upstream connectivity; check cache health."
+        }
+      ]
+    },
+    {
+      "id": "SECURITY",
+      "description": "Vulnerabilities and attack surface issues.",
+      "items": [
+        {
+          "issue": "DNS Amplification Attack Vector",
+          "context": "Open resolver configuration",
+          "symptom": "Server used in DDoS attacks; high outbound traffic; abuse complaints.",
+          "root_cause": "Responding to ANY queries from any source; no rate limiting; no response rate limiting (RRL).",
+          "fix": "Implement RRL; restrict recursive queries to trusted networks; limit ANY responses."
+        },
+        {
+          "issue": "Cache Poisoning via Insufficient Validation",
+          "context": "Response processing",
+          "symptom": "Incorrect records cached; users redirected to malicious IPs.",
+          "root_cause": "Caching additional/authority section records without validating they're in-bailiwick.",
+          "fix": "Validate all cached records are within queried zone; implement DNSSEC validation."
+        },
+        {
+          "issue": "Zone Transfer Information Leak",
+          "context": "AXFR handling",
+          "symptom": "Entire zone contents exposed to unauthorized parties.",
+          "root_cause": "AXFR enabled without IP-based ACL or TSIG authentication.",
+          "fix": "Disable AXFR by default; implement TSIG; restrict by source IP."
+        },
+        {
+          "issue": "Insufficient Input Validation",
+          "context": "Query parsing",
+          "symptom": "Buffer overflow; panic; potential RCE.",
+          "root_cause": "Trusting length fields in DNS packet without bounds checking.",
+          "fix": "Validate all lengths against remaining buffer; use safe parsing libraries; fuzz test extensively."
+        }
+      ]
+    },
+    {
+      "id": "CONFIGURATION",
+      "description": "Deployment and configuration management issues.",
+      "items": [
+        {
+          "issue": "GOMAXPROCS Misconfiguration in Containers",
+          "context": "Kubernetes/Docker deployment",
+          "symptom": "Using more CPU than container limit; throttling; poor performance.",
+          "root_cause": "Go runtime sees host CPU count, not container limit; spawns too many threads.",
+          "fix": "Use `automaxprocs` library; set GOMAXPROCS explicitly based on container CPU limit."
+        },
+        {
+          "issue": "File Descriptor Limits",
+          "context": "High connection count",
+          "symptom": "'too many open files' errors; connection failures.",
+          "root_cause": "Default ulimit too low for expected connection count; not increased in container/systemd.",
+          "fix": "Set `LimitNOFILE` in systemd unit; configure container ulimits; tune `net.core.somaxconn`."
+        },
+        {
+          "issue": "Improper Signal Handling",
+          "context": "Container orchestration",
+          "symptom": "Connections dropped on restart; data loss; slow termination.",
+          "root_cause": "Not handling SIGTERM; immediate exit without draining connections.",
+          "fix": "Implement graceful shutdown: stop accepting, drain existing, timeout, force exit."
+        }
+      ]
+    },
+    {
+      "id": "TESTING_QUALITY",
+      "description": "Gaps in testing leading to production issues.",
+      "items": [
+        {
+          "issue": "No Fuzz Testing",
+          "context": "Packet parsing",
+          "symptom": "Crashes on malformed packets discovered in production.",
+          "root_cause": "Only tested with well-formed packets; edge cases not covered.",
+          "fix": "Implement Go native fuzzing (`go test -fuzz`); run continuously in CI."
+        },
+        {
+          "issue": "Race Conditions Not Detected",
+          "context": "Concurrent access patterns",
+          "symptom": "Sporadic failures in production; unreproducible bugs.",
+          "root_cause": "Tests not run with `-race` flag; race detector not in CI pipeline.",
+          "fix": "Run `go test -race` in CI; test under concurrent load."
+        },
+        {
+          "issue": "Missing Load Testing",
+          "context": "Pre-production validation",
+          "symptom": "Performance degradation discovered only in production; capacity planning failures.",
+          "root_cause": "Unit tests pass but no realistic load simulation.",
+          "fix": "Implement load tests with `dnsperf` or `flamethrower`; test at 2x expected peak load."
+        }
+      ]
+    },
+    {
+      "id": "CONCURRENCY_BUGS",
+      "description": "Additional issues related to goroutines, shared state, and synchronization in a high-throughput DNS server.",
+      "items": [
+        {
+          "issue": "Shared Buffer Data Race",
+          "context": "UDP/TCP request handling with buffer reuse",
+          "symptom": "Corrupted DNS packets; randomly malformed answers; sporadic SERVFAILs under load.",
+          "root_cause": "Multiple goroutines reading/writing the same []byte buffer obtained from a pool without per-request ownership.",
+          "fix": "Enforce single-owner semantics for buffers; never share mutable []byte between goroutines; copy before passing to concurrent workers."
+        },
+        {
+          "issue": "Ticker and Timer Goroutine Leak",
+          "context": "Periodic tasks (cache cleanup, metrics flush)",
+          "symptom": "Goroutine count and memory usage grow slowly over time; only noticeable after days/weeks.",
+          "root_cause": "Creating time.Ticker or time.AfterFunc within request handlers or hot paths and never calling Stop() or letting contexts cancel.",
+          "fix": "Create tickers in long-lived goroutines with clear lifecycle; always call ticker.Stop() on shutdown; tie timers to context.Context."
+        },
+        {
+          "issue": "Worker Pool Starvation",
+          "context": "Single worker pool for heterogeneous tasks",
+          "symptom": "Simple A/AAAA queries become slow when heavy operations (zone reload, AXFR, DNSSEC signing) run.",
+          "root_cause": "Same bounded worker pool used for both cheap and expensive jobs; long-running tasks block all workers.",
+          "fix": "Separate pools/queues for latency-sensitive and heavy tasks; apply priority or dedicated goroutine sets."
+        },
+        {
+          "issue": "Double Channel Close on Shutdown",
+          "context": "Graceful shutdown and reload signals",
+          "symptom": "Panic: close of closed channel during reload or termination, often intermittent.",
+          "root_cause": "Multiple signal handlers or goroutines attempting to close the same quit/done channel.",
+          "fix": "Use sync.Once or context.Context cancellation instead of manual channel close from multiple callers."
+        },
+        {
+          "issue": "Using context.Background in Long-Lived Goroutines",
+          "context": "Upstream resolution, cache loaders",
+          "symptom": "Requests remain pending after clients cancel; upstream queries continue even after timeout.",
+          "root_cause": "Spawning goroutines with context.Background() instead of the request-scoped context.",
+          "fix": "Always derive contexts from the incoming request context (ctx) and propagate them; avoid context.Background() in request path."
+        }
+      ]
+    },
+    {
+      "id": "MEMORY_MANAGEMENT",
+      "description": "Additional memory and GC-related issues in DNS workloads.",
+      "items": [
+        {
+          "issue": "String Allocation Explosion",
+          "context": "QNAME parsing and normalization",
+          "symptom": "High allocation rate; GC dominating CPU at peak QPS.",
+          "root_cause": "Converting labels to strings repeatedly (string(b)) and concatenating for every query instead of reusing or interning.",
+          "fix": "Normalize and intern common domain names; keep label representation as []byte where possible; reuse temporary buffers."
+        },
+        {
+          "issue": "Per-Client Statistics Map Leak",
+          "context": "Telemetry per client IP / per QNAME",
+          "symptom": "Memory footprint grows with number of unique clients or domains and never shrinks.",
+          "root_cause": "Using unbounded map[string]*Stats keyed by client IP or QNAME without any eviction or TTL.",
+          "fix": "Add max size and TTL for stats maps; aggregate rare entries into catch-all buckets; periodically purge old keys."
+        },
+        {
+          "issue": "Caching Full Request and Response Objects",
+          "context": "Response cache implementation",
+          "symptom": "Cache uses large amounts of memory; high GC activity; heap never returns to baseline.",
+          "root_cause": "Storing full request/response structs including temporary buffers and context fields instead of minimal wire-format or normalized structs.",
+          "fix": "Cache only minimal canonical representation (e.g., encoded answer section and TTL metadata); avoid storing contexts, loggers, or large temporary slices."
+        },
+        {
+          "issue": "Excessive Large Slice Capacity",
+          "context": "Zone file loading, in-memory indexes",
+          "symptom": "RSS significantly higher than expected from record counts.",
+          "root_cause": "Creating large slices with high capacity and then sub-slicing, causing large backing arrays to persist.",
+          "fix": "Use precise make([]T, len) or make([]T, 0, expected) and copy to right-sized slices when done; periodically re-build compact structures."
+        }
+      ]
+    },
+    {
+      "id": "DNS_PROTOCOL_SPECIFIC",
+      "description": "Additional DNS/RFC-specific behavior errors and edge cases.",
+      "items": [
+        {
+          "issue": "Incorrect NXDOMAIN vs NODATA Differentiation",
+          "context": "Authoritative answers for non-existent names/records",
+          "symptom": "Resolvers treat some names as non-existent when only the record type is missing; negative caching misbehaves.",
+          "root_cause": "Returning NXDOMAIN for existing names that lack the requested RR type instead of NOERROR with empty answer and proper SOA in authority.",
+          "fix": "Implement correct negative response logic per RFC 2308; distinguish name non-existence from type non-existence."
+        },
+        {
+          "issue": "CNAME and Other Data Coexistence Mis-Handling",
+          "context": "Authoritative zone answering",
+          "symptom": "Zone load failures or protocol errors when a name has both CNAME and other RR types.",
+          "root_cause": "Allowing CNAME to coexist with additional RRs at the same owner name, violating RFC 1034.",
+          "fix": "Reject invalid zone data at load time; enforce that a CNAME owner has no other data (except DNSSEC RRSIGs)."
+        },
+        {
+          "issue": "Broken Additional Section Processing",
+          "context": "Authoritative and recursive answers",
+          "symptom": "Missing glue A/AAAA records or including unrelated addresses; some clients need extra queries.",
+          "root_cause": "Not adding in-bailiwick glue into additional section or adding out-of-bailiwick records without validation.",
+          "fix": "Populate additional section only with in-bailiwick and relevant records; follow bailiwick rules when adding glue."
+        },
+        {
+          "issue": "Ignoring DNSSEC DO/CD Flags",
+          "context": "Validating resolver / DNSSEC-aware authoritative",
+          "symptom": "Unexpected SERVFAILs or validation behavior when clients request no validation.",
+          "root_cause": "Always performing validation or always skipping it regardless of DO (DNSSEC OK) and CD (Checking Disabled) bits.",
+          "fix": "Follow RFC 4035 behavior: honor DO/CD; allow clients to opt-out of validation while still returning DNSSEC records as requested."
+        },
+        {
+          "issue": "IDN / Punycode Handling Errors",
+          "context": "Internationalized domain names",
+          "symptom": "Inability to resolve IDN domains; inconsistent cache keys; duplicate entries.",
+          "root_cause": "Mixing Unicode and punycode representations or partially decoding labels; using different forms as cache keys and zone keys.",
+          "fix": "Normalize all internal keys to a single representation (usually punycode/ASCII); convert only at UI or API boundaries."
+        },
+        {
+          "issue": "Broken Negative Caching TTL Calculation",
+          "context": "Recursive resolver cache",
+          "symptom": "Negative answers cached much longer or shorter than intended; users see outdated NXDOMAIN.",
+          "root_cause": "Ignoring SOA MINIMUM field and TTL rules for negative responses (RFC 2308); using arbitrary defaults.",
+          "fix": "Follow negative caching rules strictly; compute TTL from SOA fields and cache accordingly with max/min bounds."
+        }
+      ]
+    },
+    {
+      "id": "NETWORK_IO",
+      "description": "Additional socket and I/O-level pitfalls that impact correctness and performance.",
+      "items": [
+        {
+          "issue": "Reusing Read Buffer After Returning to Pool",
+          "context": "UDP read loop with buffer pool",
+          "symptom": "Responses contain data from unrelated queries; random corruption.",
+          "root_cause": "Storing pointers to a buffer returned to a pool and then reusing that buffer for another read before the first request completes.",
+          "fix": "Copy data out of pooled buffer before returning it; or hand off exclusive buffer ownership to worker and allocate a new one for next read."
+        },
+        {
+          "issue": "Ignoring Remote Address on UDP Responses",
+          "context": "UDP server implementation",
+          "symptom": "Clients receive no responses; responses sent to wrong target.",
+          "root_cause": "Using Write instead of WriteTo/WriteToUDP, or not preserving addr returned by ReadFromUDP when replying.",
+          "fix": "Always respond using the net.Addr from ReadFromUDP; ensure per-packet association between request and reply address."
+        },
+        {
+          "issue": "Blocking DNS over TCP Accept Loop",
+          "context": "High-connection-count TCP handling",
+          "symptom": "Throughput plateau at low concurrency; high connection latency.",
+          "root_cause": "Handling TCP connections serially in the same goroutine that calls Accept() instead of spawning goroutines or using a pool.",
+          "fix": "Run Accept() in a loop and hand each connection to a separate goroutine or worker pool; apply sensible connection limits."
+        },
+        {
+          "issue": "No Per-Client Rate Limiting",
+          "context": "Open recursive resolver / public authoritative",
+          "symptom": "Single misbehaving client can saturate server; high packet loss for others.",
+          "root_cause": "Accepting and processing unlimited queries per IP without shaping or quotas.",
+          "fix": "Introduce token-bucket or leaky-bucket rate limiting per client or subnet; drop or downgrade clients exceeding limits."
+        }
+      ]
+    },
+    {
+      "id": "PERFORMANCE_TUNING",
+      "description": "Performance pitfalls specific to Go DNS servers at scale.",
+      "items": [
+        {
+          "issue": "Logging on the Hot Path with Mutex Contention",
+          "context": "Per-query structured logging",
+          "symptom": "High CPU usage in logging library; reduced QPS; p99 latency spikes when log level is verbose.",
+          "root_cause": "Synchronous logging with shared io.Writer + mutex for every query, often including expensive string formatting.",
+          "fix": "Use asynchronous, batched logging; limit logs on hot paths; sample logs; use low-allocation loggers."
+        },
+        {
+          "issue": "Single Socket Bottleneck Without SO_REUSEPORT",
+          "context": "Multi-core UDP handling",
+          "symptom": "CPU utilization uneven across cores; one CPU pegged while others idle.",
+          "root_cause": "Only one UDP socket bound on a single goroutine; kernel cannot distribute load across cores.",
+          "fix": "Use multiple UDP sockets with SO_REUSEPORT when supported; run read loops pinned to multiple CPUs."
+        },
+        {
+          "issue": "Ignoring CPU Cache Locality",
+          "context": "Large in-memory zone/cache structures",
+          "symptom": "CPU profile dominated by cache misses; poor scaling on multi-core machines.",
+          "root_cause": "Using large, pointer-heavy structures (e.g., nested maps, linked lists) for lookups.",
+          "fix": "Use cache-friendly data structures (flat slices, tries, or packed arrays); minimize pointer chasing in hot paths."
+        },
+        {
+          "issue": "Excessive Reflection in Config and Plugins",
+          "context": "Plugin system, dynamic handlers",
+          "symptom": "CPU time spent in reflection; pprof shows reflect.Value.* as hot.",
+          "root_cause": "Using reflection-based plugin registration or config binding on every query.",
+          "fix": "Limit reflection to startup time; generate static bindings or use interfaces without reflection in request path."
+        }
+      ]
+    },
+    {
+      "id": "RESILIENCE_FAILOVER",
+      "description": "Issues affecting robustness under partial failures, upstream problems, and restarts.",
+      "items": [
+        {
+          "issue": "Retry Storm on Upstream Failure",
+          "context": "Recursive resolver with multiple upstreams",
+          "symptom": "When one upstream fails, CPU and network usage spike due to mass retries; timeouts for all clients.",
+          "root_cause": "Aggressive retry logic without backoff or circuit breaking; each query fans out to all upstreams repeatedly.",
+          "fix": "Implement exponential backoff, jitter, and circuit breaker per upstream; limit total retries per query."
+        },
+        {
+          "issue": "Non-Atomic Configuration Reload",
+          "context": "Hot reload of zones and upstream settings",
+          "symptom": "Short windows where some queries see old config and some see partially new config; rare panics.",
+          "root_cause": "Updating shared config structure in-place while requests read from it; multi-step updates not atomic.",
+          "fix": "Build new config snapshot off to the side; swap pointer atomically (atomic.Value); avoid in-place mutations."
+        },
+        {
+          "issue": "Ignoring Partial Zone Load Failures",
+          "context": "Bulk zone file import",
+          "symptom": "Some records silently missing; inconsistent behavior between primaries and secondaries.",
+          "root_cause": "Aborting on first error without reporting or continuing with partially loaded zone; or silently skipping invalid records.",
+          "fix": "Collect and report all parse errors; fail zone load atomically on serious issues; expose status in metrics and logs."
+        },
+        {
+          "issue": "No Warm-Up After Restart",
+          "context": "Cache-heavy deployments",
+          "symptom": "Immediately after restart, latency spikes and upstream load is high until cache re-fills.",
+          "root_cause": "Cold cache and lazy initialization of indexes; no preloading or priming queries.",
+          "fix": "Preload hot zones/records into cache at startup; optionally persist cache snapshots and restore them safely."
+        }
+      ]
+    },
+    {
+      "id": "CONFIGURATION",
+      "description": "Additional configuration and deployment mistakes that manifest as runtime bugs.",
+      "items": [
+        {
+          "issue": "Inconsistent Time Unit Parsing",
+          "context": "Config file TTLs, timeouts, and intervals",
+          "symptom": "Timeouts much shorter or longer than intended (e.g., 5ms instead of 5s).",
+          "root_cause": "Mixing raw integers with time.Duration without clear units; interpreting seconds as nanoseconds or vice versa.",
+          "fix": "Use human-readable duration strings parsed with time.ParseDuration; document units clearly; validate ranges at startup."
+        },
+        {
+          "issue": "Misconfigured Access Control Lists",
+          "context": "Recursive vs authoritative mode access",
+          "symptom": "Recursive resolution unintentionally exposed to the internet or unintentionally blocked for internal clients.",
+          "root_cause": "Confusing CIDR lists; default-allow when ACL is empty; not differentiating between query types.",
+          "fix": "Explicitly separate ACLs for recursion and authoritativeness; apply secure defaults (deny-all, then allow-listed)."
+        },
+        {
+          "issue": "pprof / Debug Endpoints Exposed Publicly",
+          "context": "HTTP admin/metrics server",
+          "symptom": "Sensitive runtime info (goroutines, heap) exposed; potential DoS via expensive debug handlers.",
+          "root_cause": "Binding debug/pprof endpoints on 0.0.0.0 without auth or network restrictions.",
+          "fix": "Bind debug endpoints to localhost or a dedicated admin network; require authentication or IP whitelisting."
+        },
+        {
+          "issue": "Inconsistent Zone Replication Settings",
+          "context": "Primary–secondary deployments",
+          "symptom": "Secondaries serving stale data or failing to update; serials out of sync.",
+          "root_cause": "Not validating SOA serial increments; misconfigured NOTIFY/AXFR/IXFR settings between nodes.",
+          "fix": "Enforce strictly monotonic serials; test NOTIFY and transfer configuration; expose replication lag metrics."
+        }
+      ]
+    },
+    {
+      "id": "BUILD_DEPLOYMENT",
+      "description": "Issues in how the binary is built, packaged, and shipped.",
+      "items": [
+        {
+          "issue": "CGO Dependency on Minimal Containers",
+          "context": "DNS server using CGO (for BPF, system calls, etc.)",
+          "symptom": "Binary fails to start or behaves differently in scratch/distroless images.",
+          "root_cause": "Relying on glibc or other shared libs in production but testing with different environment locally.",
+          "fix": "Prefer pure Go where possible; if CGO is required, test in same base image; use static linking when appropriate."
+        },
+        {
+          "issue": "Missing Runtime Kernel/Sysctl Tuning",
+          "context": "High-scale deployments on Linux",
+          "symptom": "Packet drops, ENOBUFS, and backlog overflows under load.",
+          "root_cause": "Relying on OS defaults for net.core.rmem_max, net.core.wmem_max, net.core.somaxconn, etc.",
+          "fix": "Document and apply recommended sysctl settings in deployment; verify via startup checks or preflight scripts."
+        },
+        {
+          "issue": "Inconsistent Build Flags Across Environments",
+          "context": "Feature flags, race detector, and optimizations",
+          "symptom": "Bugs only appear in production builds or only in debug builds; behavior differs across environments.",
+          "root_cause": "Using different tags or build flags (-tags, -race, -trimpath) without tracking them.",
+          "fix": "Standardize build pipeline; encode build flags in CI; embed build info (version, tags) into binary."
+        }
+      ]
+    },
+    {
+      "id": "OPERATIONS_MAINTENANCE",
+      "description": "Day-2 operational issues that lead to subtle production bugs or outages.",
+      "items": [
+        {
+          "issue": "Overly Verbose Logging by Default",
+          "context": "Production startup configuration",
+          "symptom": "Disk fills quickly; I/O becomes bottleneck; log rotation struggles during incident.",
+          "root_cause": "Default log level set to debug or trace in production; high-frequency events logged.",
+          "fix": "Set conservative default log level (info/warn); make higher verbosity opt-in and time-bounded."
+        },
+        {
+          "issue": "Missing Safe Defaults for Unknown Config Fields",
+          "context": "Config file evolution",
+          "symptom": "Old configs behave unexpectedly after upgrade; new features silently disabled or misconfigured.",
+          "root_cause": "Ignoring unknown fields or assuming zero-values are safe; no versioning of configuration schema.",
+          "fix": "Validate config with strict schema; reject unknown fields or log loudly; version and migrate config formats."
+        },
+        {
+          "issue": "Clock Skew Between Cluster Nodes",
+          "context": "Cache expiry, negative caching, DNSSEC validation",
+          "symptom": "Different nodes return different TTLs; DNSSEC validation fails depending on node.",
+          "root_cause": "NTP misconfiguration or large time drift between replicas/regions.",
+          "fix": "Require time synchronization (NTP) and monitor clock offsets; fail fast or degrade gracefully on large skew."
+        }
+      ]
+    },
+    {
+      "id": "TESTING_QUALITY",
+      "description": "Additional gaps in testing strategy specific to DNS workloads.",
+      "items": [
+        {
+          "issue": "Lack of Cross-Implementation Interop Tests",
+          "context": "Compatibility with common resolvers and stub clients",
+          "symptom": "Works in unit tests but fails with specific resolvers (e.g., Windows, Android, systemd-resolved).",
+          "root_cause": "Only testing with one client library or test harness; not validating behavior against multiple real-world implementations.",
+          "fix": "Create integration tests using different resolver stacks (bind, unbound, system libraries); capture and replay real query traces."
+        },
+        {
+          "issue": "No Chaos Testing for Upstream Failures",
+          "context": "Recursive resolver with multiple upstreams",
+          "symptom": "Unexpected outage when a single upstream misbehaves (slow, flapping, or corrupt).",
+          "root_cause": "Not testing behavior under partial upstream and network failures.",
+          "fix": "Introduce chaos tests that inject latency, packet loss, and corruption into upstream paths; assert graceful degradation."
+        },
+        {
+          "issue": "Insufficient Long-Running Soak Tests",
+          "context": "Memory leaks and counter wraparounds",
+          "symptom": "Service stable in short load tests but degrades after days/weeks.",
+          "root_cause": "Only running short-duration performance tests; not observing long-term stability.",
+          "fix": "Add soak tests (many hours/days) at realistic and peak loads; monitor resources, latencies, and error rates over time."
+        }
+      ]
+    }
+  ]
+}
