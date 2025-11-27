@@ -96,6 +96,7 @@ func TestCacheHitMiss(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 100,
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -158,6 +159,7 @@ func TestCacheTTLAdjustment(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 100,
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -204,6 +206,7 @@ func TestCacheExpiration(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 100,
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -250,6 +253,7 @@ func TestCacheLRUEviction(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 3, // Only 3 entries
+		ServeStale: false,
 	}
 
 	// Cache 4 different entries to trigger eviction
@@ -318,6 +322,7 @@ func TestCacheNegativeNXDOMAIN(t *testing.T) {
 		Resolver:    mock,
 		MaxEntries:  100,
 		NegativeTTL: 5 * time.Minute,
+		ServeStale:  false,
 	}
 
 	query := new(dns.Msg)
@@ -359,6 +364,7 @@ func TestCacheNegativeNODATA(t *testing.T) {
 		Resolver:    mock,
 		MaxEntries:  100,
 		NegativeTTL: 5 * time.Minute,
+		ServeStale:  false,
 	}
 
 	query := new(dns.Msg)
@@ -399,6 +405,7 @@ func TestCacheConcurrency(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 1000,
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -456,6 +463,7 @@ func TestCacheMinMaxTTL(t *testing.T) {
 		MaxEntries: 100,
 		MinTTL:     1 * time.Minute, // Enforce minimum 60s
 		MaxTTL:     1 * time.Hour,   // Enforce maximum 3600s
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -476,6 +484,7 @@ func TestCacheDepthCheck(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 100,
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -507,6 +516,7 @@ func TestCacheClear(t *testing.T) {
 	cache := &Cache{
 		Resolver:   mock,
 		MaxEntries: 100,
+		ServeStale: false,
 	}
 
 	query := new(dns.Msg)
@@ -553,6 +563,7 @@ func TestCacheCleanup(t *testing.T) {
 		Resolver:        mock,
 		MaxEntries:      100,
 		CleanupInterval: 1 * time.Second, // Run cleanup every second
+		ServeStale:      false,
 	}
 	defer cache.Stop()
 

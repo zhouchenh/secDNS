@@ -1,11 +1,13 @@
 package cache
 
 import (
+	"container/heap"
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
+	"golang.org/x/sync/singleflight"
 	"net"
 	"strconv"
 	"strings"
@@ -17,17 +19,24 @@ import (
 // Cache implements a high-performance, thread-safe DNS caching resolver with LRU eviction.
 type Cache struct {
 	// Configuration (immutable after init)
-	Resolver        resolver.Resolver // Upstream resolver
-	MaxEntries      int               // Maximum cache entries (0 = unlimited)
-	MinTTL          time.Duration     // Minimum TTL override (0 = no override)
-	MaxTTL          time.Duration     // Maximum TTL override (0 = no override)
-	NegativeTTL     time.Duration     // TTL for negative responses (NXDOMAIN, NODATA)
-	CleanupInterval time.Duration     // How often to run cleanup (default 60s)
+	Resolver           resolver.Resolver // Upstream resolver
+	MaxEntries         int               // Maximum cache entries (0 = unlimited)
+	MinTTL             time.Duration     // Minimum TTL override (0 = no override)
+	MaxTTL             time.Duration     // Maximum TTL override (0 = no override)
+	NegativeTTL        time.Duration     // TTL for negative responses (NXDOMAIN, NODATA)
+	NXDomainTTL        time.Duration     // Override TTL for NXDOMAIN
+	NoDataTTL          time.Duration     // Override TTL for NODATA
+	CleanupInterval    time.Duration     // How often to run cleanup (default 60s)
+	ServeStale         bool              // Serve stale responses while refreshing
+	StaleDuration      time.Duration     // How long stale responses are valid
+	DefaultPositiveTTL time.Duration     // Default TTL for positive responses lacking TTLs
+	DefaultFallbackTTL time.Duration     // Fallback TTL when no records contain TTL
 
 	// Cache state (protected by mutex)
 	entries map[string]*CacheEntry
 	lru     *LRUList
 	mutex   sync.RWMutex
+	queue   expirationHeap
 
 	// Statistics (atomic counters)
 	hits      uint64
@@ -38,6 +47,7 @@ type Cache struct {
 	initOnce    sync.Once
 	stopCleanup chan struct{}
 	cleanupDone sync.WaitGroup
+	requests    singleflight.Group
 }
 
 // CacheEntry represents a single cached DNS response.
@@ -45,6 +55,7 @@ type CacheEntry struct {
 	Response    *dns.Msg  // Deep copy of DNS response
 	OriginalTTL uint32    // Original TTL from upstream (in seconds)
 	CachedAt    time.Time // When this entry was cached
+	ExpiresAt   time.Time // When entry expires
 	lruNode     *LRUNode  // Pointer to LRU list node
 }
 
@@ -92,58 +103,52 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	}
 
 	// Try cache lookup
-	if response, found := c.get(key); found {
+	if response, stale, found := c.get(key); found {
 		atomic.AddUint64(&c.hits, 1)
 		// Set the query ID to match the incoming query
 		response.Id = query.Id
+		if stale {
+			go c.triggerRefresh(key, query.Copy(), depth-1)
+		}
 		return response, nil
 	}
 
 	// Cache miss - query upstream
 	atomic.AddUint64(&c.misses, 1)
-	response, err := c.Resolver.Resolve(query, depth-1)
+	value, err, _ := c.requests.Do(key, func() (interface{}, error) {
+		return c.fetchAndStore(query.Copy(), depth-1, key)
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Cache the response if appropriate
-	if c.shouldCache(response) {
-		c.set(key, response)
-	}
-
-	// Apply minTTL/maxTTL to the response being returned
-	// (even for uncacheable responses, to ensure consistency)
-	if c.MinTTL > 0 || c.MaxTTL > 0 {
-		responseTTL := c.extractTTL(response)
-		if c.MinTTL > 0 && responseTTL < uint32(c.MinTTL.Seconds()) {
-			responseTTL = uint32(c.MinTTL.Seconds())
-		}
-		if c.MaxTTL > 0 && responseTTL > uint32(c.MaxTTL.Seconds()) {
-			responseTTL = uint32(c.MaxTTL.Seconds())
-		}
-		c.adjustTTL(response, responseTTL)
-	}
-
+	response := value.(*dns.Msg).Copy()
+	response.Id = query.Id
 	return response, nil
 }
 
 // get retrieves a cached entry and returns a copy with adjusted TTL.
-// Returns (response, true) on hit, (nil, false) on miss.
-func (c *Cache) get(key string) (*dns.Msg, bool) {
+// Returns (response, stale, true) on hit, (nil, false, false) on miss.
+func (c *Cache) get(key string) (*dns.Msg, bool, bool) {
 	// Fast read lock for lookup and creating a response snapshot
 	c.mutex.RLock()
 	entry, exists := c.entries[key]
 	if !exists {
 		c.mutex.RUnlock()
-		return nil, false
+		return nil, false, false
 	}
 
 	// Check expiration while the entry is guaranteed to exist
 	remainingTTL := c.calculateRemainingTTL(entry)
+	stale := false
 	if remainingTTL <= 0 {
-		c.mutex.RUnlock()
-		c.removeEntryIfCurrent(key, entry)
-		return nil, false
+		if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
+			stale = true
+		} else {
+			c.mutex.RUnlock()
+			c.removeEntryIfCurrent(key, entry)
+			return nil, false, false
+		}
 	}
 
 	// Copy the response while read lock is held so mutations can't race
@@ -157,9 +162,13 @@ func (c *Cache) get(key string) (*dns.Msg, bool) {
 	}
 	c.mutex.Unlock()
 
-	c.adjustTTL(response, remainingTTL)
+	if stale {
+		c.adjustTTL(response, 0)
+	} else {
+		c.adjustTTL(response, remainingTTL)
+	}
 
-	return response, true
+	return response, stale, true
 }
 
 // removeEntryIfCurrent deletes the cache entry if it still matches the provided pointer.
@@ -184,7 +193,9 @@ func (c *Cache) set(key string, response *dns.Msg) {
 		existing.Response = response.Copy()
 		existing.OriginalTTL = c.extractTTLWithOverrides(response)
 		existing.CachedAt = time.Now()
+		existing.ExpiresAt = existing.CachedAt.Add(time.Duration(existing.OriginalTTL) * time.Second)
 		c.lru.MoveToFront(existing.lruNode)
+		heap.Push(&c.queue, expirationItem{key: key, expiresAt: existing.ExpiresAt})
 		return
 	}
 
@@ -204,8 +215,37 @@ func (c *Cache) set(key string, response *dns.Msg) {
 		CachedAt:    time.Now(),
 		lruNode:     c.lru.AddToFront(key),
 	}
+	entry.ExpiresAt = entry.CachedAt.Add(time.Duration(entry.OriginalTTL) * time.Second)
 
 	c.entries[key] = entry
+	heap.Push(&c.queue, expirationItem{key: key, expiresAt: entry.ExpiresAt})
+}
+
+func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, error) {
+	if depth < 0 {
+		return nil, resolver.ErrLoopDetected
+	}
+	response, err := c.Resolver.Resolve(query, depth)
+	if err != nil {
+		return nil, err
+	}
+	if c.shouldCache(response) {
+		c.set(key, response)
+	}
+	resp := response.Copy()
+	c.applyTTLOverrides(resp)
+	return resp, nil
+}
+
+func (c *Cache) triggerRefresh(key string, query *dns.Msg, depth int) {
+	if query == nil {
+		return
+	}
+	go func() {
+		_, _, _ = c.requests.Do(key, func() (interface{}, error) {
+			return c.fetchAndStore(query, depth, key)
+		})
+	}()
 }
 
 // extractTTLWithOverrides extracts TTL and applies min/max overrides.
@@ -282,13 +322,11 @@ func formatECSCacheKey(opt *dns.EDNS0_SUBNET) string {
 // calculateRemainingTTL calculates how much TTL remains for a cache entry.
 // Returns 0 if expired.
 func (c *Cache) calculateRemainingTTL(entry *CacheEntry) uint32 {
-	elapsed := uint32(time.Since(entry.CachedAt).Seconds())
-
-	if elapsed >= entry.OriginalTTL {
-		return 0 // Expired
+	remaining := entry.ExpiresAt.Sub(time.Now()).Seconds()
+	if remaining <= 0 {
+		return 0
 	}
-
-	return entry.OriginalTTL - elapsed
+	return uint32(remaining)
 }
 
 // extractTTL extracts the minimum TTL from a DNS response.
@@ -301,7 +339,11 @@ func (c *Cache) extractTTL(response *dns.Msg) uint32 {
 	}
 
 	// For positive responses, find minimum TTL in answer section
-	minTTL := uint32(3600) // Default 1 hour if no records
+	defaultTTL := c.DefaultPositiveTTL
+	if defaultTTL == 0 {
+		defaultTTL = time.Hour
+	}
+	minTTL := uint32(defaultTTL.Seconds())
 	found := false
 
 	for _, rr := range response.Answer {
@@ -327,7 +369,11 @@ func (c *Cache) extractTTL(response *dns.Msg) uint32 {
 	}
 
 	if !found {
-		return 300 // Default 5 minutes if no TTL found
+		fallback := c.DefaultFallbackTTL
+		if fallback == 0 {
+			fallback = 5 * time.Minute
+		}
+		return uint32(fallback.Seconds())
 	}
 
 	return minTTL
@@ -335,6 +381,12 @@ func (c *Cache) extractTTL(response *dns.Msg) uint32 {
 
 // getTTLForNegativeResponse determines TTL for negative responses (NXDOMAIN/NODATA).
 func (c *Cache) getTTLForNegativeResponse(response *dns.Msg) uint32 {
+	if response.Rcode == dns.RcodeNameError && c.NXDomainTTL > 0 {
+		return uint32(c.NXDomainTTL.Seconds())
+	}
+	if response.Rcode == dns.RcodeSuccess && len(response.Answer) == 0 && c.NoDataTTL > 0 {
+		return uint32(c.NoDataTTL.Seconds())
+	}
 	// Use configured negative TTL if set
 	if c.NegativeTTL > 0 {
 		return uint32(c.NegativeTTL.Seconds())
@@ -392,10 +444,26 @@ func (c *Cache) shouldCache(response *dns.Msg) bool {
 	return false
 }
 
+func (c *Cache) applyTTLOverrides(response *dns.Msg) {
+	if c.MinTTL == 0 && c.MaxTTL == 0 {
+		return
+	}
+	ttl := c.extractTTL(response)
+	if c.MinTTL > 0 && ttl < uint32(c.MinTTL.Seconds()) {
+		ttl = uint32(c.MinTTL.Seconds())
+	}
+	if c.MaxTTL > 0 && ttl > uint32(c.MaxTTL.Seconds()) {
+		ttl = uint32(c.MaxTTL.Seconds())
+	}
+	c.adjustTTL(response, ttl)
+}
+
 // init initializes the cache and starts background cleanup.
 func (c *Cache) init() {
 	c.entries = make(map[string]*CacheEntry)
 	c.lru = NewLRUList()
+	c.queue = expirationHeap{}
+	heap.Init(&c.queue)
 	c.stopCleanup = make(chan struct{})
 
 	// Set default cleanup interval if not configured
@@ -406,6 +474,16 @@ func (c *Cache) init() {
 	// Set default negative TTL if not configured
 	if c.NegativeTTL == 0 {
 		c.NegativeTTL = 5 * time.Minute
+	}
+
+	if c.DefaultPositiveTTL == 0 {
+		c.DefaultPositiveTTL = time.Hour
+	}
+	if c.DefaultFallbackTTL == 0 {
+		c.DefaultFallbackTTL = 5 * time.Minute
+	}
+	if c.StaleDuration == 0 {
+		c.StaleDuration = 30 * time.Second
 	}
 
 	// Start background cleanup goroutine
@@ -439,22 +517,21 @@ func (c *Cache) cleanupExpired() {
 	defer c.mutex.Unlock()
 
 	now := time.Now()
-	toDelete := make([]string, 0)
-
-	// Find all expired entries
-	for key, entry := range c.entries {
-		elapsed := uint32(now.Sub(entry.CachedAt).Seconds())
-		if elapsed >= entry.OriginalTTL {
-			toDelete = append(toDelete, key)
+	for c.queue.Len() > 0 {
+		item := c.queue[0]
+		if item.expiresAt.After(now) {
+			break
 		}
-	}
-
-	// Delete expired entries
-	for _, key := range toDelete {
-		if entry := c.entries[key]; entry != nil {
-			delete(c.entries, key)
-			c.lru.Remove(entry.lruNode)
+		heap.Pop(&c.queue)
+		entry, ok := c.entries[item.key]
+		if !ok {
+			continue
 		}
+		if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
+			continue
+		}
+		delete(c.entries, item.key)
+		c.lru.Remove(entry.lruNode)
 	}
 }
 
@@ -499,6 +576,34 @@ func (c *Cache) Clear() {
 
 	c.entries = make(map[string]*CacheEntry)
 	c.lru.Clear()
+	c.queue = expirationHeap{}
+}
+
+type expirationItem struct {
+	key       string
+	expiresAt time.Time
+}
+
+type expirationHeap []expirationItem
+
+func (h expirationHeap) Len() int           { return len(h) }
+func (h expirationHeap) Less(i, j int) bool { return h[i].expiresAt.Before(h[j].expiresAt) }
+func (h expirationHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *expirationHeap) Push(x interface{}) {
+	item := x.(expirationItem)
+	*h = append(*h, item)
+}
+
+func (h *expirationHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	if n == 0 {
+		return expirationItem{}
+	}
+	item := old[n-1]
+	*h = old[0 : n-1]
+	return item
 }
 
 func init() {
@@ -675,6 +780,188 @@ func init() {
 								return nil, false
 							}
 							return time.Duration(num * float64(time.Second)), true
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"ServeStale"},
+				ValueSource: descriptor.ObjectAtPath{
+					ObjectPath:     descriptor.Path{"serveStale"},
+					AssignableKind: descriptor.KindBool,
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"StaleDuration"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"staleDuration"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"staleDuration"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"DefaultPositiveTTL"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"defaultPositiveTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"defaultPositiveTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"DefaultFallbackTTL"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"defaultFallbackTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"defaultFallbackTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"NXDomainTTL"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"nxDomainTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"nxDomainTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"NoDataTTL"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"noDataTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindFloat64,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								num, ok := original.(float64)
+								if !ok || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
+						},
+					},
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"noDataTTL"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								num, err := strconv.ParseFloat(str, 64)
+								if err != nil || num < 0 {
+									return nil, false
+								}
+								return time.Duration(num * float64(time.Second)), true
+							},
 						},
 					},
 				},
