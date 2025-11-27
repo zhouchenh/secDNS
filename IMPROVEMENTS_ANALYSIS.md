@@ -97,13 +97,55 @@ These should be configurable fields.
 - Upstream failures don't immediately impact clients
 - Better user experience during TTL transitions
 
-#### 8. **No Prefetching**
+#### 8. **No Auto-Update for Popular Expired Domains (Prefetching)**
 For frequently accessed entries nearing expiration, proactively refresh them in the background before they expire.
 
+**Current behavior:**
+- Entry expires at TTL=0
+- Next query causes cache miss
+- Client waits for upstream query
+- Popular domains constantly experience cache misses at TTL boundaries
+
+**Proposed behavior:**
+Track access frequency for each cache entry (simple counter). When popular domains (e.g., >10 accesses) reach 90% of their TTL:
+- Trigger background refresh from upstream
+- Update cache entry with fresh data
+- Client always hits fresh cache, never waits
+
+**Implementation approach:**
+```go
+type CacheEntry struct {
+    Response    *dns.Msg
+    OriginalTTL uint32
+    CachedAt    time.Time
+    lruNode     *LRUNode
+    AccessCount uint32  // NEW: track popularity
+}
+
+// In cleanup goroutine, check for entries to prefetch:
+if entry.AccessCount >= popularityThreshold {
+    elapsed := time.Since(entry.CachedAt)
+    percentExpired := float64(elapsed) / float64(entry.OriginalTTL * time.Second)
+    if percentExpired >= 0.90 {  // 90% expired
+        go c.refreshEntry(key, query)  // Background refresh
+    }
+}
+```
+
 **Benefits:**
-- Reduces cache miss rate
-- Smooths upstream load distribution
-- Improves latency for popular domains
+- Zero cache-miss latency for popular domains
+- Smooths upstream load distribution (no thundering herd at TTL expiration)
+- Dramatically improves user experience for frequently accessed domains
+- Upstream failures don't immediately impact popular domains
+
+**Configuration:**
+```json
+{
+  "popularityThreshold": 10,     // Domains accessed 10+ times are "popular"
+  "prefetchThreshold": 0.90,     // Start refresh at 90% of TTL
+  "maxConcurrentPrefetch": 100   // Limit concurrent background refreshes
+}
+```
 
 #### 9. **No Cache Warming**
 No ability to pre-populate the cache with common domains on startup.
@@ -205,9 +247,9 @@ The `index` field persists across `Provide()` calls. While this works for the cu
 8. Add stale-while-revalidate (#7)
 
 ### Phase 3: Quality of Life
-9. Add cache warming support (#9)
-10. Add duplicate rule warnings (#17)
-11. Add prefetching (#8)
+9. Add duplicate rule warnings (#17)
+10. Add auto-update for popular domains (#8)
+11. Add cache warming support (#9)
 12. Add per-domain statistics (#11)
 
 ### Phase 4: Polish
@@ -223,7 +265,49 @@ The `index` field persists across `Provide()` calls. While this works for the cu
 - **#4 (Request coalescing):** 4-6 hours - requires sync primitives and careful design
 - **#5 (Cleanup optimization):** 3-4 hours - implement timer wheel or min-heap
 - **#7 (Stale-while-revalidate):** 6-8 hours - complex feature, needs background refresh
-- **#8 (Prefetching):** 4-6 hours - access tracking + background refresh
+- **#8 (Auto-update/Prefetching):** 6-8 hours - access tracking, background refresh goroutines, rate limiting
+
+## Synergy: Auto-Update + Stale-While-Revalidate
+
+**Best Practice:** Combine features #7 and #8 for optimal user experience:
+
+**Tier 1 - Popular Domains (>10 accesses):**
+- Auto-update at 90% TTL via prefetching
+- Clients always get fresh data
+- Zero cache misses
+
+**Tier 2 - Regular Domains (1-10 accesses):**
+- Serve stale data if expired
+- Background refresh in progress
+- Near-zero latency even on "miss"
+
+**Tier 3 - Rare Domains (1 access):**
+- Normal cache behavior
+- Evict when expired or LRU
+
+**Result:**
+- Popular domains: Always fresh, zero latency
+- Regular domains: Stale-but-fast while refreshing
+- Rare domains: Don't waste resources
+- Overall hit rate: >99% with near-zero latency
+
+**Example metrics:**
+```
+Total queries: 100,000
+Popular domains (google.com, facebook.com, etc): 60,000 queries
+  - 100% prefetch hit rate, 0ms cache latency
+
+Regular domains: 30,000 queries
+  - 95% fresh hit, 5% stale-while-revalidate
+  - Average 0.2ms cache latency
+
+Rare domains: 10,000 queries
+  - 70% hit rate, 30% miss
+  - Cache misses: ~3000 (3% of total)
+
+Overall effective hit rate: 97%
+Overall average latency: <1ms (vs 20-50ms upstream)
+```
 
 ## Testing Requirements
 
