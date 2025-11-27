@@ -17,7 +17,19 @@ The `cache` resolver provides high-performance DNS response caching with LRU (Le
   "minTTL": 60,
   "maxTTL": 3600,
   "negativeTTL": 300,
-  "cleanupInterval": 60
+  "nxDomainTTL": 900,
+  "noDataTTL": 300,
+  "serveStale": true,
+  "staleDuration": 30,
+  "prefetchThreshold": 20,
+  "prefetchPercent": 0.85,
+  "ttlJitterPercent": 0.05,
+  "cleanupInterval": 60,
+  "warmupQueries": [
+    {"name": "google.com.", "type": 1},
+    {"name": "cloudflare.com.", "type": 28}
+  ],
+  "cacheControlEnabled": true
 }
 ```
 
@@ -70,6 +82,72 @@ Acceptable formats:
 * String: A numeric string value (e.g., `"60"`)
 
 Default: `60` (1 minute)
+
+> `serveStale`: Boolean _(Optional)_
+
+Serve expired responses for a short period while the cache refreshes them in the background. This prevents latency spikes when many entries expire simultaneously.
+
+Default: `true`
+
+> `staleDuration`: Number | String _(Optional)_
+
+How long (seconds) stale entries remain eligible to be served while a refresh is in flight. Only applies when `serveStale` is true.
+
+Default: `30`
+
+> `defaultPositiveTTL`: Number | String _(Optional)_
+
+Fallback TTL used when positive answers do not contain any TTLs. Helpful when upstream resolvers omit TTLs.
+
+Default: `3600` (1 hour)
+
+> `defaultFallbackTTL`: Number | String _(Optional)_
+
+TTL used when no records contain TTL information at all (e.g., empty authority sections).
+
+Default: `300` (5 minutes)
+
+> `nxDomainTTL`, `noDataTTL`: Number | String _(Optional)_
+
+Overrides for specific negative response types. `nxDomainTTL` is used for NXDOMAIN answers, and `noDataTTL` is used when the response is NOERROR but has no answers (NODATA).
+
+Defaults: `0` (use `negativeTTL`)
+
+> `ttlJitterPercent`: Number _(Optional)_
+
+Adds ±percentage jitter to cached TTLs to avoid the thundering herd problem when many entries expire simultaneously.
+
+Default: `0.05` (±5%)
+
+> `prefetchThreshold`: Number _(Optional)_
+
+Minimum access count before the cache prefetches an entry in the background. Set to `0` to disable.
+
+Default: `10`
+
+> `prefetchPercent`: Number _(Optional)_
+
+Fraction of the TTL that must elapse before prefetching begins. Example: `0.9` starts refreshing when 90% of the TTL has passed.
+
+Default: `0.9`
+
+> `warmupQueries`: \[ WarmupQueryObject \] _(Optional)_
+
+List of queries to run once the cache starts, priming frequently used domains.
+
+```json
+{"name": "example.com.", "type": 1, "class": 1}
+```
+
+* `name`: FQDN to query (required)
+* `type`: DNS RR type (default A)
+* `class`: DNS class (default IN)
+
+> `cacheControlEnabled`: Boolean _(Optional)_
+
+Enable support for EDNS0 local options that instruct the cache to skip caching (`nocache`), skip prefetch (`noprefetch`), disable stale serving (`nostale`), or override TTL values (`ttl=NNN`).
+
+Default: `false`
 
 ## Features
 
@@ -167,6 +245,43 @@ Cache responses with automatic fallback to secondary resolver:
 }
 ```
 
+### Prefetching Hot Domains
+
+Aggressively cache popular domains and prefetch them before expiration while allowing short-term stale answers:
+
+```json
+{
+  "type": "cache",
+  "resolver": { "type": "doh", "url": "https://cloudflare-dns.com/dns-query" },
+  "prefetchThreshold": 15,
+  "prefetchPercent": 0.9,
+  "serveStale": true,
+  "staleDuration": 45,
+  "ttlJitterPercent": 0.05,
+  "cacheControlEnabled": true
+}
+```
+
+This configuration refreshes any entry that has been hit 15+ times once 90% of its TTL has passed, serves stale data for up to 45 seconds while refreshing, and honors upstream cache-control hints.
+
+### Warmup Queries
+
+Preload the cache during startup to avoid cold-start misses for critical domains:
+
+```json
+{
+  "type": "cache",
+  "resolver": { "type": "nameServer", "address": "9.9.9.9" },
+  "warmupQueries": [
+    {"name": "google.com.", "type": 1},
+    {"name": "cloudflare.com.", "type": 28},
+    {"name": "github.com.", "type": 1}
+  ]
+}
+```
+
+Warmup queries run once when the cache initializes so the most common domains are already cached by the time listeners start serving requests.
+
 ## Performance Characteristics
 
 - **Cache Hit**: ~585 ns/op (0.0006 ms)
@@ -186,6 +301,8 @@ Cache responses with automatic fallback to secondary resolver:
 4. **Monitor Statistics**: Track hit rate to ensure cache is effective. >70% hit rate is ideal.
 
 5. **Combine with Other Resolvers**: Cache works well wrapping sequence, dns64, or filter resolvers.
+6. **Monitor Per-Domain Stats**: Identify domains with low hit rates and adjust `prefetchThreshold`/`prefetchPercent`.
+7. **Leverage Cache-Control**: Allow upstream resolvers to hint which responses should not be cached (dynamic content, etc.).
 
 ## Notes
 
@@ -194,3 +311,21 @@ Cache responses with automatic fallback to secondary resolver:
 - The cache is transparent to clients - they receive standard DNS responses
 - Response IDs are always matched to the incoming query ID
 - Compatible with `concurrentNameServerList` via the NameServerResolver interface
+In addition to global stats, the resolver now tracks per-domain counters (hits, misses, stale-served counts, and prefetch counts). Call `DomainStatsFor(name)` or `AllDomainStats()` to inspect them and tune `prefetchThreshold`.
+
+### Warmup Queries
+
+Use `warmupQueries` to issue a small set of lookups on startup. This warms the cache before the listener starts accepting traffic, removing cold-start penalties for known-hot domains.
+
+### Stale-While-Revalidate
+
+When `serveStale` is enabled the cache returns an expired response immediately while refreshing it in the background. This prevents spikes when popular entries expire together and keeps clients from observing upstream latency.
+
+### Cache-Control Hints
+
+When `cacheControlEnabled` is `true` upstream resolvers can send EDNS0 local options to influence caching:
+
+* `nocache` – do not store this response
+* `noprefetch` – skip prefetch logic for this entry
+* `nostale` – do not serve stale copies of this entry
+* `ttl=<seconds>` – clamp the TTL to a specific value
