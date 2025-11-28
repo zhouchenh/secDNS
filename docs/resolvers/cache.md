@@ -99,11 +99,19 @@ Default: `true`
 
 How long (seconds) stale entries remain eligible to be served while a refresh is in flight. Only applies when `serveStale` is true.
 
+Acceptable formats:
+* Number: e.g., `30`
+* String: `"30"`
+
 Default: `30`
 
 > `defaultPositiveTTL`: Number | String _(Optional)_
 
 Fallback TTL used when positive answers do not contain any TTLs. Helpful when upstream resolvers omit TTLs.
+
+Acceptable formats:
+* Number: e.g., `3600`
+* String: `"3600"`
 
 Default: `3600` (1 hour)
 
@@ -111,11 +119,27 @@ Default: `3600` (1 hour)
 
 TTL used when no records contain TTL information at all (e.g., empty authority sections).
 
+Acceptable formats:
+* Number: e.g., `300`
+* String: `"300"`
+
 Default: `300` (5 minutes)
 
-> `nxDomainTTL`, `noDataTTL`: Number | String _(Optional)_
+> `nxDomainTTL`: Number | String _(Optional)_
 
-Overrides for specific negative response types. `nxDomainTTL` is used for NXDOMAIN answers, and `noDataTTL` is used when the response is NOERROR but has no answers (NODATA).
+Override TTL for NXDOMAIN answers.
+
+Acceptable formats:
+* Number: e.g., `900`
+* String: `"900"`
+
+> `noDataTTL`: Number | String _(Optional)_
+
+Override TTL for NOERROR/NODATA answers.
+
+Acceptable formats:
+* Number: e.g., `300`
+* String: `"300"`
 
 Defaults: `0` (use `negativeTTL`)
 
