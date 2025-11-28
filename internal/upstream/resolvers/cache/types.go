@@ -1055,8 +1055,27 @@ func init() {
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"ServeStale"},
 				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath:     descriptor.Path{"serveStale"},
-					AssignableKind: descriptor.KindBool,
+					ObjectPath: descriptor.Path{"serveStale"},
+					AssignableKind: descriptor.AssignableKinds{
+						descriptor.KindBool,
+						descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								switch strings.ToLower(str) {
+								case "true":
+									return true, true
+								case "false":
+									return false, true
+								default:
+									return nil, false
+								}
+							},
+						},
+					},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1375,8 +1394,27 @@ func init() {
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"CacheControlEnabled"},
 				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath:     descriptor.Path{"cacheControlEnabled"},
-					AssignableKind: descriptor.KindBool,
+					ObjectPath: descriptor.Path{"cacheControlEnabled"},
+					AssignableKind: descriptor.AssignableKinds{
+						descriptor.KindBool,
+						descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								switch strings.ToLower(str) {
+								case "true":
+									return true, true
+								case "false":
+									return false, true
+								default:
+									return nil, false
+								}
+							},
+						},
+					},
 				},
 			},
 		},
