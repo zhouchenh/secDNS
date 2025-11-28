@@ -877,14 +877,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"maxEntries"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return int(num), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return int(num), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									i, err := strconv.Atoi(str)
+									if err != nil || i < 0 {
+										return nil, false
+									}
+									return i, true
+								},
 							},
 						},
 					},
@@ -897,14 +913,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"minTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -917,71 +949,102 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"maxTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
 					descriptor.DefaultValue{Value: time.Duration(0)},
 				},
 			},
-		// negativeTTL (optional, default 300s)
-		descriptor.ObjectFiller{
-			ObjectPath: descriptor.Path{"NegativeTTL"},
-			ValueSource: descriptor.ValueSources{
-				descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"negativeTTL"},
-					AssignableKind: descriptor.ConvertibleKind{
-						Kind: descriptor.KindFloat64,
-						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							num, ok := original.(float64)
-							if !ok || num < 0 {
-								return nil, false
-							}
-							return time.Duration(num * float64(time.Second)), true
+			// negativeTTL (optional, default 300s)
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"NegativeTTL"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"negativeTTL"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
 						},
 					},
+					descriptor.DefaultValue{Value: 5 * time.Minute},
 				},
-				descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"negativeTTL"},
-					AssignableKind: descriptor.ConvertibleKind{
-						Kind: descriptor.KindString,
-						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							str, ok := original.(string)
-							if !ok {
-								return nil, false
-							}
-							num, err := strconv.ParseFloat(str, 64)
-							if err != nil || num < 0 {
-								return nil, false
-							}
-							return time.Duration(num * float64(time.Second)), true
-						},
-					},
-				},
-				descriptor.DefaultValue{Value: 5 * time.Minute},
 			},
-		},
 			// cleanupInterval (optional, default 60s)
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"CleanupInterval"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"cleanupInterval"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -989,66 +1052,6 @@ func init() {
 				},
 			},
 			// Also support string format for durations
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"MinTTL"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"minTTL"},
-					AssignableKind: descriptor.ConvertibleKind{
-						Kind: descriptor.KindString,
-						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							str, ok := original.(string)
-							if !ok {
-								return nil, false
-							}
-							num, err := strconv.ParseFloat(str, 64)
-							if err != nil || num < 0 {
-								return nil, false
-							}
-							return time.Duration(num * float64(time.Second)), true
-						},
-					},
-				},
-			},
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"MaxTTL"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"maxTTL"},
-					AssignableKind: descriptor.ConvertibleKind{
-						Kind: descriptor.KindString,
-						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							str, ok := original.(string)
-							if !ok {
-								return nil, false
-							}
-							num, err := strconv.ParseFloat(str, 64)
-							if err != nil || num < 0 {
-								return nil, false
-							}
-							return time.Duration(num * float64(time.Second)), true
-						},
-					},
-				},
-			},
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"NegativeTTL"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"negativeTTL"},
-					AssignableKind: descriptor.ConvertibleKind{
-						Kind: descriptor.KindString,
-						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							str, ok := original.(string)
-							if !ok {
-								return nil, false
-							}
-							num, err := strconv.ParseFloat(str, 64)
-							if err != nil || num < 0 {
-								return nil, false
-							}
-							return time.Duration(num * float64(time.Second)), true
-						},
-					},
-				},
-			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"ServeStale"},
 				ValueSource: descriptor.ObjectAtPath{
@@ -1061,31 +1064,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"staleDuration"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"staleDuration"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -1096,31 +1098,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"defaultPositiveTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"defaultPositiveTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -1131,31 +1132,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"defaultFallbackTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"defaultFallbackTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -1166,31 +1166,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"nxDomainTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"nxDomainTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -1201,31 +1200,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"noDataTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"noDataTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
 							},
 						},
 					},
@@ -1236,31 +1234,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"ttlJitterPercent"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return num, true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return num, true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"ttlJitterPercent"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 {
-									return nil, false
-								}
-								return num, true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return num, true
+								},
 							},
 						},
 					},
@@ -1271,31 +1268,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"prefetchThreshold"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return uint64(num), true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return uint64(num), true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"prefetchThreshold"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseUint(str, 10, 64)
-								if err != nil {
-									return nil, false
-								}
-								return num, true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseUint(str, 10, 64)
+									if err != nil {
+										return nil, false
+									}
+									return num, true
+								},
 							},
 						},
 					},
@@ -1306,31 +1302,30 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"prefetchPercent"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 || num > 1 {
-									return nil, false
-								}
-								return num, true
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 || num > 1 {
+										return nil, false
+									}
+									return num, true
+								},
 							},
-						},
-					},
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"prefetchPercent"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								num, err := strconv.ParseFloat(str, 64)
-								if err != nil || num < 0 || num > 1 {
-									return nil, false
-								}
-								return num, true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 || num > 1 {
+										return nil, false
+									}
+									return num, true
+								},
 							},
 						},
 					},

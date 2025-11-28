@@ -43,6 +43,10 @@ The upstream resolver to query when there is a cache miss. This is required and 
 
 The maximum number of cache entries to store. When this limit is reached, the least recently used (LRU) entry will be evicted to make room for new entries. Set to 0 for unlimited cache size (not recommended for production).
 
+Acceptable formats:
+* Number: e.g., `10000`
+* String: Numeric string e.g., `"10000"`
+
 Default: `10000`
 
 > `minTTL`: Number | String _(Optional)_
@@ -119,17 +123,29 @@ Defaults: `0` (use `negativeTTL`)
 
 Adds ±percentage jitter to cached TTLs to avoid the thundering herd problem when many entries expire simultaneously.
 
+Acceptable formats:
+* Number: e.g., `0.05`
+* String: `"0.05"`
+
 Default: `0.05` (±5%)
 
 > `prefetchThreshold`: Number _(Optional)_
 
 Minimum access count before the cache prefetches an entry in the background. Set to `0` to disable.
 
+Acceptable formats:
+* Number: e.g., `20`
+* String: `"20"`
+
 Default: `10`
 
 > `prefetchPercent`: Number _(Optional)_
 
 Fraction of the TTL that must elapse before prefetching begins. Example: `0.9` starts refreshing when 90% of the TTL has passed.
+
+Acceptable formats:
+* Number: e.g., `0.85`
+* String: `"0.85"`
 
 Default: `0.9`
 
