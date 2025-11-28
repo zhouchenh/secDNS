@@ -24,7 +24,7 @@ See [docs/configuration.md](docs/configuration.md) for the overall JSON schema.
 * [Listeners](docs/listeners.md) – Available listeners such as `dnsServer` and the HTTP API, with version notes.
 * [Resolvers](docs/resolvers.md) – All upstream resolver types, capabilities, and minimum supported versions.
 * [Rules](docs/rules.md) – Rule engines for routing queries to specific resolvers.
-* [Version history](docs/version_history.md) – Feature timeline and component availability across releases.
+* [Version History](docs/version_history.md) – Feature timeline and component availability across releases.
 
 ## Version History
 
