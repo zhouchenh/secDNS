@@ -67,7 +67,7 @@ Default: `0` (no maximum TTL enforcement)
 
 > `negativeTTL`: Number | String _(Optional)_
 
-The TTL in seconds for negative responses (NXDOMAIN and NODATA). Negative caching helps reduce load on upstream resolvers for non-existent domains. If the upstream response contains an SOA record with a minimum TTL, that value is used instead.
+The TTL in seconds for negative responses (NXDOMAIN and NODATA). Negative caching helps reduce load on upstream resolvers for non-existent domains. If you want to honor the minimum TTL from an SOA record in the authority section, explicitly set this field to `0`; otherwise the configured value (default 300s) takes precedence.
 
 Acceptable formats:
 * Number: The number of seconds (e.g., `300` for 5 minutes)
