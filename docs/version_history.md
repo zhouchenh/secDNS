@@ -1,6 +1,6 @@
 # Version History
 
-### v1.2.1 - 2025.11.08
+### v1.2.1 - 2025.11.27
 
 New Features
 
