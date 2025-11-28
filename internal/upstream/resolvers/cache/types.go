@@ -931,26 +931,43 @@ func init() {
 					descriptor.DefaultValue{Value: time.Duration(0)},
 				},
 			},
-			// negativeTTL (optional, default 300s)
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"NegativeTTL"},
-				ValueSource: descriptor.ValueSources{
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"negativeTTL"},
-						AssignableKind: descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								num, ok := original.(float64)
-								if !ok || num < 0 {
-									return nil, false
-								}
-								return time.Duration(num * float64(time.Second)), true
-							},
+		// negativeTTL (optional, default 300s)
+		descriptor.ObjectFiller{
+			ObjectPath: descriptor.Path{"NegativeTTL"},
+			ValueSource: descriptor.ValueSources{
+				descriptor.ObjectAtPath{
+					ObjectPath: descriptor.Path{"negativeTTL"},
+					AssignableKind: descriptor.ConvertibleKind{
+						Kind: descriptor.KindFloat64,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							num, ok := original.(float64)
+							if !ok || num < 0 {
+								return nil, false
+							}
+							return time.Duration(num * float64(time.Second)), true
 						},
 					},
-					descriptor.DefaultValue{Value: 5 * time.Minute},
 				},
+				descriptor.ObjectAtPath{
+					ObjectPath: descriptor.Path{"negativeTTL"},
+					AssignableKind: descriptor.ConvertibleKind{
+						Kind: descriptor.KindString,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							str, ok := original.(string)
+							if !ok {
+								return nil, false
+							}
+							num, err := strconv.ParseFloat(str, 64)
+							if err != nil || num < 0 {
+								return nil, false
+							}
+							return time.Duration(num * float64(time.Second)), true
+						},
+					},
+				},
+				descriptor.DefaultValue{Value: 5 * time.Minute},
 			},
+		},
 			// cleanupInterval (optional, default 60s)
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"CleanupInterval"},
