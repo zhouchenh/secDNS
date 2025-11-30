@@ -4,8 +4,8 @@
 
 New Features
 
-* Add [recursive](resolvers/recursive.md) resolver (DNSSEC-validating recursive mode with root hints, adaptive NS ranking, singleflight, loop/referral/CNAME limits, and ECS passthrough/add/override/strip propagation). Includes hardening: authoritative NODATA handling (SOA/no-referral short-circuit), SOCKS5/bind support, built-in root hints + probes, and DNSSEC validation (RRSIG time checks, DS→DNSKEY chain, NSEC/NSEC3 proof coverage, AD gating).
-* Add [ecs](resolvers/ecs.md) resolver to apply EDNS Client Subnet policy (passthrough/add/override/strip) before delegating to another resolver, enabling ECS control without duplicating caches. ECS core now supports `strip` mode; resolver docs list ECS capabilities and resolver list is alphabetized.
+* Add [recursive](resolvers/recursive.md) resolver: DNSSEC-validating recursion with root hints, adaptive nameserver ranking, singleflight, loop/referral/CNAME limits, authoritative NODATA short-circuiting, SOCKS5/bind support, and ECS passthrough/add/override/strip propagation.
+* Add [ecs](resolvers/ecs.md) resolver: applies EDNS Client Subnet policy (passthrough/add/override/strip, including strip support on release) before delegating, so ECS variants can share downstream caches.
 
 ### v1.2.1 - 2025.11.27
 
