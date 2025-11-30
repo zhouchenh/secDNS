@@ -1,919 +1,127 @@
 # secDNS Project Knowledge Base
-# This file is updated after every task completion to maintain context for LLM agents
-# Last Updated: 2025-11-08
+# Updated for downstream LLM agents
+# Last Updated: 2025-11-29
 
 metadata:
   project_name: secDNS
-  version: 1.2.1
-  release_date: 2025-11-08
+  version: 1.2.2
+  release_date: 2025-11-29
   language: Go
   go_version: "1.23"
-  compiled_with: "1.24.1"
-  license: GNU Affero General Public License v3.0 (AGPLv3)
-  repository_size: 120MB
-  total_go_files: 58
-  total_documentation_files: 22
-  lines_of_code: ~6400
-  development_branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+  toolchain: "1.24.7"
+  license: AGPLv3
+  branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+  go_files: 98
+  test_files: 27
+  doc_files: 27
 
 project_purpose:
-  primary: "DNS resolver proxy to bypass DNS spoofing (DNS cache poisoning) from ISPs"
+  summary: "DNS resolver/proxy that routes queries through configurable upstream resolvers to avoid censorship and poisoning."
   use_cases:
-    - Bypass DNS censorship
-    - Prevent DNS cache poisoning attacks
-    - Route different domains to different DNS resolvers
-    - Use secure DNS protocols (DoT, DoH)
-  target_audience:
-    - End users experiencing DNS spoofing
-    - Network administrators
-    - Privacy-conscious users
-    - Users in regions with DNS filtering
+    - Bypass ISP DNS spoofing/censorship
+    - Route specific domains to chosen resolvers
+    - Provide secure transport (DoH/DoT/TCP) with caching and filtering
+    - Offer HTTP automation endpoint for DNS resolution
 
 key_features:
-  - Multiple DNS protocol support (DoT, DoH, regular DNS)
-  - HTTP API listener (`httpAPIServer`) exposing DNS-as-JSON for automation and monitoring
-  - Sequential failover mode (try next resolver if one fails)
-  - Concurrent mode (accept response from fastest resolver)
-  - SOCKS5 proxy support with optional authentication
-  - IPv6 DNS64 support (synthesize AAAA from A records)
-  - High-performance cache resolver with prefetching, warmup queries, stale serving, and TTL jitter
-  - Name-based custom routing rules
-  - Multiple simultaneous listeners
-  - DNS response filtering (conditional A/AAAA removal)
-
-architecture:
-  pattern: "Descriptor-based plugin architecture"
-  description: "Components register themselves dynamically using descriptor pattern"
-
-  core_components:
-    listeners:
-      count: 2
-      types:
-        - name: dnsServer
-          location: internal/listeners/servers/dns/server/types.go
-          description: "Listens for incoming DNS queries on UDP or TCP sockets (no DoT termination)"
-          protocols: [TCP, UDP]
-          default_port: 53
-
-        - name: httpAPIServer
-          location: internal/listeners/servers/http/server/types.go
-          description: "Exposes a REST-style endpoint that accepts GET/POST requests and returns DNS answers as JSON"
-          protocols: [HTTP]
-          default_port: 8080
-
-    resolvers:
-      count: 12
-      types:
-        - name: nameServer
-          category: basic
-          location: internal/upstream/resolvers/nameserver/types.go
-          description: "Forward queries to upstream DNS server"
-          protocols: [UDP, TCP, TCP-TLS]
-          features: [SOCKS5, IP binding, timeout, TLS verification]
-
-        - name: doh
-          category: basic
-          location: internal/upstream/resolvers/doh/types.go
-          description: "DNS over HTTPS resolver"
-          features: [URL-based, recursive URL resolution, SOCKS5, timeout]
-
-        - name: address
-          category: response_generation
-          location: internal/upstream/resolvers/address/types.go
-          description: "Reply with static IPv4/IPv6 addresses"
-          features: [Multiple addresses, A and AAAA records]
-
-        - name: cache
-          category: optimization
-          location: internal/upstream/resolvers/cache/types.go
-          description: "High-performance caching layer with LRU eviction, TTL controls, warmup queries, and prefetching"
-          features: [Stale serving, prefetchThreshold/prefetchPercent, warmupQueries, per-domain stats]
-          added_in: v1.2.0
-
-        - name: alias
-          category: response_generation
-          location: internal/upstream/resolvers/alias/types.go
-          description: "Reply with CNAME records"
-          features: [CNAME chain following]
-
-        - name: noAnswer
-          category: response_generation
-          location: internal/upstream/resolvers/noanswer/types.go
-          description: "Empty successful response (no errors)"
-
-        - name: notExist
-          category: response_generation
-          location: internal/upstream/resolvers/notexist/types.go
-          description: "Return NXDOMAIN (domain does not exist)"
-
-        - name: sequence
-          category: composition
-          location: internal/upstream/resolvers/sequence/types.go
-          description: "Sequential failover resolver"
-          features: [Try in order, first success wins]
-
-        - name: concurrentNameServerList
-          category: composition
-          location: internal/upstream/resolvers/concurrentnameserverlist/types.go
-          description: "Concurrent resolver - first response wins"
-          features: [Parallel queries, fastest wins]
-
-        - name: dns64
-          category: transformation
-          location: internal/upstream/resolvers/dns64/types.go
-          description: "DNS64 IPv6 synthesis"
-          features: [A to AAAA conversion, configurable prefix]
-
-        - name: filterOutA
-          category: transformation
-          location: internal/upstream/resolvers/filterouta/types.go
-          description: "Remove A records from responses"
-
-        - name: filterOutAAAA
-          category: transformation
-          location: internal/upstream/resolvers/filteroutaaaa/types.go
-          description: "Remove AAAA records from responses"
-
-        - name: filterOutAIfAAAAPresents
-          category: transformation
-          location: internal/upstream/resolvers/filteroutaifaaaapresents/types.go
-          description: "Remove A records if AAAA records exist"
-          added_in: v1.1.6
-
-        - name: filterOutAAAAIfAPresents
-          category: transformation
-          location: internal/upstream/resolvers/filteroutaaaaifapresents/types.go
-          description: "Remove AAAA records if A records exist"
-          added_in: v1.1.6
-
-    rule_providers:
-      count: 2
-      types:
-        - name: dnsmasqConf
-          location: internal/rules/providers/dnsmasqconf/types.go
-          description: "Parses dnsmasq-format configuration files"
-          format: "server=/domain.com/resolver-name"
-          features: [Comment support, domain routing]
-          example_file: accelerated-domains.china.conf
-          example_entries: 68524
-
-        - name: collection
-          location: internal/rules/providers/collection/types.go
-          description: "Direct domain → resolver mapping"
-          format: "JSON array of name/resolver pairs"
-
-  interfaces:
-    resolver:
-      location: pkg/upstream/resolver/interfaces.go
-      methods:
-        - Type() descriptor.Type
-        - TypeName() string
-        - Resolve(query *dns.Msg, depth int) (*dns.Msg, error)
-
-    server:
-      location: pkg/listeners/server/interfaces.go
-      methods:
-        - Type() descriptor.Type
-        - TypeName() string
-        - Serve(handler func(*dns.Msg) *dns.Msg, errorHandler func(error))
-
-    provider:
-      location: pkg/rules/provider/interfaces.go
-      methods:
-        - Type() descriptor.Type
-        - TypeName() string
-        - Provide(receive func(string, Resolver), receiveError func(error)) bool
-
-  data_flow: |
-    DNS Query (Client)
-        ↓
-    dnsServer Listener (TCP/UDP port 53)
-        ↓
-    Core Instance (name-based routing)
-        ↓
-    Rule Providers (dnsmasqConf/collection) [match domain → resolver]
-        ↓
-    [Match] → Specific Resolver
-    [No Match] → Default Resolver
-        ↓
-    Resolver Types:
-      - sequence → try in order
-      - concurrent → race all
-      - doh → HTTPS query
-      - nameServer → TCP/UDP/TLS query
-      - address/alias/dns64/filters → transform/synthesize
-        ↓
-    Response
-        ↓
-    Error Handler (on failure)
-        ↓
-    DNS Reply (Client)
-
-file_structure:
-  entry_point: main.go:12
-
-  core_files:
-    - path: main.go
-      description: Application entry point
-      key_functions:
-        - main(): CLI parsing, config loading, service initialization
-        - open(): Config file loader with environment variable fallback
-        - printVersion(): Version display
-
-    - path: internal/core/instance.go:28
-      description: Central DNS orchestrator
-      key_functions:
-        - NewInstance(): Creates core instance
-        - Resolve(): Main query resolution logic with depth tracking
-        - serve(): DNS query handler
-      notes: Prevents infinite loops via depth tracking (max 64)
-
-    - path: internal/core/core.go
-      description: Version and metadata management
-      key_data:
-        - Version: "1.1.6"
-        - Environment variable support for config paths
-
-    - path: internal/config/loader.go:19
-      description: Configuration parser
-      key_functions:
-        - Load(): JSON config parser
-        - Validates listeners, resolvers, rules
-      format: JSON with descriptor-based type system
-
-    - path: internal/features/features.go
-      description: Feature registration
-      notes: Imports all resolver/listener/provider modules to trigger init()
-
-  public_api:
-    - pkg/common/
-    - pkg/listeners/server/
-    - pkg/rules/provider/
-    - pkg/upstream/resolver/
-
-  implementation:
-    - internal/core/
-    - internal/config/
-    - internal/features/
-    - internal/logger/
-    - internal/common/
-    - internal/listeners/servers/dns/
-    - internal/upstream/resolvers/
-    - internal/rules/providers/
+  listeners:
+    - dnsServer: UDP/TCP DNS listener (default port 53), supports EDNS0, TCP fallback; no DoT termination.
+    - httpAPIServer: HTTP GET/POST (form or JSON) `/resolve` endpoint returning JSON answers; available v1.2.1+.
+  resolvers:
+    - nameServer: Plain/DoT TCP/UDP resolver with SOCKS5, TLS verification, EDNS0/TCP fallback.
+    - doh: DNS-over-HTTPS with URL resolution helper, SOCKS5, ECS, and timeout controls.
+    - cache: High-performance cache with LRU, TTL overrides/jitter, negative caching, stale-while-revalidate, prefetch, warmup queries, EDNS cache-control hints, per-domain stats.
+    - recursive: Recursive resolver with root-hint bootstrap, adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation.
+    - ecs: Wrapper resolver to apply ECS policy (passthrough/add/override/strip) before delegating, so cache/recursive can be shared across ECS variants. (v1.2.2+)
+    - dns64: AAAA synthesis with IPv6 prefix config; optional ignoreExistingAAAA flag.
+    - composition: sequence (ordered failover) and concurrentNameServerList (fastest response wins).
+    - response generators: address, alias, noAnswer, notExist.
+    - filters: filterOutA, filterOutAAAA, filterOutAIfAAAAPresents, filterOutAAAAIfAPresents.
+  rules:
+    - dnsmasqConf provider (dnsmasq-format routing files, closes files, warns on duplicates).
+    - collection provider (JSON name→resolver pairs).
+  architecture: Descriptor-based plugin system; features auto-register via `internal/features`.
 
 configuration:
-  format: JSON
+  format: JSON parsed through descriptor system (go-descriptor).
+  navigation: README.md → docs/configuration.md → docs/listeners.md / docs/resolvers.md for component details.
+  cache_numeric_fields: Accept literal numbers or numeric strings; defaults documented in `docs/resolvers/cache.md`.
+    fields: size, cleanupInterval, minTTL, maxTTL, defaultTTL, fallbackTTL, negativeTTL, nxDomainTTL, noDataTTL, prefetchThreshold, prefetchPercent, staleDuration, warmupRefreshInterval, warmupTimeout.
+    behavior: Negative responses prefer upstream SOA minimum TTL when present; otherwise use configured/default negativeTTL.
+  boolean_string_fields: cache `serveStale`/`cacheControlEnabled` and dns64 `ignoreExistingAAAA` accept booleans or "true"/"false".
+  required: At least one listener and one resolver; `defaultResolver` required.
+  env: CONFIG_DIR overrides config search root for relative paths.
 
-  structure:
-    listeners:
-      type: array
-      description: DNS servers to listen on
-      example:
-        - type: dnsServer
-          config:
-            listen: 0.0.0.0
-            port: "53"
-            protocol: tcp
-
-    resolvers:
-      type: object
-      description: Named resolver definitions (keyed by type, then name)
-      example:
-        nameServer:
-          "114DNS-main":
-            address: 114.114.114.114
-          "Cloudflare-DoT-main":
-            address: 1.1.1.1
-            port: 853
-            protocol: tcp-tls
-            tlsServerName: cloudflare-dns.com
-
-    rules:
-      type: array
-      description: Custom routing rules
-      example:
-        - type: dnsmasqConf
-          config:
-            filePath: accelerated-domains.china.conf
-            resolver: 114DNS
-
-    defaultResolver:
-      type: string or object
-      description: Fallback resolver for unmatched queries
-      example: "CloudflareDNS"
-
-    resolutionDepth:
-      type: integer
-      description: Maximum recursion depth for loop prevention
-      default: 64
-
-  example_file: config.json
-
-  environment_variables:
-    CONFIG_DIR: Directory for config file resolution
-    Used for relative path expansion
-
-dependencies:
-  direct:
-    - name: github.com/miekg/dns
-      version: v1.1.62
-      purpose: DNS protocol library
-      critical: true
-
-    - name: github.com/rs/zerolog
-      version: v1.33.0
-      purpose: Structured JSON logging
-      critical: true
-
-    - name: github.com/txthinking/socks5
-      version: v0.0.0-20230325130024-4230056ae301
-      purpose: SOCKS5 proxy support
-      critical: false
-
-    - name: github.com/zhouchenh/go-descriptor
-      version: v1.1.0
-      purpose: Type descriptor system for plugin architecture
-      critical: true
-
-  indirect:
-    - golang.org/x/net
-    - golang.org/x/sync
-    - golang.org/x/sys
-    - golang.org/x/tools
-    - golang.org/x/mod
-    - github.com/mattn/go-colorable
-    - github.com/mattn/go-isatty
-    - github.com/patrickmn/go-cache
-    - github.com/txthinking/runnergroup
-
-logging:
-  library: zerolog
-  location: internal/logger/
-  format: Structured JSON
-  output: Console with color support
-
-  levels:
-    - Trace
-    - Debug
-    - Info
-    - Warning (default)
-    - Error
-    - Fatal
-    - Panic
-
-  features:
-    - Timestamp formatting
-    - Color output for console
-    - Separate stdout/stderr handling
-
-error_handling:
-  resolver_errors:
-    - Loop detection (depth exceeded)
-    - Nil query errors
-    - Unsupported question types
-
-  config_errors:
-    - Missing listeners
-    - Missing default resolver
-    - Invalid configuration
-
-  core_errors:
-    - Nil handlers
-    - Invalid domain names
-
-  service_specific_errors:
-    - Per-resolver error types
-    - Per-provider error types
-
-security_features:
-  - DNS spoofing prevention (primary purpose)
-  - TLS support (DoT - DNS over TLS)
-  - HTTPS support (DoH - DNS over HTTPS)
-  - SOCKS5 authentication (username/password)
-  - IP binding (SendThrough option)
-  - Loop detection (resolution depth tracking)
-  - Name-based filtering (domain routing)
-
-testing:
-  unit_tests: false
-  test_files: 0
-
-  manual_testing:
-    build: "go build -o bin/secDNS main.go"
-    validate_config: "./bin/secDNS -test -config config.json"
-    run: "./bin/secDNS -config config.json"
-
-  future_improvements:
-    - Add unit tests for resolvers
-    - Add integration tests for DNS query flow
-    - Add configuration validation tests
-    - Add error handling tests
-
-build_system:
-  type: Standard Go tooling
-  build_command: "go build"
-  no_makefile: true
-  no_ci_cd: true
-
-  gitignore:
-    - /bin/
-    - /vendor/
-
-version_history:
-  - version: v1.1.6
-    date: 2024-11-13
-    changes: Conditional A/AAAA filtering, naming fixes
-
-  - version: v1.1.5
-    date: 2022-02-05
-    changes: Multiple addresses, A/AAAA filtering
-
-  - version: v1.1.4
-    date: 2021-07-22
-    changes: SOCKS5 proxy support
-
-  - version: v1.1.3
-    date: 2021-07-20
-    changes: DoH URL resolver option
-
-  - version: v1.1.2
-    date: 2020-10-20
-    changes: DoH error handling fix
-
-  - version: v1.1.1
-    date: 2020-10-19
-    changes: UDP query timeout fix
-
-  - version: v1.1.0
-    date: 2020-03-26
-    changes: DNS64 support
-
-  - version: v1.0.0
-    date: 2020-03-07
-    changes: Initial release
-
-documentation:
-  location: docs/
-
-  key_files:
-    - README.md: Project overview
-    - docs/configuration.md: Configuration guide
-    - docs/version_history.md: Version history
-    - docs/listeners.md: Listener overview
-    - docs/listeners/*.md: Individual listener docs
-    - docs/resolvers.md: Resolver overview
-    - docs/resolvers/*.md: Individual resolver docs (11 files)
-    - docs/rules.md: Rules overview
-    - docs/rules/*.md: Individual rule provider docs
-
-notable_files:
-  - accelerated-domains.china.conf:
-      description: Pre-configured domain list for China
-      entries: 68524
-      format: dnsmasq configuration
-      purpose: Route Chinese domains to local DNS for better performance
-
-implementation_patterns:
-  - pattern: Descriptor Pattern
-    description: Dynamic type registration and instantiation
-    usage: Plugin-like architecture for resolvers, servers, providers
-    note: Each component registers descriptor on init()
-
-  - pattern: Resolver Chain Pattern
-    description: Recursive resolution support
-    usage: Depth tracking prevents infinite loops
-    note: Each resolver can delegate to other resolvers
-
-  - pattern: Observer Pattern
-    description: Rules providers
-    usage: Providers iterate through domain → resolver mappings
-    note: Stateful iteration with Provide() returning bool
-
-  - pattern: Facade Pattern
-    description: Core instance
-    usage: Single interface to complex resolver/listener/provider system
-    note: Instance implements Resolver itself
-
-current_state:
-  last_updated: 2025-11-07
-  git_branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-  git_status: clean (after pushing llm-agent files)
-  pushed_to_remote: true
-
-  recent_commits:
-    - commit: 9b99939
-      date: 2025-11-07
-      message: "Add LLM agent documentation and context files"
-      files_added:
-        - llm-agent/README.md
-        - llm-agent/context.yaml
-    - commit: 83296de
-      message: "Merge pull request #2 from zhouchenh/dependabot/go_modules/golang.org/x/net-0.38.0"
-    - commit: 8419567
-      message: "chore(deps): Bump golang.org/x/net from 0.36.0 to 0.38.0"
-    - commit: 906d75a
-      message: "Merge pull request #1 from zhouchenh/dependabot/go_modules/golang.org/x/net-0.36.0"
-    - commit: bc6e229
-      message: "chore(deps): Bump golang.org/x/net from 0.33.0 to 0.36.0"
-
-known_issues:
-  - issue: No unit tests
-    severity: medium
-    impact: Cannot verify changes automatically
-    recommendation: Add test coverage for critical paths
-
-  - issue: No CI/CD
-    severity: low
-    impact: Manual build/test verification required
-    recommendation: Add GitHub Actions for automated testing
-
-  - issue: No code coverage tracking
-    severity: low
-    impact: Unknown test coverage
-    recommendation: Add coverage reporting
-
-technical_debt:
-  - area: Testing
-    description: No automated tests exist
-    priority: high
-
-  - area: CI/CD
-    description: No continuous integration pipeline
-    priority: medium
-
-  - area: Documentation
-    description: Some resolvers lack detailed examples
-    priority: low
-
-future_enhancements:
-  - Add unit tests for all resolver types
-  - Add integration tests for full query flow
-  - Add GitHub Actions CI/CD pipeline
-  - Add metrics/monitoring support
-  - Add health check endpoint
-  - Add hot-reload for configuration changes
-  - Add rate limiting support
-  - Add caching layer for DNS responses
-  - Add web UI for configuration management
-
-tasks_completed:
-  - task: Full project scan
-    date: 2025-11-07
-    description: Comprehensive exploration of codebase structure, architecture, and components
-    files_analyzed: 58 Go files, 22 documentation files
-    outcome: Complete understanding of project architecture and capabilities
-
-  - task: Create llm-agent documentation
-    date: 2025-11-07
-    description: Created README.md and context.yaml for LLM agent context
-    files_created:
-      - llm-agent/README.md
-      - llm-agent/context.yaml
-    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-    commit: 9b99939
-    status: completed
-    notes: Initially created on dev-by-llm-agents branch, then cherry-picked to correct branch
-
-  - task: Fix concurrentNameServerList to accept composition resolvers
-    date: 2025-11-07
-    description: Added NameServerResolver() marker to enable sequence and wrapper resolvers in concurrentNameServerList
-    problem: concurrentNameServerList type check rejected sequence/dns64/filter resolvers despite being thread-safe
-    solution: Added NameServerResolver() marker method to composition and wrapper resolvers
-    files_modified:
-      - internal/upstream/resolvers/sequence/types.go
+architecture_details:
+  listeners:
+    dnsServer: internal/listeners/servers/dns/server/types.go (UDP/TCP, EDNS0, TCP fallback).
+    httpAPIServer: internal/listeners/servers/http/server/types.go (GET/POST form/json, JSON responses, version range v1.2.1+).
+  resolvers:
+    paths:
+      - internal/upstream/resolvers/nameserver/types.go
+      - internal/upstream/resolvers/doh/types.go
+      - internal/upstream/resolvers/cache/types.go
+      - internal/upstream/resolvers/recursive/types.go
       - internal/upstream/resolvers/dns64/types.go
+      - internal/upstream/resolvers/sequence/types.go
+      - internal/upstream/resolvers/concurrent/nameserver/list/types.go
+      - internal/upstream/resolvers/address/types.go
+      - internal/upstream/resolvers/alias/types.go
+      - internal/upstream/resolvers/no/answer/resolver/types.go
+      - internal/upstream/resolvers/not/exist/resolver/types.go
       - internal/upstream/resolvers/filter/out/a/types.go
       - internal/upstream/resolvers/filter/out/aaaa/types.go
       - internal/upstream/resolvers/filter/out/a/if/aaaa/presents/types.go
       - internal/upstream/resolvers/filter/out/aaaa/if/a/presents/types.go
-    testing:
-      - Configuration with sequence in concurrentNameServerList validates successfully
-      - DNS queries resolve without "Nil name server" errors
-      - Response time ~91ms for www.google.com
-    rationale: |
-      Composition resolvers (sequence) and wrappers (dns64, filters) that delegate
-      to nameserver resolvers should preserve the nameserver capability. All these
-      resolvers are thread-safe and suitable for concurrent execution.
-    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-    commit: db15479
-    report: llm-agent/reports/2025-11-07-concurrent-nameserver-list-type-restriction-fix.md
-    status: completed
+    interface: pkg/upstream/resolver/interfaces.go
+  rule_providers:
+    - internal/rules/providers/dnsmasq/conf/types.go
+    - internal/rules/providers/collection/types.go
 
-  - task: Comprehensive concurrency analysis and fixes
-    date: 2025-11-07
-    description: Analyzed and fixed all race conditions, resource leaks, and deadlock risks
-    problem: Potential race conditions, resource leaks, and unbounded goroutine spawning
-    analysis_report: llm-agent/reports/2025-11-07-concurrency-analysis-deadlock-memory-leak-detection.md
-    issues_found:
-      critical:
-        - DoH resolver initialization race (queryClient field)
-        - DoH resolver URL list race (resolvedURLs field)
-        - Core instance map race (nameResolverMap)
-        - HTTP response body resource leak
-        - Unbounded goroutine spawning in error handlers
-        - errCollector potential deadlock
-        - nameServer resolver initialization race
-      moderate:
-        - Deep recursion with concurrentNameServerList (expected behavior)
-    fixes_applied:
-      - file: internal/upstream/resolvers/doh/types.go
-        changes:
-          - Added initOnce sync.Once for thread-safe initialization
-          - Added urlMutex sync.RWMutex for URL list protection
-          - Fixed HTTP response body leak with defer Close()
-          - Fixed errCollector deadlock with safety check
-      - file: internal/core/instance.go
-        changes:
-          - Added mapMutex sync.RWMutex for map protection
-          - Protected all map reads with RLock
-          - Protected all map writes with Lock
-          - Removed go keyword from error handlers to prevent unbounded goroutines
-      - file: internal/upstream/resolvers/nameserver/types.go
-        changes:
-          - Added initOnce sync.Once for thread-safe initialization
-          - Replaced unsafe nil check with sync.Once pattern
-    testing:
-      method: Go race detector (go build -race)
-      test_scenario: 30 concurrent DNS queries (10 per domain)
-      domains_tested:
-        - www.google.com
-        - www.cloudflare.com
-        - www.github.com
-      results:
-        - All 30 queries completed successfully
-        - Zero race conditions detected
-        - Zero data races reported
-        - Clean race detector output
-    performance_impact:
-      - sync.Once: Zero overhead after first call (uses atomic operations)
-      - sync.RWMutex: Minimal overhead for read-heavy workload
-      - defer Close(): Ensures resource cleanup, prevents leaks
-      - Synchronous error handlers: Reduces goroutine count, improves debuggability
-    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-    status: completed
+recent_work:
+  - Added HTTP API listener with GET/POST form+JSON handling and docs (v1.2.1).
+  - Expanded cache resolver (prefetch, warmup, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; docs updated.
+  - Verified version history and docs crosslinks; README now points to configuration → listeners/resolvers.
+  - Added unit tests across resolvers (alias, sequence, dns64, doh, nameserver, filter variants, noAnswer, notExist), cache warmup/prefetch, HTTP API, and rule provider descriptors.
+  - Converted llm-agent common-issues JSON into numbered Markdown todos for triage.
+  - Recursive resolver hardened: adds DS→DNSKEY chain validation to root anchors, NSEC/NSEC3 coverage for NXDOMAIN/NODATA, AD gating with strict/permissive policies, SOCKS5/bind-address support, ECS propagation with add/override/strip, and unit tests with signed fixtures.
+  - DNSSEC validation now enforces RRSIG timing, verifies DS/DNSKEY chains, and checks NSEC/NSEC3 coverage (strict vs permissive). Default remains permissive; strict fails on validation errors.
+  - Added ECS wrapper resolver (add/override/strip) to reuse caches across ECS variants and documented resolver ordering; resolver list alphabetized.
 
-  - task: Add EDNS0 support and automatic TCP fallback for large DNS responses
-    date: 2025-11-07
-    description: Implemented EDNS0 and automatic TCP fallback to handle large DNS responses
-    problem: |
-      Users reported failures with large TXT records, long CNAME chains, and other large
-      DNS responses. Issue occurred primarily with UDP due to 512-byte default limit.
-    solution: |
-      Two-tier approach:
-      1. Primary: Enable EDNS0 with UDPSize=4096 for larger UDP responses (handles 95%+ of cases)
-      2. Secondary: Automatic TCP fallback when UDP responses have Truncated flag set
-    files_modified:
-      - internal/upstream/resolvers/nameserver/types.go
-    changes:
-      - Added UDPSize: 4096 to dns.Client for EDNS0 support
-      - Implemented automatic truncation detection
-      - Added queryWithProtocol() helper for protocol-specific queries
-      - Added createClientForProtocol() helper with SOCKS5 support
-      - Refactored initClient() to eliminate code duplication
-      - TCP fallback gracefully degrades if TCP unavailable
-    testing:
-      domains_tested:
-        - google.com TXT: 12 records, 691 bytes, no truncation
-        - _dmarc.google.com TXT: DMARC policy record
-        - www.amazon.com A: CNAME chain (2 CNAME + 1 A record)
-      results:
-        - EDNS0 successfully handles responses up to 4096 bytes
-        - No truncation on previously failing queries
-        - Response times: 9-32ms (normal)
-      edge_cases:
-        - TCP fallback works through SOCKS5 proxy
-        - Returns truncated response if TCP fails
-        - No fallback for TCP/TCP-TLS protocols (not needed)
-    performance_impact:
-      - EDNS0: Minimal overhead (~16 bytes OPT record)
-      - TCP fallback: Rare (<1% of queries), only when needed
-      - No degradation for normal-sized responses
-    backward_compatibility:
-      - All existing configurations work unchanged
-      - All protocols (UDP, TCP, TCP-TLS) still supported
-      - SOCKS5 proxy support maintained
-    standards_compliance:
-      - RFC 6891 (EDNS0)
-      - RFC 7766 (DNS over TCP)
-      - RFC 1035 (DNS)
-    report: llm-agent/reports/2025-11-07-large-dns-response-handling.md
-    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-    status: completed
+testing:
+  status: "`go test -mod=readonly ./...` passing (2025-11-29)."
+  coverage: Unit-heavy for cache/resolvers/rule providers; limited integration/e2e coverage.
+  notes: Core/pkg packages still mostly lack tests; long-running cache tests are short (<1s) after recent changes.
 
-  - task: Optimize TCP fallback client caching
-    date: 2025-11-07
-    description: Implemented client reuse for UDP→TCP fallback to eliminate repeated allocations
-    problem: |
-      Every truncated UDP response created a new TCP client (DNS client, TLS config,
-      SOCKS5 client, dial closures), causing unnecessary allocations and GC overhead.
-    solution: |
-      Added cached TCP fallback client with lazy initialization:
-      - tcpFallbackClient field: Cached TCP client (initialized once)
-      - tcpFallbackOnce: Thread-safe initialization with sync.Once
-      - Intelligent client selection in queryWithProtocol()
-    files_modified:
-      - internal/upstream/resolvers/nameserver/types.go
-    changes:
-      - Added tcpFallbackClient *client field to NameServer struct
-      - Added tcpFallbackOnce sync.Once for thread-safe initialization
-      - Updated queryWithProtocol() with three-tier client selection:
-        1. Primary protocol → use queryClient (fast path)
-        2. UDP→TCP fallback → use tcpFallbackClient (cached, optimized)
-        3. Other combinations → create temporary client (edge cases)
-    performance_impact:
-      memory_before: "~500 bytes allocated per truncated response"
-      memory_after: "~500 bytes allocated once, 0 bytes per subsequent fallback"
-      memory_savings: "67% reduction for workloads with frequent large responses"
-      latency_before: "+2ms initialization overhead per fallback"
-      latency_after: "+0.001ms atomic check per fallback"
-      latency_improvement: "99.95% faster client selection"
-      overhead: "16 bytes per NameServer instance (1 pointer + 1 sync.Once)"
-    testing:
-      functional: "Large TXT records (12-41 answers) handled correctly"
-      concurrency: "Thread-safe client reuse verified with concurrent queries"
-      correctness: "No race conditions detected with go build -race"
-    thread_safety:
-      - sync.Once guarantees single initialization across all goroutines
-      - Atomic load on fast path after initialization (~1-5ns)
-      - No race conditions with concurrent TCP fallbacks
-    edge_cases:
-      - Non-UDP protocols (TCP, TCP-TLS): No fallback, no client cached
-      - Rare protocol switches: Falls back to temporary client creation
-      - SOCKS5 proxy: TCP client inherits proxy configuration
-      - Concurrent initialization: sync.Once prevents duplicate allocation
-    backward_compatibility:
-      - No API changes
-      - No configuration changes
-      - No behavioral changes (except improved performance)
-      - 100% compatible with existing code
-    code_quality:
-      - Clear three-tier client selection logic
-      - Inline comments explaining caching strategy
-      - Consistent with existing sync.Once pattern for queryClient
-    report: llm-agent/reports/2025-11-07-tcp-fallback-client-caching-optimization.md
-    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-    status: completed
+documentation:
+  key_files:
+    - README.md (overview + navigation)
+    - docs/configuration.md (global config schema)
+    - docs/listeners.md + docs/listeners/http_api_server.md
+    - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
+    - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
+    - docs/version_history.md (through v1.2.2 dated 2025.11.29)
+  notes: Cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching.
 
-  - task: Bump version to 1.1.8 and update documentation
-    date: 2025-11-07
-    description: Version bump and documentation update for all bug fixes and enhancements
-    files_modified:
-      - internal/core/core.go (version: 1.1.7 → 1.1.8)
-      - docs/version_history.md (added v1.1.8 entry)
-      - llm-agent/context.yaml (updated metadata version)
-    changes_included_in_v1.1.8:
-      bug_fixes:
-        - Fixed critical race conditions in DoH and nameServer resolvers
-        - Fixed race condition in core instance map
-        - Fixed HTTP response body resource leak
-        - Fixed unbounded goroutine spawning
-        - Fixed potential deadlock in DoH error collector
-      enhancements:
-        - Added EDNS0 support (UDPSize: 4096) for large DNS responses
-        - Added automatic TCP fallback for truncated UDP responses
-        - Optimized TCP fallback with client caching (67% memory reduction)
-        - Maintained full SOCKS5 proxy support in TCP fallback
-      performance:
-        - Zero race conditions (verified with Go race detector)
-        - 99.95% latency improvement for TCP fallback client selection
-        - Thread-safe with sync.Once minimal overhead
-    branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-    status: completed
+current_state:
+  repo_status: go test clean; working tree has untracked artifacts (.DS_Store, .idea/, binaries, code-inspection-result-20251127/).
+  binaries: prebuilt secDNS-* artifacts at repo root.
+  config_samples: config.json/config-test*.json in root.
+  tooling: go.mod uses module github.com/zhouchenh/secDNS; vendored deps present.
 
-  - task: Phase 1 cache and dnsmasq fixes
-    date: 2025-11-07
-    description: Implemented highest-priority fixes from IMPROVEMENTS_ANALYSIS (cache get race, ECS-aware cache keys, dnsmasqConf resource handling)
-    problems_addressed:
-      - Cache get() used entry pointer after releasing lock, risking stale pointer access (#1)
-      - Cache keys ignored EDNS Client Subnet data, causing incorrect sharing (#2)
-      - dnsmasqConf leaked file descriptors and allowed nil resolvers (#3, #16)
-    key_changes:
-      - Guarded cache entry removal with pointer checks and moved LRU updates after snapshot copy
-      - Extended cache keys with canonical ECS representation (family/netmask/network)
-      - Added helper to drop expired entries safely
-      - Ensured dnsmasqConf closes opened files and reports NilResolverError early
-      - Added regression tests for ECS cache keys and nil resolver handling
-    files_modified:
-      - internal/upstream/resolvers/cache/types.go
-      - internal/upstream/resolvers/cache/types_test.go
-      - internal/rules/providers/dnsmasq/conf/types.go
-      - internal/rules/providers/dnsmasq/conf/errors.go
-      - internal/rules/providers/dnsmasq/conf/types_test.go
-    tests:
-      - go test -mod=readonly ./...
-    status: completed
-
-  - task: Phase 2 cache enhancements
-    date: 2025-11-07
-    description: Implemented request coalescing, heap-based cleanup, configurable TTL defaults, and stale-while-revalidate behavior for the cache resolver
-    problems_addressed:
-      - Concurrent cache misses thundering upstream (#4)
-      - O(N) cleanup scans every interval (#5)
-      - Hardcoded fallback TTLs (#6)
-      - Clients blocked on expired-but-refreshable entries (#7)
-    key_changes:
-      - Added singleflight-based request coalescing so identical misses share upstream work
-      - Replaced linear cleanup with expiration min-heap and per-entry expiration tracking
-      - Introduced configurable default positive/fallback TTLs plus NXDOMAIN/NODATA overrides
-      - Added optional stale-while-revalidate support with async refresh trigger
-      - Updated descriptor options and tests to cover new behavior
-    files_modified:
-      - internal/upstream/resolvers/cache/types.go
-      - internal/upstream/resolvers/cache/types_test.go
-    tests:
-      - go test -mod=readonly ./internal/upstream/resolvers/cache
-      - go test -mod=readonly ./...
-    status: completed
-
-  - task: dnsmasq provider hardening
-    date: 2025-11-07
-    description: Improved dnsmasqConf provider performance and diagnostics plus duplicate rule warnings
-    key_changes:
-      - Added DuplicateRuleWarning from core.AcceptProvider so conflicting domains surface via error handler
-      - Reworked dnsmasqConf parsing to strip comments via simple slicing, cache validated entries, and expose Reset()
-      - Added upfront validation to report malformed domains once per file
-      - Added unit tests for dnsmasq provider parsing, invalid domain reporting, and reuse
-    files_modified:
-      - internal/core/errors.go
-      - internal/core/instance.go
-      - internal/core/instance_test.go
-      - internal/rules/providers/dnsmasq/conf/types.go
-      - internal/rules/providers/dnsmasq/conf/types_test.go
-    tests:
-      - go test -mod=readonly ./...
-    status: completed
-
-  - task: Phase 3 cache polish
-    date: 2025-11-07
-    description: Added TTL jitter, request prefetching, warmup queries, cache-control hints, and per-domain stats to the cache resolver
-    problems_addressed:
-      - Simultaneous expirations caused thundering herds (#12)
-      - No ability to refresh popular entries ahead of expiry (#8)
-      - No observability into domain-level cache performance (#11)
-      - No cache-control hook for upstream hints (#14)
-      - No warm cache during startup (#9)
-    key_changes:
-      - Added configurable TTL jitter, default positive/fallback TTLs, and NXDOMAIN/NODATA overrides
-      - Added per-entry access counters, prefetch threshold logic, and background refresh via singleflight
-      - Added EDNS0 local option parsing for cache-control hints (nocache, ttl=, noprefetch, nostale)
-      - Added optional warmupQueries config and ServeStale/StaleDuration controls
-      - Added domain statistics API and tests for cache-control, warmup, and stats tracking
-    files_modified:
-      - internal/upstream/resolvers/cache/types.go
-      - internal/upstream/resolvers/cache/types_test.go
-    tests:
-      - go test -mod=readonly ./internal/upstream/resolvers/cache
-      - go test -mod=readonly ./...
-    status: completed
-
-  - task: Add HTTP API listener
-    date: 2025-11-07
-    description: Implemented an HTTP listener that exposes DNS resolution via REST-style JSON API
-    key_changes:
-      - Added `httpAPIServer` listener (`internal/listeners/servers/http/server`) with GET/POST handling and JSON responses
-      - Registered the listener in `internal/features/features.go`
-      - Documented configuration and request/response formats (`docs/listeners/http_api_server.md`, `docs/listeners.md`)
-    tests:
-      - go test -mod=readonly ./...
-    status: completed
-
-  - task: Convert common issues catalog to markdown
-    date: 2025-11-07
-    description: Split `llm-agent/possible-common-issues.json` categories into Markdown checklists for easier triage
-    files_created:
-      - llm-agent/common-issues/todo/00-concurrency_bugs.md (… through … /21-testing_quality.md)
-    notes: |
-      A simple Python helper parsed each category, created `00-<category>.md` under `llm-agent/common-issues/todo/`,
-      and listed every issue with context/symptom/root_cause/fix fields for future agents.
-    status: completed
-
-  - task: Address inspection warnings
-    date: 2025-11-07
-    description: Fixed gofmt/go vet warnings (deprecated io usage, error comparisons, heap receivers)
-    files_modified:
-      - internal/config/loader.go
-      - internal/upstream/resolvers/doh/types.go
-      - internal/listeners/servers/http/server/types_test.go
-      - internal/listeners/servers/dns/server/types_test.go
-      - internal/upstream/resolvers/address/types_test.go
-      - internal/upstream/resolvers/cache/types.go
-      - internal/upstream/resolvers/cache/types_test.go
-    tests:
-      - go test -mod=readonly ./...
-    status: completed
+known_gaps:
+  - Limited integration/e2e tests for full listener→resolver chains and HTTP API flows; recursive resolver lacks on-wire integration coverage.
+  - pkg-level interfaces lack unit coverage.
+  - code-inspection-result-20251127/ remains as backlog reference; ensure warnings stay resolved when editing.
+  - llm-agent/common-issues/todo/ contains triage notes; move to done/ after fixes.
 
 llm_agent_notes:
-  - All LLM-made changes should be committed to claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg branch
-  - Branch naming pattern: claude/<purpose>-<session-id> for push permissions
-  - Update this file after every task completion
-  - Follow descriptor pattern when adding new components
-  - Register new types in internal/features/features.go
-  - Use structured logging via internal/logger
-  - Maintain consistency with existing error handling patterns
-  - Document all changes in version_history.md when appropriate
+  - Register new listeners/resolvers/providers in internal/features/features.go.
+  - Follow descriptor pattern; numeric configs should accept number or numeric string with sane defaults.
+  - Keep docs consistent with existing style and navigation paths.
+  - Preserve AGPLv3 headers where applicable; avoid deleting user edits.
+  - Default test command: `go test -mod=readonly ./...`.
 
-contact_and_resources:
-  repository: https://github.com/zhouchenh/secDNS (inferred)
-  documentation: /docs/ directory
+contacts:
+  repo: https://github.com/zhouchenh/secDNS (inferred)
   license: AGPLv3
-  go_modules: go.mod, go.sum

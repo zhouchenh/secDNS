@@ -1,5 +1,16 @@
 # Version History
 
+### v1.2.2 - 2025.11.29
+
+New Features
+
+* Add [ecs](resolvers/ecs.md) resolver to apply EDNS Client Subnet policy (passthrough/add/override/strip) before delegating to another resolver, enabling ECS control without duplicating caches.
+* Extend [recursive](resolvers/recursive.md) resolver to accept ECS strip/add/override config and propagate ECS on all internally generated lookups (roots, CNAME followups, glue, DS/DNSKEY).
+
+Enhancements
+
+* ECS core now supports `strip` mode; resolver docs list ECS capabilities and resolver list is alphabetized.
+
 ### v1.2.1 - 2025.11.27
 
 New Features

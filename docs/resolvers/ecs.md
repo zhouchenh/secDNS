@@ -1,6 +1,6 @@
 # ecs
 
-* Type: `ecs`
+* Type: `ecs` (secDNS v1.2.2+)
 
 Applies EDNS Client Subnet (ECS) policy (passthrough/add/override) to queries, then delegates to another resolver. This lets you control ECS without duplicating caches on the downstream resolver (cache or recursive).
 

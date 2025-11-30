@@ -39,5 +39,5 @@ Status: Full recursive resolution with DNSSEC validation is implemented; product
 - Trust anchors: baked-in ICANN root KSK 20326; RFC 5011-style refresh is not yet implemented.
 - Policy tips: use `strict` for DNSSEC-required deployments; `permissive` keeps serving when signatures/proofs are missing or invalid (AD unset).
 - Metrics/logging: validation outcomes are counted internally; errors are logged via the resolver logger hook.
-- ECS: accepts the same `ecsMode` (`passthrough`/`add`/`override`/`strip`) and `ecsClientSubnet` semantics as `nameServer`/`doh`; ECS is propagated on internally generated lookups (CNAME followups, glue, DS/DNSKEY) and honored end-to-end.
+- ECS (v1.2.2+): accepts the same `ecsMode` (`passthrough`/`add`/`override`/`strip`) and `ecsClientSubnet` semantics as `nameServer`/`doh`; ECS is propagated on internally generated lookups (CNAME followups, glue, DS/DNSKEY) and honored end-to-end.
 - Future hardening: broader NS probing (beyond roots), EDNS padding, cache composition, and richer metrics.
