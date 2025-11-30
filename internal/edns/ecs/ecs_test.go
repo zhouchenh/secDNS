@@ -230,6 +230,7 @@ func TestValidateMode(t *testing.T) {
 		{"passthrough", true},
 		{"add", true},
 		{"override", true},
+		{"strip", true},
 		{"", true}, // Empty defaults to passthrough
 		{"invalid", false},
 		{"PASSTHROUGH", false}, // Case-sensitive

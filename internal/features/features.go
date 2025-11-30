@@ -19,6 +19,7 @@ import (
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/concurrent/nameserver/list"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/dns64"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/doh"
+	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/ecs"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/filter/out/a"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/filter/out/a/if/aaaa/presents"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/filter/out/aaaa"
@@ -26,6 +27,7 @@ import (
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/nameserver"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/no/answer/resolver"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/not/exist/resolver"
+	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/recursive"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/sequence"
 
 	_ "github.com/zhouchenh/secDNS/internal/rules/providers/collection"

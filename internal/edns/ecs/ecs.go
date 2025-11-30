@@ -18,6 +18,8 @@ const (
 	ModeAdd Mode = "add"
 	// ModeOverride always replaces ECS with the configured value
 	ModeOverride Mode = "override"
+	// ModeStrip removes any ECS option from the query
+	ModeStrip Mode = "strip"
 )
 
 // Config holds the ECS configuration
@@ -35,16 +37,16 @@ func ParseConfig(mode string, clientSubnet string) (*Config, error) {
 
 	// Parse mode
 	switch Mode(mode) {
-	case ModePassthrough, ModeAdd, ModeOverride:
+	case ModePassthrough, ModeAdd, ModeOverride, ModeStrip:
 		cfg.Mode = Mode(mode)
 	case "":
 		cfg.Mode = ModePassthrough
 	default:
-		return nil, fmt.Errorf("invalid ECS mode: %s (must be 'passthrough', 'add', or 'override')", mode)
+		return nil, fmt.Errorf("invalid ECS mode: %s (must be 'passthrough', 'add', 'override', or 'strip')", mode)
 	}
 
 	// If mode is passthrough, client subnet is not required
-	if cfg.Mode == ModePassthrough {
+	if cfg.Mode == ModePassthrough || cfg.Mode == ModeStrip {
 		return cfg, nil
 	}
 
@@ -80,6 +82,11 @@ func ParseConfig(mode string, clientSubnet string) (*Config, error) {
 // ApplyToQuery applies ECS configuration to a DNS query based on the configured mode
 func (c *Config) ApplyToQuery(query *dns.Msg) error {
 	if c == nil || c.Mode == ModePassthrough {
+		return nil
+	}
+
+	if c.Mode == ModeStrip {
+		stripECS(query)
 		return nil
 	}
 
@@ -143,7 +150,7 @@ func ValidateMode(mode string) bool {
 		return true // Empty defaults to passthrough
 	}
 	m := Mode(mode)
-	return m == ModePassthrough || m == ModeAdd || m == ModeOverride
+	return m == ModePassthrough || m == ModeAdd || m == ModeOverride || m == ModeStrip
 }
 
 // ParseClientSubnet parses a client subnet string in CIDR notation
@@ -181,4 +188,23 @@ func FormatClientSubnet(ip net.IP, prefixLen uint8) string {
 		return ""
 	}
 	return ip.String() + "/" + strconv.Itoa(int(prefixLen))
+}
+
+// stripECS removes any ECS option from the query in place.
+func stripECS(query *dns.Msg) {
+	if query == nil {
+		return
+	}
+	opt := query.IsEdns0()
+	if opt == nil {
+		return
+	}
+	var filtered []dns.EDNS0
+	for _, o := range opt.Option {
+		if _, ok := o.(*dns.EDNS0_SUBNET); ok {
+			continue
+		}
+		filtered = append(filtered, o)
+	}
+	opt.Option = filtered
 }
