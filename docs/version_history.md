@@ -4,6 +4,7 @@
 
 New Features
 
+* Introduce [recursive](resolvers/recursive.md) resolver (DNSSEC-validating recursive mode with root hints, adaptive NS ranking, singleflight, and loop protections).
 * Add [ecs](resolvers/ecs.md) resolver to apply EDNS Client Subnet policy (passthrough/add/override/strip) before delegating to another resolver, enabling ECS control without duplicating caches.
 * Extend [recursive](resolvers/recursive.md) resolver to accept ECS strip/add/override config and propagate ECS on all internally generated lookups (roots, CNAME followups, glue, DS/DNSKEY).
 
