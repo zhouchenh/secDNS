@@ -74,12 +74,12 @@ Default: `""`
 
 > `ecsMode`: `"passthrough"` | `"add"` | `"override"` | `"strip"` _(Optional)_
 
-(secDNS v1.1.9+, `"strip"` in v1.3.0+) The EDNS Client Subnet (ECS) handling mode as defined in RFC 7871. Specifies how client subnet information should be managed in DNS queries:
+(secDNS v1.1.9+) The EDNS Client Subnet (ECS) handling mode as defined in RFC 7871. Specifies how client subnet information should be managed in DNS queries:
 
 * `"passthrough"`: Do not modify ECS options. Client ECS information is passed through unchanged.
 * `"add"`: Add ECS option with the configured `ecsClientSubnet` only if the client didn't send one. Existing client ECS is preserved.
 * `"override"`: Always replace any ECS option with the configured `ecsClientSubnet`, regardless of client requests.
-* `"strip"`: Remove any ECS option before sending the query upstream.
+* `"strip"`: Remove any ECS option before sending the query upstream (secDNS v1.3.0+).
 
 See [EDNS Client Subnet documentation](../EDNS-CLIENT-SUBNET.md) for detailed information and use cases.
 
