@@ -9,6 +9,7 @@ New Features
 
 Enhancements
 
+* Recursive resolver hardening: authoritative NODATA handling (SOA/no-referral short-circuit), singleflight per query, loop/CNAME/referral limits, SOCKS5/bind support, built-in root hints + probes, and DNSSEC validation (RRSIG time checks, DS→DNSKEY chain, NSEC/NSEC3 proof coverage, AD gating).
 * ECS core now supports `strip` mode; resolver docs list ECS capabilities and resolver list is alphabetized.
 
 ### v1.2.1 - 2025.11.27
