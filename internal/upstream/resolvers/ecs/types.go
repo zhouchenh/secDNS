@@ -1,10 +1,10 @@
-package ecsresolver
+package ecs
 
 import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
-	"github.com/zhouchenh/secDNS/internal/edns/ecs"
+	ednsecs "github.com/zhouchenh/secDNS/internal/edns/ecs"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"sync"
 )
@@ -15,7 +15,7 @@ type Resolver struct {
 	Resolver        resolver.Resolver
 	EcsMode         string
 	EcsClientSubnet string
-	ecsConfig       *ecs.Config
+	ecsConfig       *ednsecs.Config
 	initOnce        sync.Once
 	initErr         error
 }
@@ -39,7 +39,7 @@ func (r *Resolver) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	}
 
 	r.initOnce.Do(func() {
-		r.ecsConfig, r.initErr = ecs.ParseConfig(r.EcsMode, r.EcsClientSubnet)
+		r.ecsConfig, r.initErr = ednsecs.ParseConfig(r.EcsMode, r.EcsClientSubnet)
 		if r.initErr != nil {
 			common.ErrOutput(r.initErr)
 		}
@@ -85,7 +85,7 @@ func init() {
 								if !ok {
 									return
 								}
-								if !ecs.ValidateMode(str) {
+								if !ednsecs.ValidateMode(str) {
 									return nil, false
 								}
 								return str, true
@@ -110,7 +110,7 @@ func init() {
 								if str == "" {
 									return str, true
 								}
-								if _, _, err := ecs.ParseClientSubnet(str); err != nil {
+								if _, _, err := ednsecs.ParseClientSubnet(str); err != nil {
 									return nil, false
 								}
 								return str, true

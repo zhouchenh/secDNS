@@ -1,4 +1,4 @@
-package ecsresolver
+package ecs
 
 import (
 	"net"

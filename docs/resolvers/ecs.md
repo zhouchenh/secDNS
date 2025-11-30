@@ -1,38 +1,46 @@
 # ecs
 
-* Type: `ecs` (secDNS v1.3.0+)
+_Available in secDNS v1.3.0 and later._
 
-Applies EDNS Client Subnet (ECS) policy (passthrough/add/override) to queries, then delegates to another resolver. This lets you control ECS without duplicating caches on the downstream resolver (cache or recursive).
+* Type: `ecs`
+
+The `ecs` resolver applies an EDNS Client Subnet (ECS) policy to outbound queries before delegating to another resolver. Use it to add, override, strip, or simply pass through ECS while reusing the same downstream cache or recursive resolver.
 
 ## ResolverConfigObject
 
 ```json
 {
-  "resolver": "UpstreamResolverName",
+  "resolver": {
+    "type": "recursive",
+    "config": {
+      "validateDNSSEC": "permissive"
+    }
+  },
   "ecsMode": "override",
   "ecsClientSubnet": "203.0.113.0/24"
 }
 ```
 
-> `resolver`: Resolver
+> `resolver`: String | [ResolverObject](../configuration.md#resolverobject)
 
-The downstream resolver to which queries are delegated. ECS is applied before forwarding.
+The resolver that will perform the actual lookup (for example `cache`, `recursive`, `nameServer`, or `doh`). Accepts a named resolver or an inline [ResolverObject](../configuration.md#resolverobject).
 
 > `ecsMode`: `"passthrough"` | `"add"` | `"override"` | `"strip"` _(Optional)_
 
-How to handle ECS on outbound queries:
+How ECS is handled on the outbound query. Defaults to `"passthrough"`.
 
-* `"passthrough"` (default): leave ECS unchanged.
-* `"add"`: add ECS only if not already present.
-* `"override"`: always replace ECS with `ecsClientSubnet`.
-* `"strip"`: remove any ECS option before forwarding.
+* `"passthrough"`: Forward any client-supplied ECS unchanged.
+* `"add"`: Insert `ecsClientSubnet` only when the client query lacks ECS.
+* `"override"`: Replace any incoming ECS with `ecsClientSubnet`.
+* `"strip"`: Remove all ECS options before forwarding.
 
 > `ecsClientSubnet`: String _(Optional)_
 
-Client subnet to apply when mode is `add` or `override`, in CIDR notation (IPv4 or IPv6), e.g. `"192.0.2.0/24"` or `"2001:db8::/48"`.
+Client subnet in CIDR notation (IPv4 or IPv6), required when `ecsMode` is `"add"` or `"override"`; ignored for `"passthrough"` and `"strip"`.
 
 ## Notes
 
-* ECS is applied on a copy of the query; the original request is not mutated.
-* Works with downstream resolvers that cache (e.g., `cache`, `recursive`) so you can reuse a single cache while varying ECS policy.
-* Validation follows the same rules as `nameServer`/`doh`: invalid `ecsMode` or subnet causes resolver initialization to fail.
+* ECS is applied on a copy of the query; the original client message is not mutated.
+* Invalid `ecsMode` values or malformed subnets cause resolver initialization to fail.
+* Pair `ecs` with `cache` or `recursive` to share a single cache while varying ECS policy per listener or rule.
+* Downstream resolvers that understand ECS (such as `recursive`) propagate the adjusted ECS through their internal follow-up lookups.
