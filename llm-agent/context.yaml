@@ -31,7 +31,7 @@ key_features:
     - nameServer: Plain/DoT TCP/UDP resolver with SOCKS5, TLS verification, EDNS0/TCP fallback.
     - doh: DNS-over-HTTPS with URL resolution helper, SOCKS5, ECS, and timeout controls.
     - cache: High-performance cache with LRU, TTL overrides/jitter, negative caching, stale-while-revalidate, prefetch, warmup queries, EDNS cache-control hints, per-domain stats.
-    - recursive: Recursive resolver with root-hint bootstrap, adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation.
+    - recursive: Recursive resolver with root-hint bootstrap, adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation (root, referrals/glue, CNAME, DS/DNSKEY).
     - ecs: Wrapper resolver to apply ECS policy (passthrough/add/override/strip) before delegating, so cache/recursive can be shared across ECS variants. (v1.3.0+)
     - dns64: AAAA synthesis with IPv6 prefix config; optional ignoreExistingAAAA flag.
     - composition: sequence (ordered failover) and concurrentNameServerList (fastest response wins).
