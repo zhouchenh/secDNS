@@ -79,7 +79,7 @@ Default: `""`
 * `"passthrough"`: Do not modify ECS options. Client ECS information is passed through unchanged.
 * `"add"`: Add ECS option with the configured `ecsClientSubnet` only if the client didn't send one. Existing client ECS is preserved.
 * `"override"`: Always replace any ECS option with the configured `ecsClientSubnet`, regardless of client requests.
-* `"strip"`: Remove any ECS option before sending the query upstream (secDNS v1.3.0+).
+* `"strip"` (secDNS v1.3.0+): Remove any ECS option before sending the query upstream.
 
 See [EDNS Client Subnet documentation](../EDNS-CLIENT-SUBNET.md) for detailed information and use cases.
 
