@@ -72,13 +72,14 @@ Default: `""`
 
 Default: `""`
 
-> `ecsMode`: `"passthrough"` | `"add"` | `"override"` _(Optional)_
+> `ecsMode`: `"passthrough"` | `"add"` | `"override"` | `"strip"` _(Optional)_
 
-(secDNS v1.1.9+) The EDNS Client Subnet (ECS) handling mode as defined in RFC 7871. Specifies how client subnet information should be managed in DNS queries:
+(secDNS v1.1.9+, `"strip"` in v1.3.0+) The EDNS Client Subnet (ECS) handling mode as defined in RFC 7871. Specifies how client subnet information should be managed in DNS queries:
 
 * `"passthrough"`: Do not modify ECS options. Client ECS information is passed through unchanged.
 * `"add"`: Add ECS option with the configured `ecsClientSubnet` only if the client didn't send one. Existing client ECS is preserved.
 * `"override"`: Always replace any ECS option with the configured `ecsClientSubnet`, regardless of client requests.
+* `"strip"`: Remove any ECS option before sending the query upstream.
 
 See [EDNS Client Subnet documentation](../EDNS-CLIENT-SUBNET.md) for detailed information and use cases.
 
@@ -86,7 +87,7 @@ Default: `"passthrough"`
 
 > `ecsClientSubnet`: String _(Optional)_
 
-(secDNS v1.1.9+) The client subnet to use for EDNS Client Subnet (ECS) in CIDR notation. Required when `ecsMode` is set to `"add"` or `"override"`.
+(secDNS v1.1.9+) The client subnet to use for EDNS Client Subnet (ECS) in CIDR notation. Required when `ecsMode` is set to `"add"` or `"override"`; ignored for `"passthrough"` and `"strip"`.
 
 Examples:
 * IPv4: `"192.168.1.0/24"`, `"10.0.0.0/8"`, `"172.16.0.0/12"`
