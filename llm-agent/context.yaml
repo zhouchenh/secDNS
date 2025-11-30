@@ -4,7 +4,7 @@
 
 metadata:
   project_name: secDNS
-  version: 1.2.2
+  version: 1.3.0
   release_date: 2025-11-29
   language: Go
   go_version: "1.23"
@@ -32,7 +32,7 @@ key_features:
     - doh: DNS-over-HTTPS with URL resolution helper, SOCKS5, ECS, and timeout controls.
     - cache: High-performance cache with LRU, TTL overrides/jitter, negative caching, stale-while-revalidate, prefetch, warmup queries, EDNS cache-control hints, per-domain stats.
     - recursive: Recursive resolver with root-hint bootstrap, adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation.
-    - ecs: Wrapper resolver to apply ECS policy (passthrough/add/override/strip) before delegating, so cache/recursive can be shared across ECS variants. (v1.2.2+)
+    - ecs: Wrapper resolver to apply ECS policy (passthrough/add/override/strip) before delegating, so cache/recursive can be shared across ECS variants. (v1.3.0+)
     - dns64: AAAA synthesis with IPv6 prefix config; optional ignoreExistingAAAA flag.
     - composition: sequence (ordered failover) and concurrentNameServerList (fastest response wins).
     - response generators: address, alias, noAnswer, notExist.
@@ -100,7 +100,7 @@ documentation:
     - docs/listeners.md + docs/listeners/http_api_server.md
     - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
     - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
-    - docs/version_history.md (through v1.2.2 dated 2025.11.29)
+    - docs/version_history.md (through v1.3.0 dated 2025.11.29)
   notes: Cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching.
 
 current_state:
