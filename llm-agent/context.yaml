@@ -87,6 +87,7 @@ recent_work:
   - Recursive resolver hardened: adds DS→DNSKEY chain validation to root anchors, NSEC/NSEC3 coverage for NXDOMAIN/NODATA, AD gating with strict/permissive policies, SOCKS5/bind-address support, ECS propagation with add/override/strip, and unit tests with signed fixtures.
   - DNSSEC validation now enforces RRSIG timing, verifies DS/DNSKEY chains, and checks NSEC/NSEC3 coverage (strict vs permissive). Default remains permissive; strict fails on validation errors.
   - Added ECS wrapper resolver (add/override/strip) to reuse caches across ECS variants and documented resolver ordering; resolver list alphabetized.
+  - Documented ECS strip availability for nameServer/DoH and aligned ECS wrapper naming with its directory.
 
 testing:
   status: "`go test -mod=readonly ./...` passing (2025-11-29)."
