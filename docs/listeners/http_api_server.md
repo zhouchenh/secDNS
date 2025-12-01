@@ -1,12 +1,13 @@
 # httpAPIServer
 
-_Available in secDNS v1.2.1 and later._
+_Available in secDNS v1.2.1 and later._  
+Raw/simple response options are available in secDNS v1.3.1+.
 
 * Type: `httpAPIServer`
 
-The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS queries via HTTP GET or POST and returns JSON-formatted DNS responses. This is useful for integrating secDNS with web applications, monitoring systems, or custom tooling without speaking the DNS wire protocol.
+The `httpAPIServer` listener exposes an HTTP endpoint (GET/POST) to resolve DNS names and return JSON.
 
-## ListenerConfigObject
+## Config
 
 ```json
 {
@@ -19,41 +20,30 @@ The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS queries v
 }
 ```
 
-> `listen`: String
+* `listen`: IP to bind. Default: `127.0.0.1`.
+* `port`: HTTP port. Default: `8080`.
+* `path`: Endpoint path. Default: `/resolve` (leading slash added if omitted).
 
-IP address to bind. Defaults to `127.0.0.1`.
+## Request Parameters
 
-> `port`: Number | String _(Optional)_
+Accepted via query string, form body, or JSON (`Content-Type: application/json`):
 
-HTTP listen port. Defaults to `8080`.
+* `name` (required) – Domain to resolve.
+* `type` (optional) – RR type, default `A` (mnemonics or numeric).
+* `class` (optional) – RR class, default `IN`.
+* `ecs` / `edns_client_subnet` (optional) – CIDR to send as ECS (e.g., `203.0.113.7/32`, `2001:db8::/48`).
+* `raw` (secDNS v1.3.1+) (optional) – Include raw RR strings in `data`. Default: false.
+* `simple` (secDNS v1.3.1+) (optional) – Return a flat JSON array of answer values; A/AAAA as IPs, others fall back to RR strings. Default: false.
 
-> `path`: String _(Optional)_
+### Examples
 
-URL path for the resolve endpoint. Defaults to `/resolve`. A leading `/` is added automatically if omitted.
-
-## Request Format
-
-Two simple parameters are supported:
-
-* `name` – domain name to resolve (required)
-* `type` – DNS record type (optional, default `A`). Accepts standard mnemonics (A, AAAA, TXT, …) or numeric values.
-* `class` – DNS class (optional, default `IN`)
-* `ecs` / `edns_client_subnet` – Optional EDNS Client Subnet in CIDR (e.g., `203.0.113.7/32`, `2001:db8::/48`). Adds an
-  ECS option to the DNS query.
-* `raw` – (secDNS v1.3.1+) Optional (`true`/`1`/`yes`). When set, include raw RR strings in the response `data` field.
-  Default: false.
-* `simple` – (secDNS v1.3.1+) Optional (`true`/`1`/`yes`). When set, return a compact JSON array of answer values only;
-  A/AAAA as IPs, other types fall back to RR strings. Default: false.
-
-### GET Example
-
+**GET**
 ```
 GET /resolve?name=example.com&type=AAAA HTTP/1.1
 Host: 127.0.0.1:8080
 ```
 
-### POST (form) Example
-
+**POST form**
 ```
 POST /resolve HTTP/1.1
 Content-Type: application/x-www-form-urlencoded
@@ -61,8 +51,7 @@ Content-Type: application/x-www-form-urlencoded
 name=example.com&type=TXT
 ```
 
-### POST (JSON) Example
-
+**POST JSON**
 ```
 POST /resolve HTTP/1.1
 Content-Type: application/json
@@ -75,28 +64,9 @@ Content-Type: application/json
 }
 ```
 
-JSON bodies are used whenever the request `Content-Type` includes `application/json`; otherwise form values are parsed.
+## Response Formats
 
-### Simple Response Example
-
-```
-GET /resolve?name=example.com&type=AAAA&simple=1 HTTP/1.1
-Host: 127.0.0.1:8080
-```
-
-Response:
-```json
-[
-  "2606:2800:220:1:248:1893:25c8:1946"
-]
-```
-
-> Simple mode returns a flat array. For A/AAAA answers it lists the IPs; for other record types it falls back to the RR string (e.g., MX preference/host, CNAME target).
-
-## Response Format
-
-Successful responses are returned as JSON with question and answer sections mirroring the DNS message structure:
-
+### Standard (default)
 ```json
 {
   "id": 12345,
@@ -112,14 +82,21 @@ Successful responses are returned as JSON with question and answer sections mirr
 }
 ```
 
-Errors are reported with an HTTP status code (e.g., `400 Bad Request`) and a JSON payload:
+* `value` is a parsed field (e.g., IP for A/AAAA, target for CNAME/NS, preference/host for MX).
+* `data` is only present when `raw=true`.
 
+### Simple (`simple=1`)
+Flat JSON array of the answer values:
+```json
+[
+  "2606:2800:220:1:248:1893:25c8:1946"
+]
+```
+For non-A/AAAA answers, entries fall back to RR strings.
+
+### Errors
+
+Errors return an HTTP status (e.g., 400/502) with a JSON payload:
 ```json
 {"error": "listeners/http: missing name parameter"}
 ```
-
-## Notes
-
-* The listener translates each HTTP request into a standard DNS query using recursion desired.
-* Responses include both structured fields and a `data` string representation of each RR for convenience.
-* `cacheControlEnabled` in the cache resolver pairs well with this listener when upstream services need HTTP-friendly DNS answers.
