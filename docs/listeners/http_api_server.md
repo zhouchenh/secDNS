@@ -40,6 +40,9 @@ Two simple parameters are supported:
 * `class` – DNS class (optional, default `IN`)
 * `ecs` / `edns_client_subnet` – Optional EDNS Client Subnet in CIDR (e.g., `203.0.113.7/32`, `2001:db8::/48`). Adds an
   ECS option to the DNS query.
+* `raw` – Optional (`true`/`1`/`yes`). When set, include raw RR strings in the response `data` field. Default: omitted.
+* `simple` – Optional (`true`/`1`/`yes`). When set, return a compact payload `{ "results": ["<RR>", ...] }` of the answer
+  section only. Default: false.
 
 ### GET Example
 
@@ -66,11 +69,28 @@ Content-Type: application/json
 {
   "name": "example.com",
   "type": "MX",
-  "ecs": "203.0.113.7/32"
+  "ecs": "203.0.113.7/32",
+  "raw": true
 }
 ```
 
 JSON bodies are used whenever the request `Content-Type` includes `application/json`; otherwise form values are parsed.
+
+### Simple Response Example
+
+```
+GET /resolve?name=example.com&type=AAAA&simple=1 HTTP/1.1
+Host: 127.0.0.1:8080
+```
+
+Response:
+```json
+{
+  "results": [
+    "example.com.\t299\tIN\tAAAA\t2606:2800:220:1:248:1893:25c8:1946"
+  ]
+}
+```
 
 ## Response Format
 
