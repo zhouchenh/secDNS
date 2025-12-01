@@ -125,13 +125,9 @@ func (c *Config) ApplyToQuery(query *dns.Msg) error {
 		return nil
 	}
 
-	// Create new ECS option
-	newECS := &dns.EDNS0_SUBNET{
-		Code:          dns.EDNS0SUBNET,
-		Family:        c.family,
-		SourceNetmask: c.netmask,
-		SourceScope:   0, // RFC 7871: scope is ignored on requests; set to 0
-		Address:       c.subnet.IP,
+	newECS, err := NewOption(c.subnet.IP, c.netmask)
+	if err != nil {
+		return err
 	}
 
 	// Replace or add
@@ -142,6 +138,41 @@ func (c *Config) ApplyToQuery(query *dns.Msg) error {
 	}
 
 	return nil
+}
+
+// NewOption builds an ECS option for the given IP and prefix length.
+// SourceScope is always 0 for queries (RFC 7871); address is masked to the prefix.
+func NewOption(ip net.IP, prefix uint8) (*dns.EDNS0_SUBNET, error) {
+	if ip == nil {
+		return nil, fmt.Errorf("ecs: nil IP")
+	}
+	var family uint16
+	var bits int
+	if v4 := ip.To4(); v4 != nil {
+		family = 1
+		bits = net.IPv4len * 8
+		ip = v4
+	} else {
+		family = 2
+		bits = net.IPv6len * 8
+		ip = ip.To16()
+		if ip == nil {
+			return nil, fmt.Errorf("ecs: invalid IP address")
+		}
+	}
+	if int(prefix) > bits {
+		prefix = uint8(bits)
+	}
+	if m := net.CIDRMask(int(prefix), bits); m != nil {
+		ip = ip.Mask(m)
+	}
+	return &dns.EDNS0_SUBNET{
+		Code:          dns.EDNS0SUBNET,
+		Family:        family,
+		SourceNetmask: prefix,
+		SourceScope:   0, // ignored on queries; set by authoritative in responses
+		Address:       ip,
+	}, nil
 }
 
 // ValidateMode checks if a mode string is valid

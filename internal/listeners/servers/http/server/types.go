@@ -175,35 +175,14 @@ func applyECS(msg *dns.Msg, subnet string) error {
 	if err != nil {
 		return err
 	}
-	family := uint16(1)
-	if ip.To4() == nil {
-		family = 2
-	}
-	if family == 1 {
-		ip = ip.To4()
-	} else {
-		ip = ip.To16()
-	}
-	mask := net.CIDRMask(int(prefix), len(ip)*8)
-	if mask != nil {
-		ip = ip.Mask(mask)
-	}
 	opt := msg.IsEdns0()
 	if opt == nil {
-		opt = &dns.OPT{
-			Hdr: dns.RR_Header{
-				Name:   ".",
-				Rrtype: dns.TypeOPT,
-			},
-		}
+		opt = &dns.OPT{Hdr: dns.RR_Header{Name: ".", Rrtype: dns.TypeOPT}}
 		msg.Extra = append(msg.Extra, opt)
 	}
-	ecsOpt := &dns.EDNS0_SUBNET{
-		Code:          dns.EDNS0SUBNET,
-		Family:        family,
-		SourceNetmask: prefix,
-		SourceScope:   0, // RFC 7871: scope is ignored on requests; set to 0
-		Address:       ip,
+	ecsOpt, err := ecs.NewOption(ip, prefix)
+	if err != nil {
+		return err
 	}
 	opt.Option = append(opt.Option, ecsOpt)
 	return nil
