@@ -202,7 +202,7 @@ func applyECS(msg *dns.Msg, subnet string) error {
 		Code:          dns.EDNS0SUBNET,
 		Family:        family,
 		SourceNetmask: prefix,
-		SourceScope:   prefix, // RFC 7871: default scope equals the sent prefix length
+		SourceScope:   0, // RFC 7871: scope is ignored on requests; set to 0
 		Address:       ip,
 	}
 	opt.Option = append(opt.Option, ecsOpt)
