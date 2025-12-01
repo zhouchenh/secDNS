@@ -301,14 +301,12 @@ func toSimpleResponse(msg *dns.Msg) []string {
 	}
 	var out []string
 	for _, rr := range msg.Answer {
-		switch v := rr.(type) {
-		case *dns.A:
-			out = append(out, v.A.String())
-		case *dns.AAAA:
-			out = append(out, v.AAAA.String())
-		default:
-			out = append(out, rr.String())
+		rec := toRecord(rr, false)
+		if rec.Value != "" {
+			out = append(out, rec.Value)
+			continue
 		}
+		out = append(out, rr.String())
 	}
 	return out
 }
