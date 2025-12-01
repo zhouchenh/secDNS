@@ -130,7 +130,7 @@ func (c *Config) ApplyToQuery(query *dns.Msg) error {
 		Code:          dns.EDNS0SUBNET,
 		Family:        c.family,
 		SourceNetmask: c.netmask,
-		SourceScope:   c.netmask,
+		SourceScope:   0,
 		Address:       c.subnet.IP,
 	}
 

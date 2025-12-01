@@ -697,9 +697,6 @@ func cloneECSOption(opt *dns.EDNS0_SUBNET) *dns.EDNS0_SUBNET {
 		}
 		clone.Address = ip
 	}
-	if clone.SourceScope == 0 {
-		clone.SourceScope = clone.SourceNetmask
-	}
 	return &clone
 }
 
