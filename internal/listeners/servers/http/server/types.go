@@ -281,6 +281,9 @@ func toRecord(rr dns.RR, includeRaw bool) recordJSON {
 	default:
 		// leave empty
 	}
+	if rec.Value == "" && !includeRaw {
+		rec.Data = rr.String()
+	}
 	return rec
 }
 
