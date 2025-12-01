@@ -352,8 +352,11 @@ func (r *Recursive) initialize() {
 	if r.log == nil {
 		r.log = func(msg string) { common.ErrOutput(msg) }
 	}
-	r.prepareDialers()
+	if len(r.RootServers) == 0 {
+		return
+	}
 	r.scoreboard = newScoreboard(r.RootServers, r.ProbeTopN)
+	r.prepareDialers()
 	r.glueCache = make(map[string]glueCacheEntry)
 	if r.EcsMode != "" || r.EcsClientSubnet != "" {
 		cfg, err := ecs.ParseConfig(r.EcsMode, r.EcsClientSubnet)
