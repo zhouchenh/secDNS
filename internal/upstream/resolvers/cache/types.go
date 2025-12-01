@@ -140,7 +140,7 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		c.init()
 	})
 
-	// Generate cache key
+	// Generate cache key based on the request
 	key := makeCacheKey(query)
 	if key == "" {
 		// Invalid query (no questions) - pass through to upstream
@@ -303,7 +303,16 @@ func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, 
 		control = c.parseCacheControl(response)
 	}
 	if !control.skipCache && c.shouldCache(response) {
-		c.setWithDirectives(key, response, control)
+		questionKey := questionCacheKey(query)
+		storeKey := key
+		if alt := cacheKeyFromResponse(questionKey, response); alt != "" {
+			storeKey = alt
+		}
+		c.setWithDirectives(storeKey, response, control)
+		if storeKey != key {
+			// Also store under the original request key to avoid regressions for identical follow-up queries.
+			c.setWithDirectives(key, response, control)
+		}
 	}
 	resp := response.Copy()
 	c.applyTTLOverrides(resp, control.ttlOverride)
@@ -343,14 +352,21 @@ func makeCacheKey(query *dns.Msg) string {
 	if len(query.Question) == 0 {
 		return ""
 	}
-	q := query.Question[0]
-	// Lowercase the name for case-insensitive matching (RFC 4343)
-	key := fmt.Sprintf("%s:%d:%d", strings.ToLower(q.Name), q.Qtype, q.Qclass)
-
+	key := questionCacheKey(query)
 	if ecsKey := extractECSKey(query); ecsKey != "" {
 		key = key + ":" + ecsKey
 	}
 	return key
+}
+
+// questionCacheKey builds the cache key prefix (name:type:class).
+func questionCacheKey(query *dns.Msg) string {
+	if len(query.Question) == 0 {
+		return ""
+	}
+	q := query.Question[0]
+	// Lowercase the name for case-insensitive matching (RFC 4343)
+	return fmt.Sprintf("%s:%d:%d", strings.ToLower(q.Name), q.Qtype, q.Qclass)
 }
 
 // extractECSKey produces a stable text representation of the ECS option for cache keys.
@@ -367,29 +383,70 @@ func extractECSKey(query *dns.Msg) string {
 	return ""
 }
 
-func formatECSCacheKey(opt *dns.EDNS0_SUBNET) string {
-	if opt == nil {
+// cacheKeyFromResponse builds a cache key using the ECS scope returned in a response (if any).
+// When no ECS is present or the scope is zero, it returns the plain question key.
+func cacheKeyFromResponse(questionKey string, resp *dns.Msg) string {
+	if resp == nil {
 		return ""
 	}
-	family := opt.Family
-	mask := opt.SourceNetmask
+	ecsOpt := responseECSOption(resp)
+	if ecsOpt == nil || ecsOpt.SourceScope == 0 {
+		return questionKey
+	}
+	key := formatECSKey(ecsOpt.Family, ecsOpt.SourceScope, ecsOpt.Address)
+	if key == "" {
+		return questionKey
+	}
+	return questionKey + ":" + key
+}
+
+func responseECSOption(msg *dns.Msg) *dns.EDNS0_SUBNET {
+	if msg == nil {
+		return nil
+	}
+	if opt := msg.IsEdns0(); opt != nil {
+		for _, o := range opt.Option {
+			if ecsOpt, ok := o.(*dns.EDNS0_SUBNET); ok {
+				return ecsOpt
+			}
+		}
+	}
+	return nil
+}
+
+func formatECSCacheKey(opt *dns.EDNS0_SUBNET) string {
+	return formatECSKey(opt.Family, opt.SourceNetmask, opt.Address)
+}
+
+func formatECSKey(family uint16, mask uint8, addr net.IP) string {
 	if mask == 0 {
 		return fmt.Sprintf("ecs:%d:%d", family, mask)
 	}
-
-	var ip net.IP
-	if family == 1 {
-		ip = opt.Address.To4()
-	} else {
-		ip = opt.Address.To16()
-	}
+	ip := normalizeECSAddressForKey(family, mask, addr)
 	if ip == nil {
 		return fmt.Sprintf("ecs:%d:%d", family, mask)
 	}
+	return fmt.Sprintf("ecs:%d:%d:%s", family, mask, ip.String())
+}
 
+func normalizeECSAddressForKey(family uint16, mask uint8, addr net.IP) net.IP {
+	var ip net.IP
+	switch family {
+	case 1:
+		ip = addr.To4()
+	case 2:
+		ip = addr.To16()
+	default:
+		return nil
+	}
+	if ip == nil {
+		return nil
+	}
 	maskBytes := net.CIDRMask(int(mask), len(ip)*8)
-	network := ip.Mask(maskBytes)
-	return fmt.Sprintf("ecs:%d:%d:%s", family, mask, network.String())
+	if maskBytes == nil {
+		return nil
+	}
+	return ip.Mask(maskBytes)
 }
 
 func (c *Cache) applyTTLJitter(ttl uint32) uint32 {
