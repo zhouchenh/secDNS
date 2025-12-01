@@ -12,7 +12,7 @@ import (
 	_ "github.com/zhouchenh/secDNS/internal/config/typed/provider"
 
 	_ "github.com/zhouchenh/secDNS/internal/listeners/servers/dns/server"
-	_ "github.com/zhouchenh/secDNS/internal/listeners/servers/http/server"
+	_ "github.com/zhouchenh/secDNS/internal/listeners/servers/http/api/server"
 
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/address"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/alias"

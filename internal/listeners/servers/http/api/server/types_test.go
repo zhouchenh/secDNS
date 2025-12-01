@@ -13,8 +13,8 @@ import (
 	"testing"
 )
 
-func TestHTTPServerPathDefaults(t *testing.T) {
-	s := &HTTPServer{}
+func TestHTTPAPIServerPathDefaults(t *testing.T) {
+	s := &HTTPAPIServer{}
 	if got := s.path(); got != "/resolve" {
 		t.Fatalf("default path = %s, want /resolve", got)
 	}
@@ -36,7 +36,7 @@ func TestParseRequestGet(t *testing.T) {
 		"type": {"AAAA"},
 	})
 
-	h := &HTTPServer{}
+	h := &HTTPAPIServer{}
 	q, err := h.parseRequest(req)
 	if err != nil {
 		t.Fatalf("parseRequest error = %v", err)
@@ -55,7 +55,7 @@ func TestParseRequestPostForm(t *testing.T) {
 	req := httptestRequest(http.MethodPost, values.Encode(), nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	h := &HTTPServer{}
+	h := &HTTPAPIServer{}
 	q, err := h.parseRequest(req)
 	if err != nil {
 		t.Fatalf("parseRequest error = %v", err)
@@ -75,7 +75,7 @@ func TestParseRequestJSON(t *testing.T) {
 	req := httptestRequest(http.MethodPost, string(data), nil)
 	req.Header.Set("Content-Type", "application/json")
 
-	h := &HTTPServer{}
+	h := &HTTPAPIServer{}
 	q, err := h.parseRequest(req)
 	if err != nil {
 		t.Fatalf("parseRequest error = %v", err)
@@ -87,7 +87,7 @@ func TestParseRequestJSON(t *testing.T) {
 
 func TestParseRequestMissingName(t *testing.T) {
 	req := httptestRequest(http.MethodGet, "", url.Values{})
-	h := &HTTPServer{}
+	h := &HTTPAPIServer{}
 	_, err := h.parseRequest(req)
 	if !errors.Is(err, ErrMissingName) {
 		t.Fatalf("expected ErrMissingName, got %v", err)
@@ -96,7 +96,7 @@ func TestParseRequestMissingName(t *testing.T) {
 
 func TestParseRequestUnsupportedMethod(t *testing.T) {
 	req := httptestRequest(http.MethodDelete, "", url.Values{"name": {"example.com"}})
-	h := &HTTPServer{}
+	h := &HTTPAPIServer{}
 	_, err := h.parseRequest(req)
 	if !errors.Is(err, ErrUnsupportedMethod) {
 		t.Fatalf("expected ErrUnsupportedMethod, got %v", err)
@@ -134,7 +134,7 @@ func TestToHTTPResponse(t *testing.T) {
 }
 
 func TestHandleResolveGETRoundTrip(t *testing.T) {
-	server := &HTTPServer{}
+	server := &HTTPAPIServer{}
 	rec := httptest.NewRecorder()
 	req := httptestRequest(http.MethodGet, "", url.Values{
 		"name": {"example.com"},
@@ -186,7 +186,7 @@ func TestHandleResolveGETRoundTrip(t *testing.T) {
 }
 
 func TestHandleResolveJSONBody(t *testing.T) {
-	server := &HTTPServer{}
+	server := &HTTPAPIServer{}
 	body := map[string]string{
 		"name":  "api.example",
 		"type":  "AAAA",
@@ -234,7 +234,7 @@ func TestHandleResolveJSONBody(t *testing.T) {
 }
 
 func TestHandleResolveFormBody(t *testing.T) {
-	server := &HTTPServer{}
+	server := &HTTPAPIServer{}
 	values := url.Values{
 		"name":  {"form.example"},
 		"type":  {"15"},
@@ -281,7 +281,7 @@ func TestHandleResolveFormBody(t *testing.T) {
 }
 
 func TestHandleResolveErrorResponses(t *testing.T) {
-	server := &HTTPServer{}
+	server := &HTTPAPIServer{}
 	rec := httptest.NewRecorder()
 	req := httptestRequest(http.MethodGet, "", url.Values{})
 

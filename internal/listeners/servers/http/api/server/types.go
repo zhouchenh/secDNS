@@ -14,23 +14,23 @@ import (
 	"strings"
 )
 
-type HTTPServer struct {
+type HTTPAPIServer struct {
 	Listen net.IP
 	Port   uint16
 	Path   string
 }
 
-var typeOfHTTPServer = descriptor.TypeOfNew(new(*HTTPServer))
+var typeOfHTTPAPIServer = descriptor.TypeOfNew(new(*HTTPAPIServer))
 
-func (h *HTTPServer) Type() descriptor.Type {
-	return typeOfHTTPServer
+func (h *HTTPAPIServer) Type() descriptor.Type {
+	return typeOfHTTPAPIServer
 }
 
-func (h *HTTPServer) TypeName() string {
+func (h *HTTPAPIServer) TypeName() string {
 	return "httpAPIServer"
 }
 
-func (h *HTTPServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
+func (h *HTTPAPIServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
 	if handler == nil {
 		handleIfError(ErrNilHandler, errorHandler)
 		return
@@ -46,7 +46,7 @@ func (h *HTTPServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorH
 	handleIfError(srv.ListenAndServe(), errorHandler)
 }
 
-func (h *HTTPServer) path() string {
+func (h *HTTPAPIServer) path() string {
 	if h.Path == "" {
 		return "/resolve"
 	}
@@ -65,7 +65,7 @@ type queryRequest struct {
 	Simple bool   `json:"simple"`
 }
 
-func (h *HTTPServer) handleResolve(w http.ResponseWriter, r *http.Request, handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
+func (h *HTTPAPIServer) handleResolve(w http.ResponseWriter, r *http.Request, handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
 	req, err := h.parseRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -125,7 +125,7 @@ func (qr queryRequest) qClass() uint16 {
 	return dns.ClassINET
 }
 
-func (h *HTTPServer) parseRequest(r *http.Request) (queryRequest, error) {
+func (h *HTTPAPIServer) parseRequest(r *http.Request) (queryRequest, error) {
 	if r.Method == http.MethodGet {
 		return parseQueryValues(r.URL.Query())
 	}
@@ -338,7 +338,7 @@ func handleIfError(err error, errorHandler func(err error)) {
 
 func init() {
 	if err := server.RegisterServer(&descriptor.Descriptor{
-		Type: typeOfHTTPServer,
+		Type: typeOfHTTPAPIServer,
 		Filler: descriptor.Fillers{
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"Listen"},

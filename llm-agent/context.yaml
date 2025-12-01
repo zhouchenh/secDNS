@@ -55,7 +55,7 @@ configuration:
 architecture_details:
   listeners:
     dnsServer: internal/listeners/servers/dns/server/types.go (UDP/TCP, EDNS0, TCP fallback).
-    httpAPIServer: internal/listeners/servers/http/server/types.go (GET/POST form/json, JSON responses, version range v1.2.1+).
+    httpAPIServer: internal/listeners/servers/http/api/server/types.go (GET/POST form/json, JSON responses, version range v1.2.1+).
   resolvers:
     paths:
       - internal/upstream/resolvers/nameserver/types.go
