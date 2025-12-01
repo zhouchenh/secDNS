@@ -333,8 +333,28 @@ func init() {
 				ObjectPath: descriptor.Path{"SendThrough"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
-						ObjectPath:     descriptor.Path{"sendThrough"},
-						AssignableKind: convertibleKindIP,
+						ObjectPath: descriptor.Path{"sendThrough"},
+						AssignableKind: descriptor.AssignableKinds{
+							convertibleKindIP,
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									str = strings.TrimSpace(str)
+									if str == "" {
+										return nil, true
+									}
+									ip := net.ParseIP(str)
+									if ip == nil {
+										return nil, false
+									}
+									return ip, true
+								},
+							},
+						},
 					},
 					descriptor.DefaultValue{Value: nil},
 				},
