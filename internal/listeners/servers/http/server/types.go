@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
@@ -219,6 +220,7 @@ type recordJSON struct {
 	Class string `json:"class"`
 	TTL   uint32 `json:"ttl"`
 	Data  string `json:"data,omitempty"`
+	Value string `json:"value,omitempty"`
 }
 
 func toHTTPResponse(msg *dns.Msg, includeRaw bool) messageJSON {
@@ -258,6 +260,26 @@ func toRecord(rr dns.RR, includeRaw bool) recordJSON {
 	}
 	if includeRaw {
 		rec.Data = rr.String()
+	}
+	switch v := rr.(type) {
+	case *dns.A:
+		rec.Value = v.A.String()
+	case *dns.AAAA:
+		rec.Value = v.AAAA.String()
+	case *dns.CNAME:
+		rec.Value = v.Target
+	case *dns.NS:
+		rec.Value = v.Ns
+	case *dns.MX:
+		rec.Value = fmt.Sprintf("%d %s", v.Preference, v.Mx)
+	case *dns.TXT:
+		rec.Value = strings.Join(v.Txt, " ")
+	case *dns.SOA:
+		rec.Value = fmt.Sprintf("%s %s %d %d %d %d %d", v.Ns, v.Mbox, v.Serial, v.Refresh, v.Retry, v.Expire, v.Minttl)
+	case *dns.SRV:
+		rec.Value = fmt.Sprintf("%d %d %d %s", v.Priority, v.Weight, v.Port, v.Target)
+	default:
+		// leave empty
 	}
 	return rec
 }

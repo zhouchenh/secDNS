@@ -104,7 +104,7 @@ Successful responses are returned as JSON with question and answer sections mirr
     {"name": "example.com.", "type": "A", "class": "IN"}
   ],
   "answer": [
-    {"name": "example.com.", "type": "A", "class": "IN", "ttl": 299, "data": "example.com.\t299\tIN\tA\t93.184.216.34"}
+    {"name": "example.com.", "type": "A", "class": "IN", "ttl": 299, "value": "93.184.216.34"}
   ],
   "authority": [],
   "additional": []
