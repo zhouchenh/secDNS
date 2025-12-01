@@ -390,10 +390,17 @@ func cacheKeyFromResponse(questionKey string, resp *dns.Msg) string {
 		return ""
 	}
 	ecsOpt := responseECSOption(resp)
-	if ecsOpt == nil || ecsOpt.SourceScope == 0 {
+	if ecsOpt == nil {
 		return questionKey
 	}
-	key := formatECSKey(ecsOpt.Family, ecsOpt.SourceScope, ecsOpt.Address)
+	scopeMask := ecsOpt.SourceScope
+	if scopeMask == 0 {
+		scopeMask = ecsOpt.SourceNetmask
+	}
+	if scopeMask == 0 {
+		return questionKey
+	}
+	key := formatECSKey(ecsOpt.Family, scopeMask, ecsOpt.Address)
 	if key == "" {
 		return questionKey
 	}
