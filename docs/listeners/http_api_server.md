@@ -86,6 +86,30 @@ Content-Type: application/json
 * `value` is a parsed field (e.g., IP for A/AAAA, target for CNAME/NS, preference/host for MX).
 * `data` is only present when `raw=true` (example: `{"name":"example.com.","type":"A",...,"value":"93.184.216.34","data":"example.com.\t299\tIN\tA\t93.184.216.34"}`).
 
+### Raw (`raw=1`)
+Same as standard but includes raw RR strings in `data`:
+```json
+{
+  "id": 12345,
+  "rcode": "NOERROR",
+  "question": [
+    {"name": "example.com.", "type": "A", "class": "IN"}
+  ],
+  "answer": [
+    {
+      "name": "example.com.",
+      "type": "A",
+      "class": "IN",
+      "ttl": 299,
+      "value": "93.184.216.34",
+      "data": "example.com.\t299\tIN\tA\t93.184.216.34"
+    }
+  ],
+  "authority": [],
+  "additional": []
+}
+```
+
 ### Simple (`simple=1`)
 Flat JSON array of the answer values:
 ```json
