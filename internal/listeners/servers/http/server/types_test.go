@@ -118,7 +118,7 @@ func TestToHTTPResponse(t *testing.T) {
 		},
 	}
 
-	resp := toHTTPResponse(msg)
+	resp := toHTTPResponse(msg, true)
 	if resp.ID != msg.Id {
 		t.Fatalf("response ID = %d, want %d", resp.ID, msg.Id)
 	}

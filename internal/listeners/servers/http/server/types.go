@@ -56,10 +56,12 @@ func (h *HTTPServer) path() string {
 }
 
 type queryRequest struct {
-	Name  string `json:"name"`
-	Type  string `json:"type"`
-	Class string `json:"class"`
-	ECS   string `json:"ecs"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Class  string `json:"class"`
+	ECS    string `json:"ecs"`
+	Raw    bool   `json:"raw"`
+	Simple bool   `json:"simple"`
 }
 
 func (h *HTTPServer) handleResolve(w http.ResponseWriter, r *http.Request, handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
@@ -89,7 +91,11 @@ func (h *HTTPServer) handleResolve(w http.ResponseWriter, r *http.Request, handl
 		writeError(w, http.StatusBadGateway, errNilReply)
 		return
 	}
-	writeJSON(w, toHTTPResponse(reply))
+	if req.Simple {
+		writeJSON(w, toSimpleResponse(reply))
+		return
+	}
+	writeJSON(w, toHTTPResponse(reply, req.Raw))
 }
 
 func (qr queryRequest) qType() uint16 {
@@ -129,6 +135,8 @@ func (h *HTTPServer) parseRequest(r *http.Request) (queryRequest, error) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				return queryRequest{}, err
 			}
+			req.Raw = req.Raw
+			req.Simple = req.Simple
 			return validateRequest(req)
 		}
 		if err := r.ParseForm(); err != nil {
@@ -149,6 +157,8 @@ func parseQueryValues(values map[string][]string) (queryRequest, error) {
 	if req.ECS == "" {
 		req.ECS = first(values, "edns_client_subnet")
 	}
+	req.Raw = parseBool(first(values, "raw"))
+	req.Simple = parseBool(first(values, "simple"))
 	return validateRequest(req)
 }
 
@@ -208,10 +218,10 @@ type recordJSON struct {
 	Type  string `json:"type"`
 	Class string `json:"class"`
 	TTL   uint32 `json:"ttl"`
-	Data  string `json:"data"`
+	Data  string `json:"data,omitempty"`
 }
 
-func toHTTPResponse(msg *dns.Msg) messageJSON {
+func toHTTPResponse(msg *dns.Msg, includeRaw bool) messageJSON {
 	res := messageJSON{
 		ID:        msg.Id,
 		RCode:     dns.RcodeToString[msg.Rcode],
@@ -228,25 +238,28 @@ func toHTTPResponse(msg *dns.Msg) messageJSON {
 		}
 	}
 	for i, rr := range msg.Answer {
-		res.Answer[i] = toRecord(rr)
+		res.Answer[i] = toRecord(rr, includeRaw)
 	}
 	for i, rr := range msg.Ns {
-		res.Authority[i] = toRecord(rr)
+		res.Authority[i] = toRecord(rr, includeRaw)
 	}
 	for i, rr := range msg.Extra {
-		res.Extra[i] = toRecord(rr)
+		res.Extra[i] = toRecord(rr, includeRaw)
 	}
 	return res
 }
 
-func toRecord(rr dns.RR) recordJSON {
-	return recordJSON{
+func toRecord(rr dns.RR, includeRaw bool) recordJSON {
+	rec := recordJSON{
 		Name:  rr.Header().Name,
 		Type:  dns.TypeToString[rr.Header().Rrtype],
 		Class: dns.ClassToString[rr.Header().Class],
 		TTL:   rr.Header().Ttl,
-		Data:  rr.String(),
 	}
+	if includeRaw {
+		rec.Data = rr.String()
+	}
+	return rec
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
@@ -258,6 +271,30 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+type simpleResponse struct {
+	Results []string `json:"results"`
+}
+
+func toSimpleResponse(msg *dns.Msg) simpleResponse {
+	if msg == nil {
+		return simpleResponse{Results: []string{}}
+	}
+	var out []string
+	for _, rr := range msg.Answer {
+		out = append(out, rr.String())
+	}
+	return simpleResponse{Results: out}
+}
+
+func parseBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func handleIfError(err error, errorHandler func(err error)) {
