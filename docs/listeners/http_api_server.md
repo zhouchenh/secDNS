@@ -38,6 +38,8 @@ Two simple parameters are supported:
 * `name` – domain name to resolve (required)
 * `type` – DNS record type (optional, default `A`). Accepts standard mnemonics (A, AAAA, TXT, …) or numeric values.
 * `class` – DNS class (optional, default `IN`)
+* `ecs` / `edns_client_subnet` – Optional EDNS Client Subnet in CIDR (e.g., `203.0.113.7/32`, `2001:db8::/48`). Adds an
+  ECS option to the DNS query.
 
 ### GET Example
 
@@ -63,7 +65,8 @@ Content-Type: application/json
 
 {
   "name": "example.com",
-  "type": "MX"
+  "type": "MX",
+  "ecs": "203.0.113.7/32"
 }
 ```
 

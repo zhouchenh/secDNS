@@ -5,6 +5,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
+	"github.com/zhouchenh/secDNS/internal/edns/ecs"
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"net"
 	"net/http"
@@ -58,6 +59,7 @@ type queryRequest struct {
 	Name  string `json:"name"`
 	Type  string `json:"type"`
 	Class string `json:"class"`
+	ECS   string `json:"ecs"`
 }
 
 func (h *HTTPServer) handleResolve(w http.ResponseWriter, r *http.Request, handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
@@ -75,6 +77,12 @@ func (h *HTTPServer) handleResolve(w http.ResponseWriter, r *http.Request, handl
 			Qtype:  req.qType(),
 			Qclass: req.qClass(),
 		},
+	}
+	if req.ECS != "" {
+		if err := applyECS(msg, req.ECS); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	reply := handler(msg)
 	if reply == nil {
@@ -136,6 +144,10 @@ func parseQueryValues(values map[string][]string) (queryRequest, error) {
 		Name:  first(values, "name"),
 		Type:  first(values, "type"),
 		Class: first(values, "class"),
+		ECS:   first(values, "ecs"),
+	}
+	if req.ECS == "" {
+		req.ECS = first(values, "edns_client_subnet")
 	}
 	return validateRequest(req)
 }
@@ -156,6 +168,45 @@ func validateRequest(req queryRequest) (queryRequest, error) {
 		return queryRequest{}, ErrMissingName
 	}
 	return req, nil
+}
+
+func applyECS(msg *dns.Msg, subnet string) error {
+	ip, prefix, err := ecs.ParseClientSubnet(strings.TrimSpace(subnet))
+	if err != nil {
+		return err
+	}
+	family := uint16(1)
+	if ip.To4() == nil {
+		family = 2
+	}
+	if family == 1 {
+		ip = ip.To4()
+	} else {
+		ip = ip.To16()
+	}
+	mask := net.CIDRMask(int(prefix), len(ip)*8)
+	if mask != nil {
+		ip = ip.Mask(mask)
+	}
+	opt := msg.IsEdns0()
+	if opt == nil {
+		opt = &dns.OPT{
+			Hdr: dns.RR_Header{
+				Name:   ".",
+				Rrtype: dns.TypeOPT,
+			},
+		}
+		msg.Extra = append(msg.Extra, opt)
+	}
+	ecsOpt := &dns.EDNS0_SUBNET{
+		Code:          dns.EDNS0SUBNET,
+		Family:        family,
+		SourceNetmask: prefix,
+		SourceScope:   0,
+		Address:       ip,
+	}
+	opt.Option = append(opt.Option, ecsOpt)
+	return nil
 }
 
 type messageJSON struct {
