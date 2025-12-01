@@ -700,6 +700,9 @@ func cloneECSOption(opt *dns.EDNS0_SUBNET) *dns.EDNS0_SUBNET {
 		familyBits = 128
 	}
 	clone.Address = normalizeECSAddress(opt.Address, familyBits, int(opt.SourceNetmask))
+	if clone.SourceScope == 0 {
+		clone.SourceScope = clone.SourceNetmask // RFC 7871 default
+	}
 	return &clone
 }
 
