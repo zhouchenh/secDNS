@@ -1,5 +1,13 @@
 # Version History
 
+# v1.3.1 - 2025.12.01
+
+Enhancements
+
+* Recursive: fall back to TCP when UDP exchange fails, use embedded root hints when `rootServers` is omitted, and normalize ECS handling.
+* Cache: key ECS responses by response scope and fall back to source prefix when scope is zero; tuned default config for recursive use.
+* HTTP API: hide raw data by default; add `raw` and `simple` response options; simple mode filters to the requested qtype and returns parsed values; additional/authority now carry data when value is empty.
+
 ### v1.3.0 - 2025.11.30
 
 New Features
