@@ -273,19 +273,20 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
-type simpleResponse struct {
-	Results []string `json:"results"`
-}
-
-func toSimpleResponse(msg *dns.Msg) simpleResponse {
+func toSimpleResponse(msg *dns.Msg) []string {
 	if msg == nil {
-		return simpleResponse{Results: []string{}}
+		return []string{}
 	}
 	var out []string
 	for _, rr := range msg.Answer {
-		out = append(out, rr.String())
+		switch v := rr.(type) {
+		case *dns.A:
+			out = append(out, v.A.String())
+		case *dns.AAAA:
+			out = append(out, v.AAAA.String())
+		}
 	}
-	return simpleResponse{Results: out}
+	return out
 }
 
 func parseBool(v string) bool {

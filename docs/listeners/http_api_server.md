@@ -76,7 +76,7 @@ Content-Type: application/json
 
 JSON bodies are used whenever the request `Content-Type` includes `application/json`; otherwise form values are parsed.
 
-### Simple Response Example
+### Simple Response Example (IPs Only)
 
 ```
 GET /resolve?name=example.com&type=AAAA&simple=1 HTTP/1.1
@@ -85,11 +85,9 @@ Host: 127.0.0.1:8080
 
 Response:
 ```json
-{
-  "results": [
-    "example.com.\t299\tIN\tAAAA\t2606:2800:220:1:248:1893:25c8:1946"
-  ]
-}
+[
+  "2606:2800:220:1:248:1893:25c8:1946"
+]
 ```
 
 ## Response Format
