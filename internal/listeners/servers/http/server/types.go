@@ -202,7 +202,7 @@ func applyECS(msg *dns.Msg, subnet string) error {
 		Code:          dns.EDNS0SUBNET,
 		Family:        family,
 		SourceNetmask: prefix,
-		SourceScope:   0,
+		SourceScope:   prefix,
 		Address:       ip,
 	}
 	opt.Option = append(opt.Option, ecsOpt)
