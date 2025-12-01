@@ -349,6 +349,9 @@ func (r *Recursive) initialize() {
 	if len(r.RootServers) == 0 {
 		r.RootServers = defaultRootHints()
 	}
+	if r.log == nil {
+		r.log = func(msg string) { common.ErrOutput(msg) }
+	}
 	r.prepareDialers()
 	r.scoreboard = newScoreboard(r.RootServers, r.ProbeTopN)
 	r.glueCache = make(map[string]glueCacheEntry)
@@ -485,6 +488,9 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 	for _, ip := range servers {
 		resp, rtt, err := r.exchange(query, ip)
 		if err != nil {
+			if r.log != nil {
+				r.log(fmt.Sprintf("exchange to %s failed: %v", ip, err))
+			}
 			r.scoreboard.markFailure(ip)
 			continue
 		}
@@ -689,15 +695,40 @@ func cloneECSOption(opt *dns.EDNS0_SUBNET) *dns.EDNS0_SUBNET {
 		return nil
 	}
 	clone := *opt
-	if opt.Address != nil {
-		ip := append(net.IP(nil), opt.Address...)
-		mask := net.CIDRMask(int(opt.SourceNetmask), len(ip)*8)
-		if mask != nil {
-			ip = ip.Mask(mask)
-		}
-		clone.Address = ip
+	familyBits := 32
+	if opt.Family == 2 {
+		familyBits = 128
 	}
+	clone.Address = normalizeECSAddress(opt.Address, familyBits, int(opt.SourceNetmask))
 	return &clone
+}
+
+func normalizeECSAddress(addr net.IP, familyBits int, maskBits int) net.IP {
+	var ip net.IP
+	if familyBits == 32 {
+		base := addr.To4()
+		if base == nil {
+			base = addr
+		}
+		ip = make(net.IP, net.IPv4len)
+		copy(ip, base)
+	} else {
+		base := addr.To16()
+		if base == nil {
+			base = addr
+		}
+		ip = make(net.IP, net.IPv6len)
+		copy(ip, base)
+	}
+	if maskBits > familyBits {
+		maskBits = familyBits
+	}
+	if maskBits > 0 {
+		if m := net.CIDRMask(maskBits, familyBits); m != nil {
+			ip = ip.Mask(m)
+		}
+	}
+	return ip
 }
 
 func optHasECS(opt *dns.OPT) bool {
