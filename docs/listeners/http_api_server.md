@@ -83,7 +83,7 @@ Content-Type: application/json
 ```
 
 * `value` is a parsed field (e.g., IP for A/AAAA, target for CNAME/NS, preference/host for MX).
-* `data` is only present when `raw=true`.
+* `data` is only present when `raw=true` (example: `{"name":"example.com.","type":"A",...,"value":"93.184.216.34","data":"example.com.\t299\tIN\tA\t93.184.216.34"}`).
 
 ### Simple (`simple=1`)
 Flat JSON array of the answer values:
