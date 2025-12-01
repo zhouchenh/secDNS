@@ -34,6 +34,7 @@ Accepted via query string, form body, or JSON (`Content-Type: application/json`)
 * `ecs` / `edns_client_subnet` (optional) – CIDR to send as ECS (e.g., `203.0.113.7/32`, `2001:db8::/48`).
 * `raw` (secDNS v1.3.1+) (optional) – Include raw RR strings in `data`. Default: false.
 * `simple` (secDNS v1.3.1+) (optional) – Return a flat JSON array of answer values; A/AAAA as IPs, others fall back to RR strings. Default: false.
+  * Boolean parsing: `true`, `1`, `yes` → true; anything else → false.
 
 ### Examples
 
