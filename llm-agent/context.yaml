@@ -1,11 +1,11 @@
 # secDNS Project Knowledge Base
 # Updated for downstream LLM agents
-# Last Updated: 2025-11-30
+# Last Updated: 2025-12-01
 
 metadata:
   project_name: secDNS
-  version: 1.3.0
-  release_date: 2025-11-30
+  version: 1.3.1
+  release_date: 2025-12-01
   language: Go
   go_version: "1.23"
   toolchain: "1.24.7"
@@ -26,12 +26,12 @@ project_purpose:
 key_features:
   listeners:
     - dnsServer: UDP/TCP DNS listener (default port 53), supports EDNS0, TCP fallback; no DoT termination.
-    - httpAPIServer: HTTP GET/POST (form or JSON) `/resolve` endpoint returning JSON answers; available v1.2.1+.
+    - httpAPIServer: HTTP GET/POST (form or JSON) `/resolve` endpoint returning JSON answers; available v1.2.1+. Raw/simple response options in v1.3.1+.
   resolvers:
     - nameServer: Plain/DoT TCP/UDP resolver with SOCKS5, TLS verification, EDNS0/TCP fallback.
     - doh: DNS-over-HTTPS with URL resolution helper, SOCKS5, ECS, and timeout controls.
     - cache: High-performance cache with LRU, TTL overrides/jitter, negative caching, stale-while-revalidate, prefetch, warmup queries, EDNS cache-control hints, per-domain stats.
-    - recursive: Recursive resolver with root-hint bootstrap, adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation (root, referrals/glue, CNAME, DS/DNSKEY).
+    - recursive: Recursive resolver with root-hint bootstrap (defaults to embedded hints if omitted), adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation (root, referrals/glue, CNAME, DS/DNSKEY). Falls back to TCP when UDP exchange fails.
     - ecs: Wrapper resolver to apply ECS policy (passthrough/add/override/strip) before delegating, so cache/recursive can be shared across ECS variants. (v1.3.0+)
     - dns64: AAAA synthesis with IPv6 prefix config; optional ignoreExistingAAAA flag.
     - composition: sequence (ordered failover) and concurrentNameServerList (fastest response wins).
@@ -80,11 +80,11 @@ architecture_details:
 
 recent_work:
   - Added HTTP API listener with GET/POST form+JSON handling and docs (v1.2.1).
-  - Expanded cache resolver (prefetch, warmup, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; docs updated.
+  - Expanded cache resolver (prefetch, warmup, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; ECS cache keying now uses response scope, falling back to source prefix when scope=0.
   - Verified version history and docs crosslinks; README now points to configuration → listeners/resolvers.
   - Added unit tests across resolvers (alias, sequence, dns64, doh, nameserver, filter variants, noAnswer, notExist), cache warmup/prefetch, HTTP API, and rule provider descriptors.
   - Converted llm-agent common-issues JSON into numbered Markdown todos for triage.
-  - Recursive resolver hardened: adds DS→DNSKEY chain validation to root anchors, NSEC/NSEC3 coverage for NXDOMAIN/NODATA, AD gating with strict/permissive policies, SOCKS5/bind-address support, ECS propagation with add/override/strip, and unit tests with signed fixtures.
+  - Recursive resolver hardened: adds DS→DNSKEY chain validation to root anchors, NSEC/NSEC3 coverage for NXDOMAIN/NODATA, AD gating with strict/permissive policies, SOCKS5/bind-address support, ECS propagation with add/override/strip, and unit tests with signed fixtures. Defaults to embedded root hints when `rootServers` omitted; falls back to TCP on UDP errors.
   - DNSSEC validation now enforces RRSIG timing, verifies DS/DNSKEY chains, and checks NSEC/NSEC3 coverage (strict vs permissive). Default remains permissive; strict fails on validation errors.
   - Added ECS wrapper resolver (add/override/strip) to reuse caches across ECS variants and documented resolver ordering; resolver list alphabetized.
   - Documented ECS strip availability for nameServer/DoH and aligned ECS wrapper naming with its directory.
@@ -101,7 +101,7 @@ documentation:
     - docs/listeners.md + docs/listeners/http_api_server.md
     - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
     - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
-    - docs/version_history.md (through v1.3.0 dated 2025.11.30)
+    - docs/version_history.md (through v1.3.1 dated 2025.12.01)
   notes: Cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching.
 
 current_state:
