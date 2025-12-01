@@ -273,8 +273,26 @@ func (v *dnssecValidator) trustedKeys(zone string) (*keyState, error) {
 
 	// Root: trust anchors.
 	if zone == "." {
-		keys := keysForAnchors(v.trustAnchors)
-		expire := v.now().Add(48 * time.Hour)
+		anchors := keysForAnchors(v.trustAnchors)
+		if len(anchors) == 0 {
+			return nil, errDNSSECNoKeys
+		}
+		msg, err := v.resolveDNSKEY(zone)
+		if err != nil {
+			return nil, err
+		}
+		rrs, sigs := extractRRSet(msg, dns.TypeDNSKEY, zone)
+		keys := toDNSKEYs(rrs)
+		if len(keys) == 0 {
+			return nil, errDNSSECNoKeys
+		}
+		if _, err := verifyRRSetWithKeys(rrs, sigs, anchors, false); err != nil {
+			return nil, err
+		}
+		expire := rrsetExpiry(rrs, sigs, v.now())
+		if expire.IsZero() {
+			expire = v.now().Add(48 * time.Hour)
+		}
 		state := &keyState{keys: keys, secure: true, expires: expire}
 		v.storeKeyState(zone, state)
 		return state, nil

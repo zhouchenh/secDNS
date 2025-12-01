@@ -22,26 +22,24 @@ import (
 // Recursive is a placeholder for a full recursive, DNSSEC-validating resolver.
 // It is scaffolded now to wire descriptors, defaults, and root hints; recursion and validation will be implemented in follow-up steps.
 type Recursive struct {
-	RootServers      []RootServer
-	ValidateDNSSEC   string
-	QNameMinimize    bool
-	EDNSSize         uint16
-	Timeout          time.Duration
-	Retries          int
-	ProbeTopN        int
-	ProbeInterval    time.Duration
-	PreferIPv6       bool
-	MaxDepth         int
-	MaxCNAME         int
-	MaxReferrals     int
-	CacheResolver    resolver.Resolver
-	UseEmbeddedCache bool
-	Socks5Proxy      string
-	Socks5Username   string
-	Socks5Password   string
-	SendThrough      net.IP
-	EcsMode          string
-	EcsClientSubnet  string
+	RootServers     []RootServer
+	ValidateDNSSEC  string
+	QNameMinimize   bool
+	EDNSSize        uint16
+	Timeout         time.Duration
+	Retries         int
+	ProbeTopN       int
+	ProbeInterval   time.Duration
+	PreferIPv6      bool
+	MaxDepth        int
+	MaxCNAME        int
+	MaxReferrals    int
+	Socks5Proxy     string
+	Socks5Username  string
+	Socks5Password  string
+	SendThrough     net.IP
+	EcsMode         string
+	EcsClientSubnet string
 
 	initOnce       sync.Once
 	clients        map[string]*dns.Client
@@ -60,26 +58,24 @@ var (
 	typeOfRecursive            = descriptor.TypeOfNew(new(*Recursive))
 	ErrRecursiveNotImplemented = errors.New("recursive resolver: not implemented yet")
 	defaultRecursiveConfig     = &Recursive{
-		RootServers:      defaultRootHints(),
-		ValidateDNSSEC:   "permissive",
-		QNameMinimize:    true,
-		EDNSSize:         1232,
-		Timeout:          1500 * time.Millisecond,
-		Retries:          2,
-		ProbeTopN:        5,
-		ProbeInterval:    time.Hour,
-		PreferIPv6:       false,
-		MaxDepth:         32,
-		MaxCNAME:         8,
-		MaxReferrals:     16,
-		CacheResolver:    nil,
-		UseEmbeddedCache: true,
-		Socks5Proxy:      "",
-		Socks5Username:   "",
-		Socks5Password:   "",
-		SendThrough:      nil,
-		EcsMode:          "",
-		EcsClientSubnet:  "",
+		RootServers:     defaultRootHints(),
+		ValidateDNSSEC:  "permissive",
+		QNameMinimize:   true,
+		EDNSSize:        1232,
+		Timeout:         1500 * time.Millisecond,
+		Retries:         2,
+		ProbeTopN:       5,
+		ProbeInterval:   time.Hour,
+		PreferIPv6:      false,
+		MaxDepth:        32,
+		MaxCNAME:        8,
+		MaxReferrals:    16,
+		Socks5Proxy:     "",
+		Socks5Username:  "",
+		Socks5Password:  "",
+		SendThrough:     nil,
+		EcsMode:         "",
+		EcsClientSubnet: "",
 	}
 )
 
@@ -492,6 +488,7 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 			r.scoreboard.markFailure(ip)
 			continue
 		}
+		resp = r.finalizeResponse(resp)
 		r.scoreboard.markSuccess(ip, rtt)
 
 		nsNames := extractNS(resp)
@@ -794,11 +791,10 @@ func (r *Recursive) fetchDNSKEY(name string) (*dns.Msg, error) {
 	return r.resolveIterativeValidated(msg, r.MaxDepth-1, false, nil)
 }
 
-// fetchDS uses the recursive resolver to fetch DS from the parent zone (without revalidation).
+// fetchDS uses the recursive resolver to fetch DS for the zone (without revalidation).
 func (r *Recursive) fetchDS(name string) (*dns.Msg, error) {
-	parent := parentZone(name)
 	msg := new(dns.Msg)
-	msg.SetQuestion(dns.Fqdn(parent), dns.TypeDS)
+	msg.SetQuestion(dns.Fqdn(name), dns.TypeDS)
 	return r.resolveIterativeValidated(msg, r.MaxDepth-1, false, nil)
 }
 
@@ -861,6 +857,15 @@ func dedupIPs(list []net.IP, preferIPv6 bool) []net.IP {
 		return append(v6, v4...)
 	}
 	return append(v4, v6...)
+}
+
+func (r *Recursive) finalizeResponse(resp *dns.Msg) *dns.Msg {
+	if resp == nil {
+		return nil
+	}
+	resp.RecursionAvailable = true
+	resp.Authoritative = false
+	return resp
 }
 
 func (r *Recursive) socks5Timeout(timeout time.Duration) int {

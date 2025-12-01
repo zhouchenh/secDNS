@@ -16,6 +16,7 @@ import (
 
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/address"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/alias"
+	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/cache"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/concurrent/nameserver/list"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/dns64"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/doh"

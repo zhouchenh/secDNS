@@ -1144,6 +1144,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: time.Hour},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1178,6 +1179,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: time.Duration(0)},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1212,6 +1214,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: time.Duration(0)},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1246,6 +1249,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: time.Duration(0)},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1352,69 +1356,75 @@ func init() {
 			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"WarmupQueries"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"warmupQueries"},
-					AssignableKind: descriptor.AssignmentFunction(func(i interface{}) (object interface{}, ok bool) {
-						raw, ok := i.([]interface{})
-						if !ok {
-							return nil, false
-						}
-						queries := make([]WarmupQuery, 0, len(raw))
-						for _, elem := range raw {
-							entry, ok := elem.(map[string]interface{})
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"warmupQueries"},
+						AssignableKind: descriptor.AssignmentFunction(func(i interface{}) (object interface{}, ok bool) {
+							raw, ok := i.([]interface{})
 							if !ok {
-								continue
+								return nil, false
 							}
-							name, _ := entry["name"].(string)
-							if name == "" {
-								continue
-							}
-							var qType uint16 = dns.TypeA
-							if v, ok := entry["type"].(float64); ok {
-								qType = uint16(v)
-							} else if v, ok := entry["type"].(string); ok {
-								if parsed, err := strconv.Atoi(v); err == nil {
-									qType = uint16(parsed)
+							queries := make([]WarmupQuery, 0, len(raw))
+							for _, elem := range raw {
+								entry, ok := elem.(map[string]interface{})
+								if !ok {
+									continue
 								}
-							}
-							var qClass uint16 = dns.ClassINET
-							if v, ok := entry["class"].(float64); ok {
-								qClass = uint16(v)
-							} else if v, ok := entry["class"].(string); ok {
-								if parsed, err := strconv.Atoi(v); err == nil {
-									qClass = uint16(parsed)
+								name, _ := entry["name"].(string)
+								if name == "" {
+									continue
 								}
+								var qType uint16 = dns.TypeA
+								if v, ok := entry["type"].(float64); ok {
+									qType = uint16(v)
+								} else if v, ok := entry["type"].(string); ok {
+									if parsed, err := strconv.Atoi(v); err == nil {
+										qType = uint16(parsed)
+									}
+								}
+								var qClass uint16 = dns.ClassINET
+								if v, ok := entry["class"].(float64); ok {
+									qClass = uint16(v)
+								} else if v, ok := entry["class"].(string); ok {
+									if parsed, err := strconv.Atoi(v); err == nil {
+										qClass = uint16(parsed)
+									}
+								}
+								queries = append(queries, WarmupQuery{Name: name, Type: qType, Class: qClass})
 							}
-							queries = append(queries, WarmupQuery{Name: name, Type: qType, Class: qClass})
-						}
-						return queries, true
-					}),
+							return queries, true
+						}),
+					},
+					descriptor.DefaultValue{Value: []WarmupQuery{}},
 				},
 			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"CacheControlEnabled"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"cacheControlEnabled"},
-					AssignableKind: descriptor.AssignableKinds{
-						descriptor.KindBool,
-						descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								switch strings.ToLower(str) {
-								case "true":
-									return true, true
-								case "false":
-									return false, true
-								default:
-									return nil, false
-								}
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"cacheControlEnabled"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.KindBool,
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									switch strings.ToLower(str) {
+									case "true":
+										return true, true
+									case "false":
+										return false, true
+									default:
+										return nil, false
+									}
+								},
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: false},
 				},
 			},
 		},

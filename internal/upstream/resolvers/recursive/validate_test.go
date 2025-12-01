@@ -17,6 +17,7 @@ func TestValidatorPositiveChain(t *testing.T) {
 	ds := childKey.ToDS(dns.SHA256)
 	ds.Hdr.Ttl = 600
 	dsSig := mustSign([]dns.RR{ds}, rootKey, rootPriv, ".", dns.TypeDS, now)
+	rootDNSKEYSig := mustSign([]dns.RR{rootKey}, rootKey, rootPriv, ".", dns.TypeDNSKEY, now)
 
 	dnskeySig := mustSign([]dns.RR{childKey}, childKey, childPriv, "example.", dns.TypeDNSKEY, now)
 
@@ -33,7 +34,10 @@ func TestValidatorPositiveChain(t *testing.T) {
 		return &dns.Msg{}, nil
 	}
 	v.resolveDNSKEY = func(name string) (*dns.Msg, error) {
-		if dns.Fqdn(name) == "example." {
+		switch dns.Fqdn(name) {
+		case ".":
+			return &dns.Msg{Answer: []dns.RR{rootKey, rootDNSKEYSig}}, nil
+		case "example.":
 			return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil
 		}
 		return &dns.Msg{}, nil
@@ -64,6 +68,7 @@ func TestValidatorDsMismatch(t *testing.T) {
 	ds.Hdr.Name = "example."
 	ds.Hdr.Ttl = 600
 	dsSig := mustSign([]dns.RR{ds}, rootKey, rootPriv, ".", dns.TypeDS, now)
+	rootDNSKEYSig := mustSign([]dns.RR{rootKey}, rootKey, rootPriv, ".", dns.TypeDNSKEY, now)
 	dnskeySig := mustSign([]dns.RR{childKey}, childKey, childPriv, "example.", dns.TypeDNSKEY, now)
 	a := &dns.A{Hdr: dns.RR_Header{Name: "www.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.IP{5, 5, 5, 5}}
 	aSig := mustSign([]dns.RR{a}, childKey, childPriv, "example.", dns.TypeA, now)
@@ -75,7 +80,7 @@ func TestValidatorDsMismatch(t *testing.T) {
 		return &dns.Msg{Answer: []dns.RR{ds, dsSig}}, nil
 	}
 	v.resolveDNSKEY = func(string) (*dns.Msg, error) {
-		return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil
+		return &dns.Msg{Answer: []dns.RR{rootKey, rootDNSKEYSig, childKey, dnskeySig}}, nil
 	}
 	t.Logf("ds name=%s sig name=%s", ds.Hdr.Name, dsSig.Hdr.Name)
 	dsSet, dsSigs := extractRRSet(&dns.Msg{Answer: []dns.RR{ds, dsSig}}, dns.TypeDS, "example.")
@@ -106,6 +111,7 @@ func TestValidatorNSECNXDOMAIN(t *testing.T) {
 
 	ds := childKey.ToDS(dns.SHA256)
 	dsSig := mustSign([]dns.RR{ds}, rootKey, rootPriv, ".", dns.TypeDS, now)
+	rootDNSKEYSig := mustSign([]dns.RR{rootKey}, rootKey, rootPriv, ".", dns.TypeDNSKEY, now)
 	dnskeySig := mustSign([]dns.RR{childKey}, childKey, childPriv, "example.", dns.TypeDNSKEY, now)
 
 	nsec1 := &dns.NSEC{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET, Ttl: 600}, NextDomain: "z.example.", TypeBitMap: []uint16{dns.TypeNS}}
@@ -119,7 +125,16 @@ func TestValidatorNSECNXDOMAIN(t *testing.T) {
 	v.trustAnchors = []dns.RR{rootKey}
 	v.now = func() time.Time { return now }
 	v.resolveDS = func(string) (*dns.Msg, error) { return &dns.Msg{Answer: []dns.RR{ds, dsSig}}, nil }
-	v.resolveDNSKEY = func(string) (*dns.Msg, error) { return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil }
+	v.resolveDNSKEY = func(name string) (*dns.Msg, error) {
+		switch dns.Fqdn(name) {
+		case ".":
+			return &dns.Msg{Answer: []dns.RR{rootKey, rootDNSKEYSig}}, nil
+		case "example.":
+			return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil
+		default:
+			return &dns.Msg{}, nil
+		}
+	}
 
 	msg := &dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeNameError}}
 	msg.Ns = []dns.RR{nsec1, nsec1Sig, nsec2, nsec2Sig, nsec3, nsec3Sig}
@@ -136,13 +151,25 @@ func TestValidatorNSECNXDOMAIN(t *testing.T) {
 
 func TestValidatorInsecureDelegation(t *testing.T) {
 	now := time.Now()
+	rootKey, rootPriv := mustGenerateKey(".")
 	childKey, childPriv := mustGenerateKey("example.")
+	rootDNSKEYSig := mustSign([]dns.RR{rootKey}, rootKey, rootPriv, ".", dns.TypeDNSKEY, now)
 	dnskeySig := mustSign([]dns.RR{childKey}, childKey, childPriv, "example.", dns.TypeDNSKEY, now)
 
 	v := newValidator()
+	v.trustAnchors = []dns.RR{rootKey}
 	v.now = func() time.Time { return now }
 	v.resolveDS = func(string) (*dns.Msg, error) { return &dns.Msg{}, nil }
-	v.resolveDNSKEY = func(string) (*dns.Msg, error) { return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil }
+	v.resolveDNSKEY = func(name string) (*dns.Msg, error) {
+		switch dns.Fqdn(name) {
+		case ".":
+			return &dns.Msg{Answer: []dns.RR{rootKey, rootDNSKEYSig}}, nil
+		case "example.":
+			return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil
+		default:
+			return &dns.Msg{}, nil
+		}
+	}
 
 	msg := &dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}}
 	msg.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "www.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.IP{9, 9, 9, 9}}}

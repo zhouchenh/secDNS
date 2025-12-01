@@ -22,5 +22,6 @@ secDNS supports the following resolvers.
 * [nameServer](resolvers/name_server.md) - Forward queries to an upstream DNS server.
 * [noAnswer](resolvers/no_answer.md) - Reply queries without any DNS record.
 * [notExist](resolvers/not_exist.md) - Reply queries with an NXDOMAIN error.
-* [recursive](resolvers/recursive.md) - Recursive, DNSSEC-validating resolver with adaptive nameserver ranking.
+* [recursive](resolvers/recursive.md) - (secDNS v1.3.0+) Recursive, DNSSEC-validating resolver with adaptive nameserver
+  ranking.
 * [sequence](resolvers/sequence.md) - Forward queries to specific resolvers sequentially.
