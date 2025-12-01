@@ -77,7 +77,7 @@ Content-Type: application/json
     {"name": "example.com.", "type": "A", "class": "IN"}
   ],
   "answer": [
-    {"name": "example.com.", "type": "A", "class": "IN", "ttl": 299, "value": "93.184.216.34"}
+    {"name": "example.com.", "type": "A", "class": "IN", "ttl": 299, "value": "203.0.113.10"}
   ],
   "authority": [],
   "additional": []
@@ -85,7 +85,6 @@ Content-Type: application/json
 ```
 
 * `value` is a parsed field (e.g., IP for A/AAAA, target for CNAME/NS, preference/host for MX).
-* `data` is only present when `raw=true` (example: `{"name":"example.com.","type":"A",...,"value":"93.184.216.34","data":"example.com.\t299\tIN\tA\t93.184.216.34"}`).
 
 ### Raw (`raw=1`)
 Same as standard but includes raw RR strings in `data`:
@@ -102,8 +101,8 @@ Same as standard but includes raw RR strings in `data`:
       "type": "A",
       "class": "IN",
       "ttl": 299,
-      "value": "93.184.216.34",
-      "data": "example.com.\t299\tIN\tA\t93.184.216.34"
+      "value": "203.0.113.10",
+      "data": "example.com.\t299\tIN\tA\t203.0.113.10"
     }
   ],
   "authority": [],
