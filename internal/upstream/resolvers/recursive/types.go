@@ -581,10 +581,16 @@ func (r *Recursive) exchange(query *dns.Msg, ip net.IP) (*dns.Msg, time.Duration
 		return r.exchangeViaCustomDial(msg, addr, ip)
 	}
 	resp, rtt, err := r.clients["udp"].Exchange(msg, addr)
-	if err == nil && resp != nil && resp.Truncated {
-		resp, rtt, err = r.clients["tcp"].Exchange(msg, addr)
+	if err == nil && resp != nil {
+		if resp.Truncated {
+			resp, rtt, err = r.clients["tcp"].Exchange(msg, addr)
+		}
 	}
 	if err != nil {
+		// UDP failed: try TCP once before giving up
+		if alt, rtt2, err2 := r.clients["tcp"].Exchange(msg, addr); err2 == nil && alt != nil {
+			return alt, rtt2, nil
+		}
 		return nil, 0, err
 	}
 	return resp, rtt, nil
