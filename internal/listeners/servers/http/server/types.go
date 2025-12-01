@@ -299,14 +299,21 @@ func toSimpleResponse(msg *dns.Msg) []string {
 	if msg == nil {
 		return []string{}
 	}
+	var qtype uint16
+	if len(msg.Question) > 0 {
+		qtype = msg.Question[0].Qtype
+	}
 	var out []string
 	for _, rr := range msg.Answer {
+		if qtype != 0 && rr.Header().Rrtype != qtype {
+			continue
+		}
 		rec := toRecord(rr, false)
 		if rec.Value != "" {
 			out = append(out, rec.Value)
-			continue
+		} else {
+			out = append(out, rr.String())
 		}
-		out = append(out, rr.String())
 	}
 	return out
 }
