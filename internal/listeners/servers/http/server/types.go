@@ -284,6 +284,8 @@ func toSimpleResponse(msg *dns.Msg) []string {
 			out = append(out, v.A.String())
 		case *dns.AAAA:
 			out = append(out, v.AAAA.String())
+		default:
+			out = append(out, rr.String())
 		}
 	}
 	return out

@@ -76,7 +76,7 @@ Content-Type: application/json
 
 JSON bodies are used whenever the request `Content-Type` includes `application/json`; otherwise form values are parsed.
 
-### Simple Response Example (IPs Only)
+### Simple Response Example
 
 ```
 GET /resolve?name=example.com&type=AAAA&simple=1 HTTP/1.1
@@ -89,6 +89,8 @@ Response:
   "2606:2800:220:1:248:1893:25c8:1946"
 ]
 ```
+
+> Simple mode returns a flat array. For A/AAAA answers it lists the IPs; for other record types it falls back to the RR string (e.g., MX preference/host, CNAME target).
 
 ## Response Format
 
