@@ -118,18 +118,6 @@ func (r *Recursive) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 }
 
 func init() {
-	convertibleKindIP := descriptor.ConvertibleKind{
-		Kind: descriptor.KindString,
-		ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-			str, ok := original.(string)
-			if !ok {
-				return
-			}
-			converted = net.ParseIP(strings.TrimSpace(str))
-			ok = converted != nil
-			return
-		},
-	}
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfRecursive,
 		Filler: descriptor.Fillers{
@@ -138,39 +126,42 @@ func init() {
 			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"RootServers"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"rootServers"},
-					AssignableKind: descriptor.AssignmentFunction(func(original interface{}) (object interface{}, ok bool) {
-						rawList, ok := original.([]interface{})
-						if !ok {
-							return nil, false
-						}
-						var servers []RootServer
-						for _, item := range rawList {
-							m, ok := item.(map[string]interface{})
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"rootServers"},
+						AssignableKind: descriptor.AssignmentFunction(func(original interface{}) (object interface{}, ok bool) {
+							rawList, ok := original.([]interface{})
 							if !ok {
-								continue
+								return nil, false
 							}
-							host, _ := m["host"].(string)
-							addrsRaw, _ := m["addresses"].([]interface{})
-							var addrs []net.IP
-							for _, a := range addrsRaw {
-								if s, ok := a.(string); ok {
-									ip := net.ParseIP(strings.TrimSpace(s))
-									if ip != nil {
-										addrs = append(addrs, ip)
+							var servers []RootServer
+							for _, item := range rawList {
+								m, ok := item.(map[string]interface{})
+								if !ok {
+									continue
+								}
+								host, _ := m["host"].(string)
+								addrsRaw, _ := m["addresses"].([]interface{})
+								var addrs []net.IP
+								for _, a := range addrsRaw {
+									if s, ok := a.(string); ok {
+										ip := net.ParseIP(strings.TrimSpace(s))
+										if ip != nil {
+											addrs = append(addrs, ip)
+										}
 									}
 								}
+								if len(addrs) > 0 || host != "" {
+									servers = append(servers, RootServer{Host: host, Addresses: addrs})
+								}
 							}
-							if len(addrs) > 0 || host != "" {
-								servers = append(servers, RootServer{Host: host, Addresses: addrs})
+							if len(servers) == 0 {
+								return nil, false
 							}
-						}
-						if len(servers) == 0 {
-							return nil, false
-						}
-						return servers, true
-					}),
+							return servers, true
+						}),
+					},
+					descriptor.DefaultValue{Value: defaultRootHints()},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -334,25 +325,16 @@ func init() {
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"sendThrough"},
-						AssignableKind: descriptor.AssignableKinds{
-							convertibleKindIP,
-							descriptor.ConvertibleKind{
-								Kind: descriptor.KindString,
-								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-									str, ok := original.(string)
-									if !ok {
-										return nil, false
-									}
-									str = strings.TrimSpace(str)
-									if str == "" {
-										return nil, true
-									}
-									ip := net.ParseIP(str)
-									if ip == nil {
-										return nil, false
-									}
-									return ip, true
-								},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindString,
+							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+								str, ok := original.(string)
+								if !ok {
+									return
+								}
+								converted = net.ParseIP(str)
+								ok = converted != nil
+								return
 							},
 						},
 					},
