@@ -690,7 +690,15 @@ func cloneECSOption(opt *dns.EDNS0_SUBNET) *dns.EDNS0_SUBNET {
 	}
 	clone := *opt
 	if opt.Address != nil {
-		clone.Address = append(net.IP(nil), opt.Address...)
+		ip := append(net.IP(nil), opt.Address...)
+		mask := net.CIDRMask(int(opt.SourceNetmask), len(ip)*8)
+		if mask != nil {
+			ip = ip.Mask(mask)
+		}
+		clone.Address = ip
+	}
+	if clone.SourceScope == 0 {
+		clone.SourceScope = clone.SourceNetmask
 	}
 	return &clone
 }
