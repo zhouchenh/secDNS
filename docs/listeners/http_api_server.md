@@ -1,7 +1,6 @@
 # httpAPIServer
 
-_Available in secDNS v1.2.1 and later._  
-Raw/simple response options available in secDNS v1.3.1+.
+_Available in secDNS v1.2.1 and later._
 
 * Type: `httpAPIServer`
 
@@ -41,10 +40,10 @@ Two simple parameters are supported:
 * `class` – DNS class (optional, default `IN`)
 * `ecs` / `edns_client_subnet` – Optional EDNS Client Subnet in CIDR (e.g., `203.0.113.7/32`, `2001:db8::/48`). Adds an
   ECS option to the DNS query.
-* `raw` – Optional (`true`/`1`/`yes`). When set, include raw RR strings in the response `data` field. Default: omitted
-  (v1.3.1+).
-* `simple` – Optional (`true`/`1`/`yes`). When set, return a compact JSON array of answer values only; A/AAAA as IPs,
-  other types fall back to RR strings. Default: false (v1.3.1+).
+* `raw` – (secDNS v1.3.1+) Optional (`true`/`1`/`yes`). When set, include raw RR strings in the response `data` field.
+  Default: omitted.
+* `simple` – (secDNS v1.3.1+) Optional (`true`/`1`/`yes`). When set, return a compact JSON array of answer values only;
+  A/AAAA as IPs, other types fall back to RR strings. Default: false.
 
 ### GET Example
 
