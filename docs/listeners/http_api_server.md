@@ -18,15 +18,21 @@ The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS questions
 
 > `listen`: String _(Optional)_
 
-IP address to bind. Default: `127.0.0.1`.
+IP address to bind.
+
+Default: `127.0.0.1`
 
 > `port`: Number | String _(Optional)_
 
-HTTP port to listen on. Accepts a number or numeric string. Default: `8080`.
+HTTP port to listen on. Accepts a number or numeric string.
+
+Default: `8080`
 
 > `path`: String _(Optional)_
 
-Endpoint path. A leading slash is added if omitted. Default: `/resolve`.
+Endpoint path. A leading slash is added if omitted.
+
+Default: `/resolve`
 
 ## Request Parameters
 
@@ -38,11 +44,15 @@ Domain name to resolve.
 
 > `type`: String | Number _(Optional)_
 
-RR type (mnemonic such as `A`, `AAAA`, `MX`, or numeric). Default: `A`.
+RR type (mnemonic such as `A`, `AAAA`, `MX`, or numeric).
+
+Default: `A`
 
 > `class`: String | Number _(Optional)_
 
-RR class (mnemonic or numeric). Default: `IN`.
+RR class (mnemonic or numeric).
+
+Default: `IN`
 
 > `ecs` | `edns_client_subnet`: String _(Optional)_
 
