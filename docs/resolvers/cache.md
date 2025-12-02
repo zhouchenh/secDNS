@@ -129,6 +129,8 @@ Acceptable formats:
 * Number: e.g., `900`
 * String: `"900"`
 
+Default: `0` (falls back to `negativeTTL` or SOA minimum TTL when present)
+
 > `noDataTTL`: Number | String _(Optional)_
 
 Override TTL for NOERROR/NODATA answers.
@@ -137,7 +139,7 @@ Acceptable formats:
 * Number: e.g., `300`
 * String: `"300"`
 
-Defaults: `0` (use `negativeTTL`)
+Default: `0` (falls back to `negativeTTL` or SOA minimum TTL when present)
 
 > `ttlJitterPercent`: Number | String _(Optional)_
 
@@ -205,12 +207,11 @@ The cache is fully thread-safe and optimized for concurrent access:
 
 ### Statistics
 
-The cache tracks operational statistics accessible via the `Stats()` method:
-- Hits: Number of cache hits
-- Misses: Number of cache misses
-- Evictions: Number of LRU evictions
-- Size: Current number of cached entries
-- Hit Rate: Percentage of requests served from cache
+Global counters (via `Stats()`):
+- Hits, misses, evictions, size, hit rate
+
+Per-domain counters (via `DomainStatsFor(name)` / `AllDomainStats()`):
+- Hits, misses, prefetches, stale-served counts
 
 ## Examples
 
@@ -290,17 +291,6 @@ Aggressively cache popular domains and prefetch them before expiration while all
 
 This configuration refreshes any entry that has been hit 15+ times once 90% of its TTL has passed, serves stale data for up to 45 seconds while refreshing, and honors upstream cache-control hints.
 
-### Warmup Queries
-
-Preload the cache during startup to avoid cold-start misses for critical domains:
-
-```json
-{
-  "type": "cache",
-  "resolver": { "type": "nameServer", "address": "9.9.9.9" }
-}
-```
-
 ## Performance Characteristics
 
 - **Cache Hit**: ~585 ns/op (0.0006 ms)
@@ -325,12 +315,10 @@ Preload the cache during startup to avoid cold-start misses for critical domains
 
 ## Notes
 
-- The cache uses case-insensitive domain name matching per RFC 4343
-- Cache keys include query name, type, and class for precise matching
-- The cache is transparent to clients - they receive standard DNS responses
-- Response IDs are always matched to the incoming query ID
-- Compatible with `concurrentNameServerList` via the NameServerResolver interface
-In addition to global stats, the resolver now tracks per-domain counters (hits, misses, stale-served counts, and prefetch counts). Call `DomainStatsFor(name)` or `AllDomainStats()` to inspect them and tune `prefetchThreshold`.
+- Cache keys are case-insensitive (RFC 4343) and include name, type, and class; response IDs are rewritten to match the incoming query.
+- ECS-aware caching: when a response carries an ECS scope, that prefix is used for keying; if scope is 0, the source prefix is used. Different ECS views do not collide.
+- Negative caching prefers SOA minimum TTL when present; otherwise uses `nxDomainTTL`/`noDataTTL` when set, else `negativeTTL`.
+- Transparent to clients: answers are returned as standard DNS responses; compatible with `concurrentNameServerList` via the NameServerResolver interface.
 
 ### Stale-While-Revalidate
 
