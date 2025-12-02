@@ -50,11 +50,15 @@ CIDR to send as EDNS Client Subnet, e.g., `203.0.113.7/32` or `2001:db8::/48`.
 
 > `raw`: Boolean _(Optional)_
 
-(secDNS v1.3.1+) Include raw RR strings in the `data` field. Booleans parse `true`/`1`/`yes`/`on` (case-insensitive) as true; anything else is false. Default: `false`.
+(secDNS v1.3.1+) Include raw RR strings in the `data` field. Booleans parse `true`/`1`/`yes`/`on` (case-insensitive) as true; anything else is false.
+
+Default: `false`
 
 > `simple`: Boolean _(Optional)_
 
-(secDNS v1.3.1+) Return a flat JSON array of answer values only. Parsed the same way as `raw`. Default: `false`.
+(secDNS v1.3.1+) Return a flat JSON array of answer values only. Parsed the same way as `raw`.
+
+Default: `false`
 
 ### Request Examples
 
