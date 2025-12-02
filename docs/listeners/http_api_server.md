@@ -1,8 +1,8 @@
 # httpAPIServer
 
-* Type: `httpAPIServer`
-
 _Available in secDNS v1.2.1 and later._
+
+* Type: `httpAPIServer`
 
 The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS questions over HTTP(S) (GET or POST, form or JSON) and returns answers encoded as JSON.
 
