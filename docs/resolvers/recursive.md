@@ -15,10 +15,10 @@ The `recursive` resolver performs full iterative resolution from the IANA root h
     "validateDNSSEC": "permissive",
     "qnameMinimize": true,
     "ednsSize": 1232,
-    "timeout": "1500ms",
+    "timeout": 1.5,
     "retries": 2,
     "probeTopN": 5,
-    "probeInterval": "1h",
+    "probeInterval": 3600,
     "rootServers": [
       {
         "host": "a.root-servers.net",
@@ -52,7 +52,7 @@ UDP payload size placed in the EDNS0 OPT record (1–4096). Accepts numbers or n
 
 > `timeout`: Number | String _(Optional)_
 
-Per-exchange timeout. Numbers are interpreted in milliseconds; strings use Go duration syntax (e.g., `"1500ms"`, `"2s"`). Default: `"1500ms"`.
+Per-exchange timeout in seconds (floats allowed). Default: `1.5`.
 
 > `retries`: Number _(Optional)_
 
@@ -64,7 +64,7 @@ Number of best-ranked servers (EWMA RTT with failure backoff) to try from a cand
 
 > `probeInterval`: Number | String _(Optional)_
 
-Interval hint for refreshing nameserver rankings. Accepts milliseconds (number) or Go duration strings; default is `"1h"`.
+Interval hint (seconds) for refreshing nameserver rankings. Default: `3600`.
 
 > `rootServers`: Array _(Optional)_
 

@@ -1092,21 +1092,21 @@ func durationFiller(field, jsonKey string, def time.Duration) descriptor.ObjectF
 					descriptor.ConvertibleKind{
 						Kind: descriptor.KindFloat64,
 						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							v := time.Duration(original.(float64)) * time.Millisecond
-							if v <= 0 {
+							seconds, ok := original.(float64)
+							if !ok || seconds <= 0 {
 								return nil, false
 							}
-							return v, true
+							return time.Duration(seconds * float64(time.Second)), true
 						},
 					},
 					descriptor.ConvertibleKind{
 						Kind: descriptor.KindString,
 						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							v, err := time.ParseDuration(strings.TrimSpace(original.(string)))
-							if err != nil || v <= 0 {
+							seconds, err := strconv.ParseFloat(strings.TrimSpace(original.(string)), 64)
+							if err != nil || seconds <= 0 {
 								return nil, false
 							}
-							return v, true
+							return time.Duration(seconds * float64(time.Second)), true
 						},
 					},
 				},
