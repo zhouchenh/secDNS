@@ -303,11 +303,11 @@ This configuration refreshes any entry that has been hit 15+ times once 90% of i
 
 5. **Combine with Other Resolvers**: Cache works well wrapping sequence, dns64, or filter resolvers.
 6. **Monitor Per-Domain Stats**: Identify domains with low hit rates and adjust `prefetchThreshold`/`prefetchPercent`.
-7. **Leverage Cache-Control**: Allow upstream resolvers to hint which responses should not be cached (dynamic content, etc.).
+7. **Use Cache-Control Hints**: Allow upstream resolvers to mark responses as non-cacheable or skip prefetch/stale.
 
 ### Stale-While-Revalidate
 
-When `serveStale` is enabled the cache returns an expired response immediately while refreshing it in the background. This prevents spikes when popular entries expire together and keeps clients from observing upstream latency.
+When `serveStale` is enabled the cache can return an expired response while it refreshes in the background, smoothing latency spikes when popular entries expire together.
 
 ### Cache-Control Hints
 
