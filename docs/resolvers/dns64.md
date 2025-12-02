@@ -11,7 +11,22 @@ resolver.
 
 ```json
 {
-  "resolver": {},
+  "resolver": "RecursiveResolver",
+  "prefix": "64:ff9b::",
+  "ignoreExistingAAAA": false
+}
+```
+
+or inline:
+
+```json
+{
+  "resolver": {
+    "type": "recursive",
+    "config": {
+      "validateDNSSEC": "permissive"
+    }
+  },
   "prefix": "64:ff9b::",
   "ignoreExistingAAAA": false
 }

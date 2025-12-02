@@ -1,0 +1,66 @@
+guidance:
+  purpose: Generate secDNS JSON configs that match the documented schema and the user’s intent without guessing missing details.
+  ask_first:
+    - What listeners do you need? (UDP/TCP dnsServer on which IP/ports; httpAPIServer on which IP/port/path?)
+    - Which upstreams should be used? (DoH URLs, DoT/IPs, plain DNS IPs, SOCKS5 proxy if any, TLS SNI if DoT/DoH)
+    - Do you want caching? (yes/no; size, min/max TTL, negative TTL, stale/prefetch, jitter)
+    - Do you need ECS? (mode passthrough/add/override/strip and subnet if add/override)
+    - Do you need DNS64? (IPv6 prefix, ignoreExistingAAAA? upstream for A lookups)
+    - Do you need rules? (dnsmasqConf file path + resolver, collection entries of domain→resolver)
+    - Any special routing (failover sequence vs fastest concurrent)? (list resolvers for each)
+    - Which resolver should be defaultResolver?
+  config_structure:
+    listeners: array of ListenerObject (type + config).
+    resolvers: map keyed by resolver type; each contains named resolver objects.
+    rules: array of RuleObject (type + config).
+    defaultResolver: resolver name or inline ResolverObject used when no rule matches.
+  listener_tips:
+    dnsServer: one entry per transport; fields listen (IP), port (number/string), protocol ("udp"/"tcp").
+    httpAPIServer (v1.2.1+): listen, port, path; accepts GET/POST form/JSON; path adds leading slash if omitted.
+  resolver_tips:
+    common:
+      - resolver fields accept either a string name of another resolver or inline { "type": "...", "config": { ... } }.
+      - Keep depth-safe chains; avoid cycles.
+      - Numeric strings are accepted for most fields (timeouts/TTLs/ports) but prefer numbers when known.
+    nameServer:
+      - address (IP), port (default 53), protocol ("udp"/"tcp"/"tcp-tls"), tlsServerName for DoT, optional socks5Proxy/user/pass, ecsMode + ecsClientSubnet.
+    doh:
+      - url (https://...), optional urlResolver (string or inline) for hostname resolution, socks5*, ecsMode/clientSubnet.
+    cache:
+      - Wrap the actual upstream in resolver.
+      - Options: maxEntries, minTTL, maxTTL, negativeTTL, nxDomainTTL, noDataTTL, defaultPositiveTTL, defaultFallbackTTL, cleanupInterval, serveStale, staleDuration, prefetchThreshold, prefetchPercent, ttlJitterPercent, cacheControlEnabled.
+    recursive:
+      - validateDNSSEC ("strict"/"permissive"/"off"), qnameMinimize, ednsSize, timeout (seconds or duration string), retries, probeTopN, probeInterval, maxDepth, maxCNAME, maxReferrals, socks5*, sendThrough, ecsMode/clientSubnet; rootServers optional (defaults embedded).
+    dns64:
+      - resolver (A lookup upstream), prefix (default 64:ff9b::), ignoreExistingAAAA boolean.
+    ecs wrapper:
+      - resolver, ecsMode/clientSubnet to alter ECS before delegation.
+    filterOutA / filterOutAAAA / conditional variants:
+      - resolver string/inline; note behavior (strip A/AAAA; conditional variants first probe opposite type).
+    alias/address/noAnswer/notExist:
+      - address: string or list of IPs; alias: target domain; noAnswer/notExist need placeholders only.
+    composition:
+      - sequence: ordered array of resolvers (failover).
+      - concurrentNameServerList: array of resolvers (fastest wins); ensure entries implement nameserver interface (nameServer, doh, cache, dns64, filters, sequence, itself).
+  rule_tips:
+    dnsmasqConf: filePath (relative/absolute), resolver (string/inline); duplicates pick first; place rule in top-level rules array.
+    collection: array of { name, resolver }; quoted names ("\"example.com\"") match exact only; unquoted match domain + subdomains.
+  defaults_to_offer_when_user_unsure:
+    - Listeners: dnsServer UDP+TCP on 0.0.0.0:53; optionally add httpAPIServer on 0.0.0.0:8053 with path "/resolve".
+    - Upstreams: popular DoH/DoT (Cloudflare/Google) with TLS SNI set; only if user agrees.
+    - Cache: maxEntries 10000, serveStale true, staleDuration 30-45, prefetchThreshold 10-15, prefetchPercent ~0.9, ttlJitterPercent 0.05.
+    - ECS: default passthrough; ask before add/override/strip.
+    - DNS64: default prefix 64:ff9b::, ignoreExistingAAAA false.
+  validation_checklist:
+    - At least one listener defined.
+    - Each resolver reference points to an existing name or valid inline object.
+    - defaultResolver set and reachable.
+    - No obvious resolver cycles; depth decreases through wrappers.
+    - Ports/TLS SNI set when using DoT/DoH; URLs are HTTPS.
+    - dnsmasqConf filePath exists or user acknowledges responsibility.
+    - JSON remains valid (commas, quotes) and matches docs/configuration.md and resolver/listener docs.
+  interaction_rules:
+    - Never invent upstreams, ECS subnets, prefixes, or credentials; ask the user.
+    - Confirm defaults before applying them; offer options in short numbered lists.
+    - If required detail is missing (listener port/IP, upstream URL/IP, rule file path, resolver choice), pause and ask instead of guessing.
+    - Keep responses concise; show only the relevant JSON snippet or full config as requested.

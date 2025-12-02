@@ -84,6 +84,8 @@ recent_work:
   - Expanded cache resolver (prefetch, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; ECS cache keying now uses response scope, falling back to source prefix when scope=0.
   - Cache resolver docs now clarify `resolver` accepts a named resolver string or inline ResolverObject (same pattern as ecs/dns64).
   - Verified version history and docs crosslinks; README now points to configuration → listeners/resolvers.
+  - Normalized docs to ASCII-only, aligned bullet/style conventions, added config-placement notes and inline examples for cache/sequence/concurrent/filter/dns64/recursive docs, refreshed dnsmasqConf guidance, and clarified default behaviors for non-Go readers.
+  - Added llm-agent/config_guidance.yaml for LLM-led config generation; removed outdated sample config-google-doh-cached.json.
   - Added unit tests across resolvers (alias, sequence, dns64, doh, nameserver, filter variants, noAnswer, notExist), cache prefetch, HTTP API, and rule provider descriptors.
   - Converted llm-agent common-issues JSON into numbered Markdown todos for triage.
   - Recursive resolver hardened: adds DS→DNSKEY chain validation to root anchors, NSEC/NSEC3 coverage for NXDOMAIN/NODATA, AD gating with strict/permissive policies, SOCKS5/bind-address support, ECS propagation with add/override/strip, and unit tests with signed fixtures. Defaults to embedded root hints when `rootServers` omitted; falls back to TCP on UDP errors.
@@ -104,10 +106,11 @@ documentation:
     - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
     - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
     - docs/version_history.md (through v1.3.1 dated 2025.12.01)
-  notes: Cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching.
+    - llm-agent/config_guidance.yaml (LLM-facing config generation prompts)
+  notes: Docs are ASCII-only with consistent bullet/heading style; cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching; resolver pages now include config placement notes and inline/named examples; dnsmasqConf rule docs describe config.json placement and duplicate handling.
 
 current_state:
-  repo_status: go test clean; working tree has untracked artifacts (.DS_Store, .idea/, binaries, code-inspection-result-20251127/).
+  repo_status: go test clean; working tree has untracked artifacts (.idea/, binaries, code-inspection-result-20251127/); config-google-doh-cached.json removed.
   binaries: prebuilt secDNS-* artifacts at repo root.
   config_samples: config.json/config-test*.json in root.
   tooling: go.mod uses module github.com/zhouchenh/secDNS; vendored deps present.

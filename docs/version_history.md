@@ -1,6 +1,6 @@
 # Version History
 
-# v1.3.1 - 2025.12.01
+## v1.3.1 - 2025.12.01
 
 Enhancements
 
@@ -8,14 +8,14 @@ Enhancements
 * Cache: key ECS responses by response scope and fall back to source prefix when scope is zero; tuned default config for recursive use.
 * HTTP API: hide raw data by default; add `raw` and `simple` response options; simple mode filters to the requested qtype and returns parsed values; additional/authority now carry data when value is empty.
 
-### v1.3.0 - 2025.11.30
+## v1.3.0 - 2025.11.30
 
 New Features
 
 * Add [recursive](resolvers/recursive.md) resolver: DNSSEC-validating recursion with root hints, adaptive nameserver ranking, singleflight, loop/referral/CNAME limits, authoritative NODATA short-circuiting, SOCKS5/bind support, and ECS passthrough/add/override/strip propagation.
 * Add [ecs](resolvers/ecs.md) resolver: applies EDNS Client Subnet policy (passthrough/add/override/strip, including strip support on release) before delegating, so ECS variants can share downstream caches.
 
-### v1.2.1 - 2025.11.27
+## v1.2.1 - 2025.11.27
 
 New Features
 
@@ -26,7 +26,7 @@ Enhancements
 
 * Added descriptor options for cache prefetch, documented new usage patterns, and exposed per-domain stats APIs.
 
-### v1.2.0 - 2025.11.08
+## v1.2.0 - 2025.11.08
 
 New Feature
 
@@ -47,7 +47,7 @@ Performance
 * Zero lock contention for concurrent cache reads using sync.RWMutex.
 * Memory efficient: ~500-1000 bytes per cached entry depending on response size.
 
-### v1.1.9 - 2025.11.07
+## v1.1.9 - 2025.11.07
 
 New Feature
 
@@ -59,7 +59,7 @@ New Feature
 * Support both IPv4 and IPv6 client subnets in CIDR notation.
 * Add comprehensive [EDNS Client Subnet](edns_client_subnet.md) documentation with configuration examples and use cases.
 
-### v1.1.8 - 2025.11.07
+## v1.1.8 - 2025.11.07
 
 Bug Fixes
 
@@ -82,10 +82,10 @@ Enhancements
 Performance
 
 * Zero race conditions detected with Go race detector.
-* 99.95% latency improvement for TCP fallback client selection (2ms → 0.001ms).
+* 99.95% latency improvement for TCP fallback client selection (2ms -> 0.001ms).
 * Thread-safe with sync.Once providing minimal overhead (~1-5ns atomic load).
 
-### v1.1.7 - 2025.11.07
+## v1.1.7 - 2025.11.07
 
 Enhancement
 
@@ -96,7 +96,7 @@ Enhancement
   to be used in [concurrentNameServerList](resolvers/concurrent_name_server_list.md)
   by implementing the nameserver.Resolver interface.
 
-### v1.1.6 - 2024.11.13
+## v1.1.6 - 2024.11.13
 
 New Feature
 
@@ -109,7 +109,7 @@ Naming Fixes
 * Rename resolver filterA to [filterOutA](resolvers/filter_out_a.md) for better comprehensibility.
 * Rename resolver filterAAAA to [filterOutAAAA](resolvers/filter_out_aaaa.md) for better comprehensibility.
 
-### v1.1.5 - 2022.02.05
+## v1.1.5 - 2022.02.05
 
 New Features
 
@@ -121,13 +121,13 @@ Bug Fix
 
 * Fix a bug in [address](resolvers/address.md) resolver which might cause error in type of answered resource records.
 
-### v1.1.4 - 2021.07.22
+## v1.1.4 - 2021.07.22
 
 New Feature
 
 * Add SOCKS5 proxy support for [nameServer](resolvers/name_server.md) and [doh](resolvers/doh.md).
 
-### v1.1.3 - 2021.07.20
+## v1.1.3 - 2021.07.20
 
 New Feature
 
@@ -138,25 +138,25 @@ Bug Fix
 * Fix a bug in [doh](resolvers/doh.md) resolver which might cause infinite name resolution when domain names are used
   instead of IP addresses in URLs of DoH services.
 
-### v1.1.2 - 2020.10.20
+## v1.1.2 - 2020.10.20
 
 Bug Fix
 
 * Fix a bug in [doh](resolvers/doh.md) resolver where queries don't fail when error occurs.
 
-### v1.1.1 - 2020.10.19
+## v1.1.1 - 2020.10.19
 
 Bug Fix
 
 * Fix a bug in [nameServer](resolvers/name_server.md) resolver where UDP queries don't time out and fail when the server
   ignores the queries.
 
-### v1.1.0 - 2020.03.26
+## v1.1.0 - 2020.03.26
 
 New Feature
 
 * Support DNS64 by adding a new [dns64](resolvers/dns64.md) resolver.
 
-### v1.0.0 - 2020.03.07
+## v1.0.0 - 2020.03.07
 
 Initial Release

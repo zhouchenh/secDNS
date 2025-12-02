@@ -6,7 +6,7 @@ The `collection` rule contains a collection of name-resolver pairs.
 
 ## RuleConfigObject
 
-The RuleConfigObject of the collection rule is an array of [NameResolverPairObject](#nameresolverpairobject)
+The RuleConfigObject of the collection rule is an array of [NameResolverPairObject](#nameresolverpairobject).
 
 ```json
 [
@@ -34,12 +34,9 @@ The RuleConfigObject of the collection rule is an array of [NameResolverPairObje
 
 A valid domain name. Acceptable formats are:
 
-* String: A valid domain name, such as `"example.com"`. Subdomains like `www.example.com` are also matched.
-
-* "String": A valid domain name quoted by a pair of double quotation marks, such as `"\"example.com\""`. Note that a
-  backslash (`\ `) before the double quotation mark (`"`) is required. Subdomains like `www.example.com` are **NOT**
-  matched.
+* `"example.com"`: Matches the domain and all its subdomains (e.g., `www.example.com`).
+* `"\"example.com\""`: Matches only the literal domain name. Escape the inner quotes with a backslash; subdomains such as `www.example.com` are **not** matched.
 
 > `resolver`: String | [ResolverObject](../configuration.md#resolverobject)
 
-The resolver associated with the domain name.
+The resolver associated with the domain name. Accepts either the name of a resolver or an inline [ResolverObject](../configuration.md#resolverobject).

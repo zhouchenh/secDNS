@@ -4,10 +4,10 @@ EDNS Client Subnet (ECS, RFC 7871) lets a resolver include a client subnet hint 
 
 ## Supported Resolvers
 
-- `nameServer` – DNS over UDP/TCP/DoT
-- `doh` – DNS-over-HTTPS
-- `recursive` – ECS propagated through glue/referrals/CNAME/DS/DNSKEY
-- `ecs` wrapper – apply ECS policy before delegating (use to vary policy while sharing cache/recursive)
+- `nameServer` - DNS over UDP/TCP/DoT
+- `doh` - DNS-over-HTTPS
+- `recursive` - ECS propagated through glue/referrals/CNAME/DS/DNSKEY
+- `ecs` wrapper - apply ECS policy before delegating (use to vary policy while sharing cache/recursive)
 
 ## ECS Settings
 

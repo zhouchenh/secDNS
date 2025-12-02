@@ -5,7 +5,7 @@
 The `dnsmasqConf` rule reads domain names from a dnsmasq configuration (`.conf`) file.
 
 A valid dnsmasq configuration should contain lines of configuration like `server=/www.example.com/x.x.x.x`. Only the
-domain names will be accepted and take effect—other directives are ignored. Invalid or malformed domains are skipped and reported through the rule provider’s error handler.
+domain names will be accepted and take effect - other directives are ignored. Invalid or malformed domains are skipped and reported through the rule provider's error handler.
 
 > **Note:** If the same domain appears multiple times in a dnsmasq file (or across multiple rules), only the first mapping takes effect. Subsequent duplicates trigger a `DuplicateRuleWarning` so configuration mistakes can be detected quickly.
 
@@ -26,6 +26,8 @@ an absolute path. The provider reads and validates the file once, caching the do
 > `resolver`: String | [ResolverObject](../configuration.md#resolverobject)
 
 The resolver associated with the domain names read from the dnsmasq configuration file.
+
+Place this rule object inside the top-level `rules` array in your `config.json` (see [configuration.md](../configuration.md#ruleobject)). This works well for bulk routing of large domain lists to a single resolver.
 
 ## Behavior
 

@@ -3,6 +3,7 @@
 * Type: `dnsServer`
 
 The `dnsServer` listener listens for DNS queries and sends back answers over classic DNS transports (UDP or TCP).
+Configure one entry per transport if you want to listen on both UDP and TCP (as in the sample `config.json`).
 
 ## ListenerConfigObject
 
@@ -10,7 +11,7 @@ The `dnsServer` listener listens for DNS queries and sends back answers over cla
 {
   "listen": "0.0.0.0",
   "port": 53,
-  "protocol": "tcp"
+  "protocol": "udp"
 }
 ```
 

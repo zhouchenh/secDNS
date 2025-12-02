@@ -4,7 +4,21 @@ _Available in secDNS v1.3.0 and later._
 
 * Type: `recursive`
 
-The `recursive` resolver performs full iterative resolution from the IANA root hints with DNSSEC validation, ECS policy controls (passthrough/add/override/strip), qname minimization, UDP-first with TCP fallback, singleflight deduplication (keyed by question + ECS), and optional SOCKS5/bind-based connectivity. Authoritative NODATA (SOA/no-referral) replies are short-circuited, and DNSSEC gating covers RRSIG times, DS→DNSKEY chains, and NSEC/NSEC3 proof coverage; AD is set only when the chain validates. See [EDNS Client Subnet](../edns_client_subnet.md) for ECS usage.
+The `recursive` resolver performs full iterative resolution from the IANA root hints with DNSSEC validation. It supports ECS policy controls (passthrough/add/override/strip), qname minimization, UDP-first with TCP fallback, singleflight deduplication keyed by question + ECS, and optional SOCKS5/bind connectivity. Authoritative NODATA (SOA/no-referral) replies are short-circuited. DNSSEC gating checks RRSIG times, DS->DNSKEY chains, and NSEC/NSEC3 proof coverage; AD is set only when the chain validates. See [EDNS Client Subnet](../edns_client_subnet.md) for ECS usage.
+
+## Minimal Example
+
+Define a recursive resolver inline (for example under `resolvers.recursive.<name>.config` in `config.json`):
+
+```json
+{
+  "type": "recursive",
+  "config": {
+    "validateDNSSEC": "permissive",
+    "qnameMinimize": true
+  }
+}
+```
 
 ## ResolverConfigObject
 
@@ -52,7 +66,7 @@ Default: `true`
 
 > `ednsSize`: Number | String _(Optional)_
 
-UDP payload size placed in the EDNS0 OPT record (1–4096). Accepts numbers or numeric strings.
+UDP payload size placed in the EDNS0 OPT record (1-4096). Accepts numbers or numeric strings.
 
 Default: `1232`
 
@@ -64,13 +78,13 @@ Default: `1.5`
 
 > `retries`: Number _(Optional)_
 
-How many additional attempts to make against the same server before moving on. Range: 0–5.
+How many additional attempts to make against the same server before moving on. Range: 0-5.
 
 Default: `2`
 
 > `probeTopN`: Number _(Optional)_
 
-Number of best-ranked servers (EWMA RTT with failure backoff) to try from a candidate set. Range: 1–13.
+Number of best-ranked servers (EWMA RTT with failure backoff) to try from a candidate set. Range: 1-13.
 
 Default: `5`
 
@@ -82,25 +96,25 @@ Default: `3600`
 
 > `rootServers`: Array _(Optional)_
 
-Override root hints. Each entry is an object with `host` (string) and `addresses` (array of IPv4/IPv6 strings). If omitted or empty, the built-in IANA root set (A–M, IPv4/IPv6) is used.
+Override root hints. Each entry is an object with `host` (string) and `addresses` (array of IPv4/IPv6 strings). If omitted or empty, the built-in IANA root set (A-M, IPv4/IPv6) is used.
 
 Default: embedded IANA root set
 
 > `maxDepth`: Number _(Optional)_
 
-Overall recursion depth limit (includes referrals and CNAME follow-ups). Range: 1–128.
+Overall recursion depth limit (includes referrals and CNAME follow-ups). Range: 1-128.
 
 Default: `32`
 
 > `maxCNAME`: Number _(Optional)_
 
-Maximum CNAME chain length before returning `ErrLoopDetected`. Range: 1–32.
+Maximum CNAME chain length before returning `ErrLoopDetected`. Range: 1-32.
 
 Default: `8`
 
 > `maxReferrals`: Number _(Optional)_
 
-Maximum referral depth before returning `ErrLoopDetected`. Range: 1–64.
+Maximum referral depth before returning `ErrLoopDetected`. Range: 1-64.
 
 Default: `16`
 

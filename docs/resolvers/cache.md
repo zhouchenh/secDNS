@@ -4,16 +4,17 @@ _Available in secDNS v1.2.0 and later._
 
 * Type: `cache`
 
-The `cache` resolver provides high-performance DNS response caching with LRU (Least Recently Used) eviction, TTL management, and negative caching support. It caches responses from an upstream resolver to reduce latency and upstream load.
+The `cache` resolver provides high-performance DNS response caching with LRU (Least Recently Used) eviction, TTL management, and negative caching support. It caches responses from an upstream resolver to reduce latency and upstream load. Use this object as the `config` for entries under `resolvers.cache.<name>` in `config.json`; for inline usage (for example inside a rule), wrap it with `"type": "cache"` and a `config` block as shown in the examples.
 
 ## ResolverConfigObject
 
 ```json
 {
-  "type": "cache",
   "resolver": {
     "type": "nameServer",
-    "address": "8.8.8.8"
+    "config": {
+      "address": "8.8.8.8"
+    }
   },
   "maxEntries": 10000,
   "minTTL": 60,
@@ -143,13 +144,13 @@ Default: `0` (falls back to `negativeTTL` or SOA minimum TTL when present)
 
 > `ttlJitterPercent`: Number | String _(Optional)_
 
-Adds ±percentage jitter to cached TTLs to avoid the thundering herd problem when many entries expire simultaneously.
+Adds +/- percentage jitter to cached TTLs to avoid the thundering herd problem when many entries expire simultaneously.
 
 Acceptable formats:
 * Number: e.g., `0.05`
 * String: `"0.05"`
 
-Default: `0.05` (±5%)
+Default: `0.05` (+/-5%)
 
 > `prefetchThreshold`: Number | String _(Optional)_
 
@@ -214,9 +215,13 @@ Cache responses from Google Public DNS:
 ```json
 {
   "type": "cache",
-  "resolver": {
-    "type": "nameServer",
-    "address": "8.8.8.8"
+  "config": {
+    "resolver": {
+      "type": "nameServer",
+      "config": {
+        "address": "8.8.8.8"
+      }
+    }
   }
 }
 ```
@@ -228,15 +233,19 @@ High-performance caching with TTL bounds:
 ```json
 {
   "type": "cache",
-  "resolver": {
-    "type": "doh",
-    "url": "https://dns.google/dns-query"
-  },
-  "maxEntries": 50000,
-  "minTTL": 30,
-  "maxTTL": 7200,
-  "negativeTTL": 600,
-  "cleanupInterval": 120
+  "config": {
+    "resolver": {
+      "type": "doh",
+      "config": {
+        "url": "https://dns.google/dns-query"
+      }
+    },
+    "maxEntries": 50000,
+    "minTTL": 30,
+    "maxTTL": 7200,
+    "negativeTTL": 600,
+    "cleanupInterval": 120
+  }
 }
 ```
 
@@ -247,20 +256,26 @@ Cache responses with automatic fallback to secondary resolver:
 ```json
 {
   "type": "cache",
-  "resolver": {
-    "type": "sequence",
-    "resolvers": [
-      {
-        "type": "nameServer",
-        "address": "1.1.1.1"
-      },
-      {
-        "type": "nameServer",
-        "address": "8.8.8.8"
-      }
-    ]
-  },
-  "maxEntries": 20000
+  "config": {
+    "resolver": {
+      "type": "sequence",
+      "config": [
+        {
+          "type": "nameServer",
+          "config": {
+            "address": "1.1.1.1"
+          }
+        },
+        {
+          "type": "nameServer",
+          "config": {
+            "address": "8.8.8.8"
+          }
+        }
+      ]
+    },
+    "maxEntries": 20000
+  }
 }
 ```
 
@@ -271,13 +286,20 @@ Aggressively cache popular domains and prefetch them before expiration while all
 ```json
 {
   "type": "cache",
-  "resolver": { "type": "doh", "url": "https://cloudflare-dns.com/dns-query" },
-  "prefetchThreshold": 15,
-  "prefetchPercent": 0.9,
-  "serveStale": true,
-  "staleDuration": 45,
-  "ttlJitterPercent": 0.05,
-  "cacheControlEnabled": true
+  "config": {
+    "resolver": {
+      "type": "doh",
+      "config": {
+        "url": "https://cloudflare-dns.com/dns-query"
+      }
+    },
+    "prefetchThreshold": 15,
+    "prefetchPercent": 0.9,
+    "serveStale": true,
+    "staleDuration": 45,
+    "ttlJitterPercent": 0.05,
+    "cacheControlEnabled": true
+  }
 }
 ```
 
@@ -286,7 +308,7 @@ This configuration refreshes any entry that has been hit 15+ times once 90% of i
 ## Performance Characteristics
 
 - **Cache Hit**: ~585 ns/op (0.0006 ms)
-- **Cache Miss**: Upstream resolver latency + caching overhead (~1-2 μs)
+- **Cache Miss**: Upstream resolver latency + caching overhead (~1-2 microseconds)
 - **LRU Operations**: O(1) constant time
 - **Memory Usage**: ~500-1000 bytes per cached entry (varies by response size)
 - **Concurrency**: Optimized for high read concurrency with minimal lock contention
@@ -299,10 +321,10 @@ When `serveStale` is enabled the cache can return an expired response while it r
 
 When `cacheControlEnabled` is `true` upstream resolvers can send EDNS0 local options to influence caching:
 
-* `nocache` – do not store this response
-* `noprefetch` – skip prefetch logic for this entry
-* `nostale` – do not serve stale copies of this entry
-* `ttl=<seconds>` – clamp the TTL to a specific value
+* `nocache` - do not store this response
+* `noprefetch` - skip prefetch logic for this entry
+* `nostale` - do not serve stale copies of this entry
+* `ttl=<seconds>` - clamp the TTL to a specific value
 
 ## Best Practices
 

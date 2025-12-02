@@ -2,7 +2,7 @@
 
 * Type: `address`
 
-The `address` resolver replies the queries with an IPv4 or IPv6 address.
+The `address` resolver replies to A/AAAA queries with static IPv4/IPv6 addresses (TTL 60s per record).
 
 ## ResolverConfigObject
 

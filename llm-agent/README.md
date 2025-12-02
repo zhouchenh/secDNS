@@ -14,6 +14,7 @@ This is a neutral guide for all coding agents working on secDNS.
 
 - **This file:** High-level guide and instructions
 - **context.yaml:** Primary project knowledge base (kept current)
+- **config_guidance.yaml:** Prompts and rules for generating secDNS configs with users
 
 ## Project Overview
 
@@ -122,7 +123,8 @@ go test -mod=readonly ./...
  ├── docs/                             # Documentation (26 files)
  ├── llm-agent/                        # Agent context (you are here)
  │   ├── README.md                     # This guide
- │   └── context.yaml                  # Knowledge base and runbook
+ │   ├── context.yaml                  # Knowledge base and runbook
+ │   └── config_guidance.yaml          # Config-generation guidance for LLM agents
  ├── pkg/                              # Public interfaces
  │   ├── common/
  │   ├── listeners/server/
@@ -205,5 +207,5 @@ Before marking any task as complete:
 
 ---
 
-**Last Updated:** 2025-11-07
-**Updated By:** Claude (Initial creation after full project scan)
+**Last Updated:** 2025-12-01
+**Updated By:** ChatGPT (doc/style alignment and config guidance)

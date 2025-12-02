@@ -6,10 +6,10 @@ The `noAnswer` resolver replies the queries without any DNS record.
 
 ## ResolverConfigObject
 
-No configuration for this resolver. However, a placeholder is required. Acceptable formats are:
+No meaningful configuration is required, but a syntactically valid placeholder must be supplied. Common options:
 
-* `{}`: An empty Object.
-* `[]`: An empty Array.
-* `""`: An empty String.
-* `null`: Null.
-* Any other value if syntactically correct.
+* `{}` - empty object
+* `[]` - empty array
+* `""` - empty string
+* `null`
+* Any other syntactically valid value

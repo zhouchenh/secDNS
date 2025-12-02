@@ -1,20 +1,15 @@
 # secDNS
 
-secDNS is a DNS resolver to help you bypass DNS spoofing (aka DNS cache poisoning) from your local ISP.
+secDNS is a local DNS resolver that helps you bypass DNS spoofing (DNS cache poisoning) from your ISP while keeping latency low and configuration predictable.
 
 ## Features
 
-* Support DoT (DNS over TLS), DoH (DNS over HTTPS), and regular DNS (insecurely over TCP / UDP) upstream resolvers.
-* Recursive, DNSSEC-validating resolver with ECS handling for end-to-end validation-aware responses.
-* Support query over SOCKS5 proxy.
-* Support DNS64.
-* Support EDNS Client Subnet (ECS) for geographic load balancing and optimized DNS responses.
-* Support high-performance DNS caching with LRU (Least Recently Used) eviction, TTL management, negative caching, prefetching, TTL jitter, and EDNS cache-control hints.
-* HTTP API listener (`/resolve`) for JSON/HTTP integrations alongside the UDP/TCP DNS listener.
-* Multiple listeners and upstream resolvers can be configured, including the HTTP API listener for REST-style integrations and dashboards.
-* Queries to a group of upstream resolvers can be either queued (failover, trying the next resolver if one fails) or
-  concurrent (accepting results from the fastest resolver).
-* Support name-based custom rules, enabling the possibility to customize the DNS results.
+* Upstream flexibility: DoT, DoH, classic DNS (TCP/UDP), and ECS-aware recursive resolution with DNSSEC validation.
+* Networking options: SOCKS5 proxy support, source-IP binding, TCP fallback, and qname minimization.
+* Performance: LRU cache with TTL bounds, negative caching, stale-while-revalidate, jitter, and prefetch controls.
+* IPv6 ready: DNS64 synthesis, ECS handling (add/override/passthrough/strip), and dual-stack listeners.
+* Integration: HTTP API listener (`/resolve`) plus UDP/TCP DNS listener; configurable rules route queries to named resolvers.
+* Resilience: Failover (`sequence`) and fastest-response (`concurrentNameServerList`) strategies for resolver pools.
 
 ## Configuration
 
@@ -22,16 +17,16 @@ See [docs/configuration.md](docs/configuration.md) for the overall JSON schema.
 
 Quick start:
 - Download a released binary from GitHub releases.
-- Run with a config: `./secDNS -config config.json`
 - Validate a config: `./secDNS -test -config config.json`
+- Run with a config: `./secDNS -config config.json`
 
 ## Documentation
 
-* [Configuration](docs/configuration.md) – JSON schema, object layout, and examples.
-* [Listeners](docs/listeners.md) – Available listeners such as `dnsServer` and the HTTP API, with version notes.
-* [Resolvers](docs/resolvers.md) – All upstream resolver types, capabilities, and minimum supported versions.
-* [Rules](docs/rules.md) – Rule engines for routing queries to specific resolvers.
-* [Version History](docs/version_history.md) – Feature timeline and component availability across releases.
+* [Configuration](docs/configuration.md) - JSON schema, object layout, and examples.
+* [Listeners](docs/listeners.md) - Available listeners such as `dnsServer` and the HTTP API, with version notes.
+* [Resolvers](docs/resolvers.md) - All upstream resolver types, capabilities, and minimum supported versions.
+* [Rules](docs/rules.md) - Rule engines for routing queries to specific resolvers.
+* [Version History](docs/version_history.md) - Feature timeline and component availability across releases.
 
 ## Version History
 

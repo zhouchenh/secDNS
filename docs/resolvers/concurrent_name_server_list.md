@@ -2,28 +2,37 @@
 
 * Type: `concurrentNameServerList`
 
-The `concurrentNameServerList` resolver concurrently forwards the queries to specific resolvers configured
-in [ResolverConfigObject](#resolverconfigobject). The first reply for every query from other resolvers will be forwarded
-back to clients, other replies are discarded.
+The `concurrentNameServerList` resolver forwards each query to multiple resolvers at the same time. The first successful
+reply is sent back to the client; all slower replies are discarded.
 
-Note that `concurrentNameServerList` currently supports forwarding to [doh](doh.md), [nameServer](name_server.md)
-and [itself](concurrent_name_server_list.md), other resolvers will be ignored if present
-in [ResolverConfigObject](#resolverconfigobject).
+Resolvers that implement the nameserver interface can be used here, including [nameServer](name_server.md),
+[doh](doh.md), [sequence](sequence.md), [dns64](dns64.md), [cache](cache.md), filter resolvers, and
+`concurrentNameServerList` itself.
+
+Use this object as the `config` for entries under `resolvers.concurrentNameServerList.<name>` in `config.json` (see [configuration.md](../configuration.md#resolverdefinitionobject)). For inline usage, wrap it with `"type": "concurrentNameServerList"` and a `config` block as shown below.
 
 ## ResolverConfigObject
 
 ```json
 [
-
+  "PrimaryDNS",
+  "BackupDNS",
+  {
+    "type": "cache",
+    "config": {
+      "resolver": "Recursive",
+      "prefetchThreshold": 10
+    }
+  }
 ]
 ```
 
 > \[ String | [ResolverObject](../configuration.md#resolverobject) \]
 
-An array of configurations for resolvers.
+An array of resolvers to query concurrently.
 
 * String: The unique name of a resolver.
-* [ResolverObject](../configuration.md#resolverobject): An anonymous resolver.
+* [ResolverObject](../configuration.md#resolverobject): An inline resolver definition.
 
 > Example
 >
@@ -40,3 +49,6 @@ An array of configurations for resolvers.
 > ```
 >
 > The example above is a ResolverConfigObject for `concurrentNameServerList` to use Google Public DNS. Note that `"GooglePublicDNS"` is the unique name of a pre-defined resolver in [this example](../configuration.md#example).
+
+At least one resolver must be provided. Because responses are accepted from the first resolver that replies, prefer
+pairing fast, reliable upstreams and ensure each entry implements the nameserver interface.
