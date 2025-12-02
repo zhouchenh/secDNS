@@ -205,10 +205,6 @@ The cache is fully thread-safe and optimized for concurrent access:
 - O(1) cache lookups and LRU operations
 - Atomic counters for statistics
 
-### Statistics
-
-Exposes global counters (hits, misses, evictions, size, hit rate) and per-domain counters (hits, misses, prefetches, stale-served) for monitoring and tuning prefetch/stale settings.
-
 ## Examples
 
 ### Basic Configuration
@@ -308,13 +304,6 @@ This configuration refreshes any entry that has been hit 15+ times once 90% of i
 5. **Combine with Other Resolvers**: Cache works well wrapping sequence, dns64, or filter resolvers.
 6. **Monitor Per-Domain Stats**: Identify domains with low hit rates and adjust `prefetchThreshold`/`prefetchPercent`.
 7. **Leverage Cache-Control**: Allow upstream resolvers to hint which responses should not be cached (dynamic content, etc.).
-
-## Notes
-
-- Case-insensitive name matching; caches separately by name/type/class.
-- ECS-aware: responses are cached per ECS scope/prefix so different client subnets do not mix.
-- Negative answers honor SOA minimum TTL when present; otherwise use configured negative TTLs.
-- Transparent to clients and works with `concurrentNameServerList` and other resolvers as a drop-in cache layer.
 
 ### Stale-While-Revalidate
 
