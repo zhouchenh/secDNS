@@ -207,11 +207,7 @@ The cache is fully thread-safe and optimized for concurrent access:
 
 ### Statistics
 
-Global counters (via `Stats()`):
-- Hits, misses, evictions, size, hit rate
-
-Per-domain counters (via `DomainStatsFor(name)` / `AllDomainStats()`):
-- Hits, misses, prefetches, stale-served counts
+Exposes global counters (hits, misses, evictions, size, hit rate) and per-domain counters (hits, misses, prefetches, stale-served) for monitoring and tuning prefetch/stale settings.
 
 ## Examples
 
