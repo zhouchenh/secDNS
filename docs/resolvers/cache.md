@@ -315,10 +315,10 @@ This configuration refreshes any entry that has been hit 15+ times once 90% of i
 
 ## Notes
 
-- Cache keys are case-insensitive (RFC 4343) and include name, type, and class; response IDs are rewritten to match the incoming query.
-- ECS-aware caching: when a response carries an ECS scope, that prefix is used for keying; if scope is 0, the source prefix is used. Different ECS views do not collide.
-- Negative caching prefers SOA minimum TTL when present; otherwise uses `nxDomainTTL`/`noDataTTL` when set, else `negativeTTL`.
-- Transparent to clients: answers are returned as standard DNS responses; compatible with `concurrentNameServerList` via the NameServerResolver interface.
+- Case-insensitive name matching; caches separately by name/type/class.
+- ECS-aware: responses are cached per ECS scope/prefix so different client subnets do not mix.
+- Negative answers honor SOA minimum TTL when present; otherwise use configured negative TTLs.
+- Transparent to clients and works with `concurrentNameServerList` and other resolvers as a drop-in cache layer.
 
 ### Stale-While-Revalidate
 
