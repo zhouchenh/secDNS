@@ -150,7 +150,7 @@ Adds raw RR strings in `data`:
 
 ### Simple (`simple=1`)
 
-Returns a flat array of answer values filtered to the queried type (A/AAAA as IPs, others fall back to RR strings):
+Returns a flat array of answer values filtered to the queried type. For A/AAAA, values are the bare IP addresses; for other RR types, the entry is the RR string if no simple parsed value exists:
 
 ```json
 [
