@@ -133,11 +133,3 @@ Default: `"passthrough"`
 Client subnet in CIDR form (IPv4 or IPv6). Required when `ecsMode` is `"add"` or `"override"`; ignored for `"passthrough"` and `"strip"`.
 
 Default: `""`
-
-## Behavior
-
-* Bootstraps from embedded IANA root hints (A–M); ranks servers with EWMA RTT and failure backoff; UDP first with TCP fallback on truncation.
-* DNSSEC: enforces RRSIG timing, DS→DNSKEY chains, and NSEC/NSEC3 coverage; AD is set only on a validated chain. Built-in root KSK 20326.
-* NXDOMAIN/NODATA: authoritative SOA NODATA responses are returned immediately instead of retrying other nameservers.
-* ECS: propagated through glue/referrals/CNAME/DS/DNSKEY lookups; included in singleflight keys so each ECS view is isolated.
-* Connectivity: socks/bind settings apply to UDP and TCP; timeouts apply per exchange and to SOCKS5 connect timeouts.
