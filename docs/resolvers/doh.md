@@ -81,7 +81,7 @@ Default: `""`
 * `"override"`: Always replace any ECS option with the configured `ecsClientSubnet`, regardless of client requests.
 * `"strip"` (secDNS v1.3.0+): Remove any ECS option before sending the query upstream.
 
-EDNS Client Subnet (ECS) lets authoritative servers return geography-aware answers; configure `ecsMode`/`ecsClientSubnet` here to control it.
+EDNS Client Subnet (ECS) lets authoritative servers return geography-aware answers; configure `ecsMode`/`ecsClientSubnet` here to control it. See [EDNS Client Subnet](../edns_client_subnet.md).
 
 Default: `"passthrough"`
 

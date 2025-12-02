@@ -57,7 +57,7 @@ New Feature
 * Support three ECS handling modes: `passthrough` (default, no modification), `add` (add ECS if not present), and
   `override` (always replace ECS with configured value).
 * Support both IPv4 and IPv6 client subnets in CIDR notation.
-* Add comprehensive EDNS Client Subnet documentation with configuration examples and use cases.
+* Add comprehensive [EDNS Client Subnet](edns_client_subnet.md) documentation with configuration examples and use cases.
 
 ### v1.1.8 - 2025.11.07
 

@@ -4,7 +4,7 @@ _Available in secDNS v1.3.0 and later._
 
 * Type: `ecs`
 
-The `ecs` resolver applies an EDNS Client Subnet (ECS) policy to outbound queries before delegating to another resolver. Use it to add, override, strip, or simply pass through ECS while reusing the same downstream cache or recursive resolver.
+The `ecs` resolver applies an EDNS Client Subnet (ECS) policy to outbound queries before delegating to another resolver. Use it to add, override, strip, or simply pass through ECS while reusing the same downstream cache or recursive resolver. See [EDNS Client Subnet](../edns_client_subnet.md) for examples.
 
 ## ResolverConfigObject
 

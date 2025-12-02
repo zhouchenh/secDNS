@@ -4,7 +4,7 @@ _Available in secDNS v1.3.0 and later._
 
 * Type: `recursive`
 
-The `recursive` resolver performs full iterative resolution from the IANA root hints with DNSSEC validation, ECS policy controls (passthrough/add/override/strip), qname minimization, UDP-first with TCP fallback, singleflight deduplication (keyed by question + ECS), and optional SOCKS5/bind-based connectivity. Authoritative NODATA (SOA/no-referral) replies are short-circuited, and DNSSEC gating covers RRSIG times, DS→DNSKEY chains, and NSEC/NSEC3 proof coverage; AD is set only when the chain validates.
+The `recursive` resolver performs full iterative resolution from the IANA root hints with DNSSEC validation, ECS policy controls (passthrough/add/override/strip), qname minimization, UDP-first with TCP fallback, singleflight deduplication (keyed by question + ECS), and optional SOCKS5/bind-based connectivity. Authoritative NODATA (SOA/no-referral) replies are short-circuited, and DNSSEC gating covers RRSIG times, DS→DNSKEY chains, and NSEC/NSEC3 proof coverage; AD is set only when the chain validates. See [EDNS Client Subnet](../edns_client_subnet.md) for ECS usage.
 
 ## ResolverConfigObject
 
