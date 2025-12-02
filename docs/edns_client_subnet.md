@@ -2,6 +2,13 @@
 
 EDNS Client Subnet (ECS, RFC 7871) lets a resolver include a client subnet hint so authoritative servers can return geography-aware answers. secDNS supports ECS on resolvers that take `ecsMode` and `ecsClientSubnet` settings (see `nameServer`, `doh`, `ecs`, `recursive`).
 
+## Supported Resolvers
+
+- `nameServer` – DNS over UDP/TCP/DoT
+- `doh` – DNS-over-HTTPS
+- `recursive` – ECS propagated through glue/referrals/CNAME/DS/DNSKEY
+- `ecs` wrapper – apply ECS policy before delegating (use to vary policy while sharing cache/recursive)
+
 ## ECS Settings
 
 > `ecsMode`: `"passthrough"` | `"add"` | `"override"` | `"strip"` _(Optional)_
@@ -55,8 +62,10 @@ CIDR subnet (IPv4 or IPv6). Required when `ecsMode` is `"add"` or `"override"`; 
 }
 ```
 
-## Tips
+## Tips & Troubleshooting
 
-* Use `ecs` wrapper to vary ECS policy per listener/rule while sharing downstream cache/recursive resolvers.
+* Use the `ecs` wrapper to vary ECS policy per listener or rule while sharing downstream cache/recursive resolvers.
 * ECS-aware caches key entries by ECS scope/prefix; different subnets do not mix.
-* Setting `ecsClientSubnet` to a very broad prefix (e.g., `0.0.0.0/0`) reduces location granularity for privacy.
+* For privacy, use a broader prefix (e.g., `0.0.0.0/0` or `2000::/3`) in `override` mode.
+* Ensure `ecsClientSubnet` is valid CIDR when `ecsMode` is `add`/`override`; invalid subnets are rejected.
+* If ECS is absent in queries, confirm `ecsMode` is not `passthrough`/`strip`.
