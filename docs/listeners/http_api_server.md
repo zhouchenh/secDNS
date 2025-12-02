@@ -150,7 +150,15 @@ Adds raw RR strings in `data`:
 
 ### Simple (`simple=1`)
 
-Returns a flat array of answer values filtered to the queried type. Values use parsed fields when available (A/AAAA → IPs, CNAME/NS → target name, MX → preference/host, TXT → concatenated text, SOA/SRV → formatted string); if a record type has no parsed value, its RR string is used instead:
+Returns a flat array of answer values filtered to the queried type. Values use parsed fields when available:
+
+* A / AAAA: IP address
+* CNAME / NS: target name
+* MX: preference and host
+* TXT: concatenated text
+* SOA / SRV: formatted string
+
+If a record type has no parsed value, its RR string is used instead:
 
 ```json
 [
