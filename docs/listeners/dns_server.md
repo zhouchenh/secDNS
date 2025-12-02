@@ -2,7 +2,7 @@
 
 * Type: `dnsServer`
 
-The `dnsServer` listener listens for DNS queries and sends back answers over classic DNS transports (UDP or TCP). It does **not** terminate DNS-over-TLS (DoT); if you require DoT, use a resolver that speaks DoT upstream while keeping this listener on the LAN edge.
+The `dnsServer` listener listens for DNS queries and sends back answers over classic DNS transports (UDP or TCP).
 
 ## ListenerConfigObject
 
