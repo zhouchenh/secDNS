@@ -10,7 +10,7 @@ metadata:
   go_version: "1.23"
   toolchain: "1.24.7"
   license: AGPLv3
-  branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
+  branch: master
   go_files: 100
   test_files: 28
   doc_files: 26
@@ -110,7 +110,7 @@ documentation:
   notes: Docs are ASCII-only with consistent bullet/heading style; cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching; resolver pages now include config placement notes and inline/named examples; dnsmasqConf rule docs describe config.json placement and duplicate handling.
 
 current_state:
-  repo_status: go test clean; working tree has untracked artifacts (.idea/, binaries, code-inspection-result-20251127/); config-google-doh-cached.json removed.
+  repo_status: go test clean; working tree on master with untracked artifacts (.idea/, binaries, code-inspection-result-20251127/); config-google-doh-cached.json removed; former feature branch deleted.
   binaries: prebuilt secDNS-* artifacts at repo root.
   config_samples: config.json/config-test*.json in root.
   tooling: go.mod uses module github.com/zhouchenh/secDNS; vendored deps present.

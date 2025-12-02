@@ -8,7 +8,7 @@ This is a neutral guide for all coding agents working on secDNS.
 **Language:** Go 1.23+  
 **Version:** 1.3.1  
 **License:** AGPLv3  
-**Current Branch:** `claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg` (stay on this branch unless the user requests otherwise)
+**Current Branch:** `master` (stay on this branch unless the user requests otherwise)
 
 ## Important Context Files
 
