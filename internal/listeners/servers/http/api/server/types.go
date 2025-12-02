@@ -397,7 +397,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: uint16(8080)},
+					descriptor.DefaultValue{Value: uint16(8053)},
 				},
 			},
 			descriptor.ObjectFiller{
