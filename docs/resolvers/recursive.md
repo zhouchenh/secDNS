@@ -134,10 +134,10 @@ Client subnet in CIDR form (IPv4 or IPv6). Required when `ecsMode` is `"add"` or
 
 Default: `""`
 
-## Notes
+## Behavior
 
-* Starts from embedded IANA root hints (A–M) and ranks servers with EWMA RTT, failure backoff, and probe rotation; UDP is used first with TCP fallback on truncation.
-* Validates DNSSEC with the built-in root KSK 20326, checking RRSIG time windows, DS→DNSKEY chains, and NSEC/NSEC3 coverage for NXDOMAIN/NODATA; AD is set only when the full chain validates.
-* Authoritative NODATA answers (SOA/no referral) are returned immediately instead of retrying other nameservers.
-* ECS is propagated through all follow-up lookups (glue, referrals, CNAMEs, DS/DNSKEY). ECS participation in the singleflight key keeps distinct caches per ECS view.
-* Socks/bind choices apply to both UDP and TCP paths; timeouts are applied per exchange (and to SOCKS5 connect timeouts).
+* Bootstraps from embedded IANA root hints (A–M); ranks servers with EWMA RTT and failure backoff; UDP first with TCP fallback on truncation.
+* DNSSEC: enforces RRSIG timing, DS→DNSKEY chains, and NSEC/NSEC3 coverage; AD is set only on a validated chain. Built-in root KSK 20326.
+* NXDOMAIN/NODATA: authoritative SOA NODATA responses are returned immediately instead of retrying other nameservers.
+* ECS: propagated through glue/referrals/CNAME/DS/DNSKEY lookups; included in singleflight keys so each ECS view is isolated.
+* Connectivity: socks/bind settings apply to UDP and TCP; timeouts apply per exchange and to SOCKS5 connect timeouts.
