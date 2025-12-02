@@ -306,7 +306,7 @@ func toSimpleResponse(msg *dns.Msg) []string {
 	if len(msg.Question) > 0 {
 		qtype = msg.Question[0].Qtype
 	}
-	var out []string
+	out := make([]string, 0, len(msg.Answer))
 	for _, rr := range msg.Answer {
 		if qtype != 0 && rr.Header().Rrtype != qtype {
 			continue

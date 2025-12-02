@@ -319,6 +319,15 @@ func TestHandleResolveErrorResponses(t *testing.T) {
 	}
 }
 
+func TestToSimpleResponseEmpty(t *testing.T) {
+	msg := new(dns.Msg)
+	msg.SetQuestion("example.com.", dns.TypeA)
+	out := toSimpleResponse(msg)
+	if out == nil || len(out) != 0 {
+		t.Fatalf("expected empty slice, got %#v", out)
+	}
+}
+
 func httptestRequest(method, body string, query url.Values) *http.Request {
 	urlStr := "http://example" + "/resolve"
 	if query != nil {
