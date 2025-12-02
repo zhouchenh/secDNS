@@ -5,10 +5,12 @@ secDNS is a DNS resolver to help you bypass DNS spoofing (aka DNS cache poisonin
 ## Features
 
 * Support DoT (DNS over TLS), DoH (DNS over HTTPS), and regular DNS (insecurely over TCP / UDP) upstream resolvers.
+* Recursive, DNSSEC-validating resolver with ECS handling for end-to-end validation-aware responses.
 * Support query over SOCKS5 proxy.
 * Support DNS64.
 * Support EDNS Client Subnet (ECS) for geographic load balancing and optimized DNS responses.
 * Support high-performance DNS caching with LRU (Least Recently Used) eviction, TTL management, negative caching, prefetching, TTL jitter, and EDNS cache-control hints.
+* HTTP API listener (`/resolve`) for JSON/HTTP integrations alongside the UDP/TCP DNS listener.
 * Multiple listeners and upstream resolvers can be configured, including the HTTP API listener for REST-style integrations and dashboards.
 * Queries to a group of upstream resolvers can be either queued (failover, trying the next resolver if one fails) or
   concurrent (accepting results from the fastest resolver).
@@ -17,6 +19,11 @@ secDNS is a DNS resolver to help you bypass DNS spoofing (aka DNS cache poisonin
 ## Configuration
 
 See [docs/configuration.md](docs/configuration.md) for the overall JSON schema.
+
+Quick start:
+- Download a released binary from GitHub releases.
+- Run with a config: `./secDNS -config config.json`
+- Validate a config: `./secDNS -test -config config.json`
 
 ## Documentation
 

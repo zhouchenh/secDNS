@@ -11,9 +11,9 @@ metadata:
   toolchain: "1.24.7"
   license: AGPLv3
   branch: claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg
-  go_files: 98
-  test_files: 27
-  doc_files: 27
+  go_files: 100
+  test_files: 28
+  doc_files: 26
 
 project_purpose:
   summary: "DNS resolver/proxy that routes queries through configurable upstream resolvers to avoid censorship and poisoning."
@@ -45,6 +45,7 @@ key_features:
 configuration:
   format: JSON parsed through descriptor system (go-descriptor).
   navigation: README.md → docs/configuration.md → docs/listeners.md / docs/resolvers.md for component details.
+  resolver_references: Fields named `resolver` accept either an inline ResolverObject or a named resolver string (cache, ecs, dns64, defaultResolver, listener downstreams).
   cache_numeric_fields: Accept literal numbers or numeric strings; defaults documented in `docs/resolvers/cache.md`.
     fields: size, cleanupInterval, minTTL, maxTTL, defaultTTL, fallbackTTL, negativeTTL, nxDomainTTL, noDataTTL, prefetchThreshold, prefetchPercent, staleDuration.
     behavior: Negative responses prefer upstream SOA minimum TTL when present; otherwise use configured/default negativeTTL.
@@ -81,6 +82,7 @@ architecture_details:
 recent_work:
   - Added HTTP API listener with GET/POST form+JSON handling and docs (v1.2.1).
   - Expanded cache resolver (prefetch, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; ECS cache keying now uses response scope, falling back to source prefix when scope=0.
+  - Cache resolver docs now clarify `resolver` accepts a named resolver string or inline ResolverObject (same pattern as ecs/dns64).
   - Verified version history and docs crosslinks; README now points to configuration → listeners/resolvers.
   - Added unit tests across resolvers (alias, sequence, dns64, doh, nameserver, filter variants, noAnswer, notExist), cache prefetch, HTTP API, and rule provider descriptors.
   - Converted llm-agent common-issues JSON into numbered Markdown todos for triage.
@@ -114,7 +116,7 @@ known_gaps:
   - Limited integration/e2e tests for full listener→resolver chains and HTTP API flows; recursive resolver lacks on-wire integration coverage.
   - pkg-level interfaces lack unit coverage.
   - code-inspection-result-20251127/ remains as backlog reference; ensure warnings stay resolved when editing.
-  - llm-agent/common-issues/todo/ contains triage notes; move to done/ after fixes.
+  - Operational risk themes (from retired common-issues and reports): concurrency (buffer ownership, ticker leaks, worker pool starvation, async retry storms), memory (alloc pressure, unbounded stats maps/cache growth), DNS protocol correctness (EDNS0 size mismatch, case-insensitive keys, negative caching TTLs, NXDOMAIN vs NODATA), network I/O (FD exhaustion, UDP buffer sizing, address handling, SO_REUSEPORT gaps), error handling/observability (swallowed errors, lack of tracing/health checks), security (open resolver abuse, cache poisoning, AXFR exposure), performance (logging on hot path, reflection in hot paths), resilience (retry storms, non-atomic reloads, no warm-up), and configuration/deployment/testing gaps (time unit parsing, ACLs, pprof exposure, missing fuzz/load/interop/soak tests).
 
 llm_agent_notes:
   - Register new listeners/resolvers/providers in internal/features/features.go.
@@ -122,6 +124,13 @@ llm_agent_notes:
   - Keep docs consistent with existing style and navigation paths.
   - Preserve AGPLv3 headers where applicable; avoid deleting user edits.
   - Default test command: `go test -mod=readonly ./...`.
+  - Quick runbook (using release binaries): `./secDNS -test -config config.json`; `./secDNS -config config.json`.
+  - High-priority fixes (from IMPROVEMENTS_ANALYSIS.md): tighten cache get() locking, include ECS/EDNS0 in cache keys, close files in dnsmasqConf provider, add nil-resolver guard in cache init; later: request coalescing, faster cleanup, configurable default TTLs, stale-while-revalidate/prefetch tuning.
+  - Archived artifacts: `llm-agent/common-issues` and `llm-agent/reports` removed; risk themes and report findings are summarized here.
+  - Root analysis markdowns (architecture, cache guides, improvements, overflow) removed; their key guidance is captured here and in README/docs.
+  - Distilled architecture patterns (from retired analyses): always check/decrement depth, never mutate caller query (copy or restore), copy responses before caching, release locks before slow ops, use sync.Once for init and RWMutex for hot paths, register resolvers via descriptor init(), resolver references may be named or inline, cache keys must incorporate ECS/EDNS as needed.
+  - Caching notes: LRU with TTL overrides, negative caching, optional stale-while-revalidate/prefetch; AccessCount should be uint64 to avoid overflow; consider request coalescing and heap-based cleanup; configurable defaults (min/max/default TTLs, jitter); include cache warming option if added.
+  - Design risks to watch: race in cache get/remove window, missing ECS in cache key, fd leak in dnsmasqConf provider, locking scope in cleanup, popular-domain prefetch jitter to avoid thundering herd, avoid goroutine floods in error handling.
 
 contacts:
   repo: https://github.com/zhouchenh/secDNS (inferred)

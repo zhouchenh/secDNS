@@ -1,19 +1,19 @@
-# Claude Agent Guide for secDNS Project
+# Agent Guide for secDNS
 
-This document serves as a guide for Claude Code (and other LLM agents) working on the secDNS project.
+This is a neutral guide for all coding agents working on secDNS.
 
 ## Quick Start
 
-**Project:** secDNS - DNS resolver proxy for bypassing DNS spoofing
-**Language:** Go 1.23+
-**Version:** 1.1.6
-**License:** AGPLv3
-**Development Branch:** `dev-by-llm-agents`
+**Project:** secDNS - DNS resolver proxy for bypassing DNS spoofing  
+**Language:** Go 1.23+  
+**Version:** 1.3.1  
+**License:** AGPLv3  
+**Current Branch:** `claude/full-project-scan-011CUtLhKHKTYJHozka1zpVg` (stay on this branch unless the user requests otherwise)
 
 ## Important Context Files
 
 - **This file:** High-level guide and instructions
-- **context.yaml:** Complete project knowledge dump, updated after each task
+- **context.yaml:** Primary project knowledge base (kept current)
 
 ## Project Overview
 
@@ -27,27 +27,26 @@ secDNS is a DNS resolver designed to help users bypass DNS spoofing (DNS cache p
 - `internal/config/loader.go:19` - Configuration system
 
 ### Key Components
-1. **Listeners** (1 type): DNS servers that accept incoming queries
-2. **Resolvers** (11 types): Upstream DNS handlers with different protocols
+1. **Listeners** (2): DNS server (UDP/TCP) and HTTP API `/resolve`
+2. **Resolvers** (15): Protocol handlers, caching, filtering, ECS wrapper, DNS64, recursive, composition
 3. **Rules** (2 providers): Domain-based routing logic
 
 ### Resolver Types
-- `nameServer` - Traditional DNS/DoT
-- `doh` - DNS over HTTPS
-- `address` - Static IP responses
-- `alias` - CNAME responses
-- `sequence` - Failover resolver
-- `concurrentNameServerList` - Fastest-wins resolver
-- `dns64` - IPv6 synthesis
-- `filterOutA` / `filterOutAAAA` - Record filtering
-- `noAnswer` / `notExist` - Special responses
+- `nameServer` / `doh`
+- `address`, `alias`
+- `sequence`, `concurrentNameServerList`
+- `dns64`
+- `ecs` (ECS add/override/passthrough/strip wrapper)
+- `filterOutA`, `filterOutAAAA`, `filterOutAIfAAAAPresents`, `filterOutAAAAIfAPresents`
+- `noAnswer`, `notExist`
+- `cache` (LRU + TTL overrides, stale-while-revalidate, prefetch, per-domain stats)
+- `recursive` (DNSSEC-validating, ECS-aware)
 
 ## Development Guidelines
 
 ### Branch Strategy
-- **All LLM changes:** Use `dev-by-llm-agents` branch
-- **Never push to:** main/master branches without explicit permission
-- **Create PRs to:** main branch (as specified by user)
+- Stay on the current branch unless the user directs otherwise.
+- Never force-push or reset user work; avoid main/master unless requested.
 
 ### Before Starting Work
 1. Read `context.yaml` for current project state
@@ -74,19 +73,15 @@ secDNS is a DNS resolver designed to help users bypass DNS spoofing (DNS cache p
 
 ## Testing
 
-**Current State:** No unit tests exist in the project.
+**Recommended Checks:**
+```bash
+go build -o bin/secDNS main.go
+go test -mod=readonly ./...
+```
 
 **Manual Testing:**
-```bash
-# Build the project
-go build -o bin/secDNS main.go
-
-# Test configuration
-./bin/secDNS -test -config config.json
-
-# Run with custom config
-./bin/secDNS -config config.json
-```
+- `./bin/secDNS -test -config config.json`
+- `./bin/secDNS -config config.json`
 
 **If Adding Tests:**
 - Place in same directory as code with `_test.go` suffix
@@ -121,26 +116,26 @@ go build -o bin/secDNS main.go
 ## File Organization
 
 ```
-secDNS/
-├── main.go                           # Entry point
-├── config.json                       # Example configuration
-├── docs/                             # Documentation (22 files)
-├── llm-agent/                        # LLM agent context (YOU ARE HERE)
-│   ├── README.md                     # This guide
-│   └── context.yaml                  # Knowledge dump
-├── pkg/                              # Public interfaces
-│   ├── common/
-│   ├── listeners/server/
-│   ├── rules/provider/
-│   └── upstream/resolver/
-└── internal/                         # Implementation
-    ├── core/                         # DNS orchestration
-    ├── config/                       # Configuration loading
-    ├── features/                     # Module registration
-    ├── logger/                       # Logging system
-    ├── listeners/servers/            # Listener implementations
-    ├── upstream/resolvers/           # Resolver implementations
-    └── rules/providers/              # Rule provider implementations
+ secDNS/
+ ├── main.go                           # Entry point
+ ├── config.json                       # Example configuration
+ ├── docs/                             # Documentation (26 files)
+ ├── llm-agent/                        # Agent context (you are here)
+ │   ├── README.md                     # This guide
+ │   └── context.yaml                  # Knowledge base and runbook
+ ├── pkg/                              # Public interfaces
+ │   ├── common/
+ │   ├── listeners/server/
+ │   ├── rules/provider/
+ │   └── upstream/resolver/
+ └── internal/                         # Implementation
+     ├── core/                         # DNS orchestration
+     ├── config/                       # Configuration loading
+     ├── features/                     # Module registration
+     ├── logger/                       # Logging system
+     ├── listeners/servers/            # Listener implementations
+     ├── upstream/resolvers/           # Resolver implementations
+     └── rules/providers/              # Rule provider implementations
 ```
 
 ## Dependencies

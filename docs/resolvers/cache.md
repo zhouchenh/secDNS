@@ -31,9 +31,9 @@ The `cache` resolver provides high-performance DNS response caching with LRU (Le
 }
 ```
 
-> `resolver`: [ResolverObject](../configuration.md#resolverobject)
+> `resolver`: String | [ResolverObject](../configuration.md#resolverobject)
 
-The upstream resolver to query when there is a cache miss. This is required and can be any resolver type (nameServer, doh, sequence, etc.).
+The upstream resolver to query on cache miss. Accepts either the name of a resolver defined in the top-level `resolvers` map (e.g., `"edgeCache"`) or an inline [ResolverObject](../configuration.md#resolverobject). Any resolver type (nameServer, doh, sequence, etc.) is valid here.
 
 > `maxEntries`: Number | String _(Optional)_
 
