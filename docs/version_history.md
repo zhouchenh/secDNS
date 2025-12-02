@@ -20,11 +20,11 @@ New Features
 New Features
 
 * Add [httpAPIServer](listeners/http_api_server.md), an HTTP listener that exposes DNS resolution via `/resolve` endpoints accepting GET/POST (form or JSON) requests and responding with structured JSON payloads.
-* Extend [cache](resolvers/cache.md) resolver with TTL jitter, per-domain statistics, warmup queries, EDNS cache-control hints, and configurable prefetch/stale-serving controls.
+* Extend [cache](resolvers/cache.md) resolver with TTL jitter, per-domain statistics, EDNS cache-control hints, and configurable prefetch/stale-serving controls.
 
 Enhancements
 
-* Added descriptor options for cache warmup/prefetch, documented new usage patterns, and exposed per-domain stats APIs.
+* Added descriptor options for cache prefetch, documented new usage patterns, and exposed per-domain stats APIs.
 
 ### v1.2.0 - 2025.11.08
 

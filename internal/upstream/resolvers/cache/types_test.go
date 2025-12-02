@@ -427,47 +427,6 @@ func TestCacheConcurrency(t *testing.T) {
 	}
 }
 
-func TestCacheWarmupQueries(t *testing.T) {
-	response := new(dns.Msg)
-	response.SetQuestion("warm.example.com.", dns.TypeA)
-	response.Answer = []dns.RR{
-		&dns.A{
-			Hdr: dns.RR_Header{
-				Name:   "warm.example.com.",
-				Rrtype: dns.TypeA,
-				Class:  dns.ClassINET,
-				Ttl:    300,
-			},
-			A: []byte{93, 184, 216, 34},
-		},
-	}
-
-	mock := &mockResolver{response: response}
-	cache := newTestCache(mock)
-	cache.WarmupQueries = []WarmupQuery{
-		{Name: "warm.example.com.", Type: dns.TypeA, Class: dns.ClassINET},
-		{Name: "cdn.example.com.", Type: dns.TypeA, Class: dns.ClassINET},
-	}
-
-	query := new(dns.Msg)
-	query.SetQuestion("trigger.example.", dns.TypeA)
-
-	if _, err := cache.Resolve(query, 10); err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	defer cache.Stop()
-
-	wantCalls := 1 + len(cache.WarmupQueries)
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if mock.calls >= wantCalls {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("expected at least %d upstream calls, observed %d", wantCalls, mock.calls)
-}
-
 func TestCacheMinMaxTTL(t *testing.T) {
 	response := new(dns.Msg)
 	response.SetQuestion("example.com.", dns.TypeA)

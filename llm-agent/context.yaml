@@ -30,7 +30,7 @@ key_features:
   resolvers:
     - nameServer: Plain/DoT TCP/UDP resolver with SOCKS5, TLS verification, EDNS0/TCP fallback.
     - doh: DNS-over-HTTPS with URL resolution helper, SOCKS5, ECS, and timeout controls.
-    - cache: High-performance cache with LRU, TTL overrides/jitter, negative caching, stale-while-revalidate, prefetch, warmup queries, EDNS cache-control hints, per-domain stats.
+    - cache: High-performance cache with LRU, TTL overrides/jitter, negative caching, stale-while-revalidate, prefetch, EDNS cache-control hints, per-domain stats.
     - recursive: Recursive resolver with root-hint bootstrap (defaults to embedded hints if omitted), adaptive root ranking, singleflight, referral/glue handling, DS→DNSKEY chain validation, NSEC/NSEC3 coverage, AD gating, SOCKS5/bind-address support, and ECS passthrough/add/override/strip with end-to-end propagation (root, referrals/glue, CNAME, DS/DNSKEY). Falls back to TCP when UDP exchange fails.
     - ecs: Wrapper resolver to apply ECS policy (passthrough/add/override/strip) before delegating, so cache/recursive can be shared across ECS variants. (v1.3.0+)
     - dns64: AAAA synthesis with IPv6 prefix config; optional ignoreExistingAAAA flag.
@@ -46,7 +46,7 @@ configuration:
   format: JSON parsed through descriptor system (go-descriptor).
   navigation: README.md → docs/configuration.md → docs/listeners.md / docs/resolvers.md for component details.
   cache_numeric_fields: Accept literal numbers or numeric strings; defaults documented in `docs/resolvers/cache.md`.
-    fields: size, cleanupInterval, minTTL, maxTTL, defaultTTL, fallbackTTL, negativeTTL, nxDomainTTL, noDataTTL, prefetchThreshold, prefetchPercent, staleDuration, warmupRefreshInterval, warmupTimeout.
+    fields: size, cleanupInterval, minTTL, maxTTL, defaultTTL, fallbackTTL, negativeTTL, nxDomainTTL, noDataTTL, prefetchThreshold, prefetchPercent, staleDuration.
     behavior: Negative responses prefer upstream SOA minimum TTL when present; otherwise use configured/default negativeTTL.
   boolean_string_fields: cache `serveStale`/`cacheControlEnabled` and dns64 `ignoreExistingAAAA` accept booleans or "true"/"false".
   required: At least one listener and one resolver; `defaultResolver` required.
@@ -80,9 +80,9 @@ architecture_details:
 
 recent_work:
   - Added HTTP API listener with GET/POST form+JSON handling and docs (v1.2.1).
-  - Expanded cache resolver (prefetch, warmup, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; ECS cache keying now uses response scope, falling back to source prefix when scope=0.
+  - Expanded cache resolver (prefetch, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; ECS cache keying now uses response scope, falling back to source prefix when scope=0.
   - Verified version history and docs crosslinks; README now points to configuration → listeners/resolvers.
-  - Added unit tests across resolvers (alias, sequence, dns64, doh, nameserver, filter variants, noAnswer, notExist), cache warmup/prefetch, HTTP API, and rule provider descriptors.
+  - Added unit tests across resolvers (alias, sequence, dns64, doh, nameserver, filter variants, noAnswer, notExist), cache prefetch, HTTP API, and rule provider descriptors.
   - Converted llm-agent common-issues JSON into numbered Markdown todos for triage.
   - Recursive resolver hardened: adds DS→DNSKEY chain validation to root anchors, NSEC/NSEC3 coverage for NXDOMAIN/NODATA, AD gating with strict/permissive policies, SOCKS5/bind-address support, ECS propagation with add/override/strip, and unit tests with signed fixtures. Defaults to embedded root hints when `rootServers` omitted; falls back to TCP on UDP errors.
   - DNSSEC validation now enforces RRSIG timing, verifies DS/DNSKEY chains, and checks NSEC/NSEC3 coverage (strict vs permissive). Default remains permissive; strict fails on validation errors.

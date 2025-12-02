@@ -27,10 +27,6 @@ The `cache` resolver provides high-performance DNS response caching with LRU (Le
   "prefetchPercent": 0.85,
   "ttlJitterPercent": 0.05,
   "cleanupInterval": 60,
-  "warmupQueries": [
-    {"name": "google.com.", "type": 1},
-    {"name": "cloudflare.com.", "type": 28}
-  ],
   "cacheControlEnabled": true
 }
 ```
@@ -173,18 +169,6 @@ Acceptable formats:
 
 Default: `0.9`
 
-> `warmupQueries`: \[ WarmupQueryObject \] _(Optional)_
-
-List of queries to run once the cache starts, priming frequently used domains.
-
-```json
-{"name": "example.com.", "type": 1, "class": 1}
-```
-
-* `name`: FQDN to query (required)
-* `type`: DNS RR type (default A)
-* `class`: DNS class (default IN)
-
 > `cacheControlEnabled`: Boolean _(Optional)_
 
 Enable support for EDNS0 local options that instruct the cache to skip caching (`nocache`), skip prefetch (`noprefetch`), disable stale serving (`nostale`), or override TTL values (`ttl=NNN`).
@@ -313,16 +297,9 @@ Preload the cache during startup to avoid cold-start misses for critical domains
 ```json
 {
   "type": "cache",
-  "resolver": { "type": "nameServer", "address": "9.9.9.9" },
-  "warmupQueries": [
-    {"name": "google.com.", "type": 1},
-    {"name": "cloudflare.com.", "type": 28},
-    {"name": "github.com.", "type": 1}
-  ]
+  "resolver": { "type": "nameServer", "address": "9.9.9.9" }
 }
 ```
-
-Warmup queries run once when the cache initializes so the most common domains are already cached by the time listeners start serving requests.
 
 ## Performance Characteristics
 
@@ -354,10 +331,6 @@ Warmup queries run once when the cache initializes so the most common domains ar
 - Response IDs are always matched to the incoming query ID
 - Compatible with `concurrentNameServerList` via the NameServerResolver interface
 In addition to global stats, the resolver now tracks per-domain counters (hits, misses, stale-served counts, and prefetch counts). Call `DomainStatsFor(name)` or `AllDomainStats()` to inspect them and tune `prefetchThreshold`.
-
-### Warmup Queries
-
-Use `warmupQueries` to issue a small set of lookups on startup. This warms the cache before the listener starts accepting traffic, removing cold-start penalties for known-hot domains.
 
 ### Stale-While-Revalidate
 

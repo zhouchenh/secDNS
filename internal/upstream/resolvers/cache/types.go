@@ -35,7 +35,6 @@ type Cache struct {
 	TTLJitterPercent    float64           // Randomize expirations to avoid thundering herd
 	PrefetchThreshold   uint64            // Access count threshold for background refresh
 	PrefetchPercent     float64           // Fraction of TTL elapsed before prefetching
-	WarmupQueries       []WarmupQuery     // Optional warmup queries to load on start
 	CacheControlEnabled bool              // Honor cache-control hints from upstream
 
 	// Cache state (protected by mutex)
@@ -88,13 +87,6 @@ type DomainStats struct {
 	Misses      uint64
 	Prefetches  uint64
 	StaleServed uint64
-}
-
-// WarmupQuery describes a query to prime during startup.
-type WarmupQuery struct {
-	Name  string
-	Type  uint16
-	Class uint16
 }
 
 var typeOfCache = descriptor.TypeOfNew(new(*Cache))
@@ -685,7 +677,6 @@ func (c *Cache) init() {
 
 	// Start background cleanup goroutine
 	c.startCleanup()
-	c.startWarmup()
 }
 
 // startCleanup starts a background goroutine that periodically removes expired entries.
@@ -704,23 +695,6 @@ func (c *Cache) startCleanup() {
 			case <-c.stopCleanup:
 				return
 			}
-		}
-	}()
-}
-
-func (c *Cache) startWarmup() {
-	if len(c.WarmupQueries) == 0 {
-		return
-	}
-	go func() {
-		for _, q := range c.WarmupQueries {
-			msg := new(dns.Msg)
-			name := common.EnsureFQDN(q.Name)
-			msg.SetQuestion(name, q.Type)
-			if q.Class != 0 {
-				msg.Question[0].Qclass = q.Class
-			}
-			_, _ = c.Resolve(msg, 64)
 		}
 	}()
 }
@@ -1416,50 +1390,6 @@ func init() {
 							},
 						},
 					},
-				},
-			},
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"WarmupQueries"},
-				ValueSource: descriptor.ValueSources{
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"warmupQueries"},
-						AssignableKind: descriptor.AssignmentFunction(func(i interface{}) (object interface{}, ok bool) {
-							raw, ok := i.([]interface{})
-							if !ok {
-								return nil, false
-							}
-							queries := make([]WarmupQuery, 0, len(raw))
-							for _, elem := range raw {
-								entry, ok := elem.(map[string]interface{})
-								if !ok {
-									continue
-								}
-								name, _ := entry["name"].(string)
-								if name == "" {
-									continue
-								}
-								var qType uint16 = dns.TypeA
-								if v, ok := entry["type"].(float64); ok {
-									qType = uint16(v)
-								} else if v, ok := entry["type"].(string); ok {
-									if parsed, err := strconv.Atoi(v); err == nil {
-										qType = uint16(parsed)
-									}
-								}
-								var qClass uint16 = dns.ClassINET
-								if v, ok := entry["class"].(float64); ok {
-									qClass = uint16(v)
-								} else if v, ok := entry["class"].(string); ok {
-									if parsed, err := strconv.Atoi(v); err == nil {
-										qClass = uint16(parsed)
-									}
-								}
-								queries = append(queries, WarmupQuery{Name: name, Type: qType, Class: qClass})
-							}
-							return queries, true
-						}),
-					},
-					descriptor.DefaultValue{Value: []WarmupQuery{}},
 				},
 			},
 			descriptor.ObjectFiller{

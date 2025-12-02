@@ -160,12 +160,7 @@ The following snippet wires the HTTP API listener to a cache resolver that prefe
         "prefetchThreshold": 15,
         "prefetchPercent": 0.9,
         "serveStale": true,
-        "staleDuration": 45,
-        "warmupQueries": [
-          {"name": "example.com.", "type": 1},
-          {"name": "cloudflare.com.", "type": 28},
-          {"name": "cdn.example.net.", "type": 1}
-        ]
+        "staleDuration": 45
       }
     }
   },
@@ -173,6 +168,5 @@ The following snippet wires the HTTP API listener to a cache resolver that prefe
 }
 ```
 
-* `warmupQueries` primes the resolver with known-hot domains on start.
 * `prefetchThreshold`/`prefetchPercent` refresh popular entries before they expire.
 * The HTTP API exposes the cached answers via `/resolve` so monitoring systems can hit a single endpoint.
