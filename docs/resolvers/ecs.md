@@ -37,10 +37,3 @@ How ECS is handled on the outbound query. Defaults to `"passthrough"`.
 > `ecsClientSubnet`: String _(Optional)_
 
 Client subnet in CIDR notation (IPv4 or IPv6), required when `ecsMode` is `"add"` or `"override"`; ignored for `"passthrough"` and `"strip"`.
-
-## Notes
-
-* ECS is applied on a copy of the query; the original client message is not mutated.
-* Invalid `ecsMode` values or malformed subnets cause resolver initialization to fail.
-* Pair `ecs` with `cache` or `recursive` to share a single cache while varying ECS policy per listener or rule.
-* Downstream resolvers that understand ECS (such as `recursive`) propagate the adjusted ECS through their internal follow-up lookups.
