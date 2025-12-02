@@ -18,13 +18,13 @@ The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS questions
 
 > `listen`: String _(Optional)_
 
-IP address to bind.
+The IP address to be listened on. Set to `"0.0.0.0"` (or the IPv6 equivalent) to listen on all interfaces; otherwise provide an address that exists on the host.
 
 Default: `127.0.0.1`
 
 > `port`: Number | String _(Optional)_
 
-HTTP port to listen on. Accepts a number or numeric string.
+The port that the listener will bind to. Accepts either a number or a numeric string (e.g., `"8080"`).
 
 Default: `8080`
 
