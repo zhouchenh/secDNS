@@ -1,43 +1,62 @@
 # httpAPIServer
 
-_Available in secDNS v1.2.1 and later._  
-Raw/simple response options are available in secDNS v1.3.1+.
-
 * Type: `httpAPIServer`
 
-The `httpAPIServer` listener exposes an HTTP endpoint (GET/POST) to resolve DNS names and return JSON.
+_Available in secDNS v1.2.1 and later. Raw/simple response options are available in secDNS v1.3.1+._
 
-## Config
+The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS questions over HTTP(S) (GET or POST, form or JSON) and returns answers encoded as JSON.
+
+## ListenerConfigObject
 
 ```json
 {
-  "type": "httpAPIServer",
-  "config": {
-    "listen": "127.0.0.1",
-    "port": 8080,
-    "path": "/resolve"
-  }
+  "listen": "127.0.0.1",
+  "port": 8080,
+  "path": "/resolve"
 }
 ```
 
-* `listen`: IP to bind. Default: `127.0.0.1`.
-* `port`: HTTP port. Default: `8080`.
-* `path`: Endpoint path. Default: `/resolve` (leading slash added if omitted).
+> `listen`: String _(Optional)_
+
+IP address to bind. Default: `127.0.0.1`.
+
+> `port`: Number | String _(Optional)_
+
+HTTP port to listen on. Accepts a number or numeric string. Default: `8080`.
+
+> `path`: String _(Optional)_
+
+Endpoint path. A leading slash is added if omitted. Default: `/resolve`.
 
 ## Request Parameters
 
 Accepted via query string, form body, or JSON (`Content-Type: application/json`):
 
-* `name` (required) – Domain to resolve.
-* `type` (optional) – RR type, default `A` (mnemonics or numeric).
-* `class` (optional) – RR class, default `IN`.
-* `ecs` / `edns_client_subnet` (optional) – CIDR to send as ECS (e.g., `203.0.113.7/32`, `2001:db8::/48`).
-* `raw` (secDNS v1.3.1+) (optional) – Include raw RR strings in `data`. Default: false.
-* `simple` (secDNS v1.3.1+) (optional) – Return a flat JSON array of answer values; A/AAAA as IPs, others fall back to RR strings. Default: false.
+> `name`: String _(Required)_
 
-Boolean parsing for `raw` and `simple`: accepts `true`/`1`/`yes` (case-insensitive) as true; any other value is treated as false.
+Domain name to resolve.
 
-### Examples
+> `type`: String | Number _(Optional)_
+
+RR type (mnemonic such as `A`, `AAAA`, `MX`, or numeric). Default: `A`.
+
+> `class`: String | Number _(Optional)_
+
+RR class (mnemonic or numeric). Default: `IN`.
+
+> `ecs` | `edns_client_subnet`: String _(Optional)_
+
+CIDR to send as EDNS Client Subnet, e.g., `203.0.113.7/32` or `2001:db8::/48`.
+
+> `raw`: Boolean _(Optional, secDNS v1.3.1+)_
+
+When true, include raw RR strings in the `data` field. Booleans parse `true`/`1`/`yes`/`on` (case-insensitive) as true; anything else is false. Default: false.
+
+> `simple`: Boolean _(Optional, secDNS v1.3.1+)_
+
+When true, return a flat JSON array of answer values only. Parsed the same way as `raw`. Default: false.
+
+### Request Examples
 
 **GET**
 ```
@@ -69,6 +88,7 @@ Content-Type: application/json
 ## Response Formats
 
 ### Standard (default)
+
 ```json
 {
   "id": 12345,
@@ -84,10 +104,12 @@ Content-Type: application/json
 }
 ```
 
-* `value` is a parsed field (e.g., IP for A/AAAA, target for CNAME/NS, preference/host for MX).
+`value` is parsed when possible (e.g., IP for A/AAAA, target for CNAME/NS, preference/host for MX). When `raw` is false and a record has no parsed value, the raw RR string is supplied in `data` for that record.
 
 ### Raw (`raw=1`)
-Same as standard but includes raw RR strings in `data`:
+
+Adds raw RR strings in `data`:
+
 ```json
 {
   "id": 12345,
@@ -111,17 +133,19 @@ Same as standard but includes raw RR strings in `data`:
 ```
 
 ### Simple (`simple=1`)
-Flat JSON array of the answer values:
+
+Returns a flat array of answer values filtered to the queried type (A/AAAA as IPs, others fall back to RR strings):
+
 ```json
 [
   "2001:db8::1234"
 ]
 ```
-For non-A/AAAA answers, entries fall back to RR strings.
 
 ### Errors
 
-Errors return an HTTP status (e.g., 400/502) with a JSON payload:
+Errors return an HTTP status (e.g., 400/502) and a JSON body:
+
 ```json
 {"error": "listeners/http: missing name parameter"}
 ```
