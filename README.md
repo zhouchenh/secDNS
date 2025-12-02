@@ -41,7 +41,3 @@ See [docs/version_history.md](docs/version_history.md).
 This project relies on the following third-party project:
 
 * [miekg/dns](https://github.com/miekg/dns)
-
-Documentation loosely ~~copied~~ referenced from:
-
-* [v2ray/v2ray-core](https://github.com/v2ray/v2ray-core)
