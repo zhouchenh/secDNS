@@ -2,7 +2,7 @@
 
 * Type: `httpAPIServer`
 
-_Available in secDNS v1.2.1 and later. Raw/simple response options are available in secDNS v1.3.1+._
+_Available in secDNS v1.2.1 and later._
 
 The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS questions over HTTP(S) (GET or POST, form or JSON) and returns answers encoded as JSON.
 
