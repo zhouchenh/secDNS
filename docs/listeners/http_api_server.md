@@ -16,17 +16,19 @@ The `httpAPIServer` listener exposes an HTTP endpoint that accepts DNS questions
 }
 ```
 
-> `listen`: String _(Optional)_
+> `listen`: String
 
-The IP address to be listened on. Set to `"0.0.0.0"` (or the IPv6 equivalent) to listen on all interfaces; otherwise provide an address that exists on the host.
-
-Default: `127.0.0.1`
+The IP address to be listened on. Set to "0.0.0.0" to listen for incoming connections on all network interfaces.
+Otherwise, the value has to be an IP address from existing network interfaces.
 
 > `port`: Number | String _(Optional)_
 
-The port that the listener will bind to. Accepts either a number or a numeric string (e.g., `"8080"`).
+The port that the listener is listening on. Acceptable formats are:
 
-Default: `8080`
+* Number: The actual port number.
+* String: A numeric string value, such as `"1234"`.
+
+Default: `8053`
 
 > `path`: String _(Optional)_
 
@@ -161,5 +163,5 @@ Returns a flat array of answer values filtered to the queried type (A/AAAA as IP
 Errors return an HTTP status (e.g., 400/502) and a JSON body:
 
 ```json
-{"error": "listeners/http: missing name parameter"}
+{"error": "listeners/servers/http/api/server: missing name parameter"}
 ```
