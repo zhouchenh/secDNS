@@ -291,25 +291,11 @@ This configuration refreshes any entry that has been hit 15+ times once 90% of i
 - **Memory Usage**: ~500-1000 bytes per cached entry (varies by response size)
 - **Concurrency**: Optimized for high read concurrency with minimal lock contention
 
-## Best Practices
-
-1. **Set Appropriate maxEntries**: Calculate based on expected query diversity and available memory. Each entry uses ~500-1000 bytes.
-
-2. **Use minTTL Carefully**: Setting minTTL too high may cache stale data. Good range: 30-300 seconds.
-
-3. **Set Reasonable maxTTL**: Prevents caching responses too long. Good range: 3600-86400 seconds (1-24 hours).
-
-4. **Monitor Statistics**: Track hit rate to ensure cache is effective. >70% hit rate is ideal.
-
-5. **Combine with Other Resolvers**: Cache works well wrapping sequence, dns64, or filter resolvers.
-6. **Monitor Per-Domain Stats**: Identify domains with low hit rates and adjust `prefetchThreshold`/`prefetchPercent`.
-7. **Use Cache-Control Hints**: Allow upstream resolvers to mark responses as non-cacheable or skip prefetch/stale.
-
-### Stale-While-Revalidate
+## Stale-While-Revalidate
 
 When `serveStale` is enabled the cache can return an expired response while it refreshes in the background, smoothing latency spikes when popular entries expire together.
 
-### Cache-Control Hints
+## Cache-Control Hints
 
 When `cacheControlEnabled` is `true` upstream resolvers can send EDNS0 local options to influence caching:
 
@@ -317,3 +303,12 @@ When `cacheControlEnabled` is `true` upstream resolvers can send EDNS0 local opt
 * `noprefetch` – skip prefetch logic for this entry
 * `nostale` – do not serve stale copies of this entry
 * `ttl=<seconds>` – clamp the TTL to a specific value
+
+## Best Practices
+
+1. **Set Appropriate maxEntries**: Calculate based on expected query diversity and available memory. Each entry uses ~500-1000 bytes.
+2. **Use minTTL Carefully**: Setting minTTL too high may cache stale data. Good range: 30-300 seconds.
+3. **Set Reasonable maxTTL**: Prevents caching responses too long. Good range: 3600-86400 seconds (1-24 hours).
+4. **Monitor Statistics**: Track hit rate to ensure cache is effective. >70% hit rate is ideal.
+5. **Combine with Other Resolvers**: Cache works well wrapping sequence, dns64, or filter resolvers.
+6. **Monitor Per-Domain Stats**: Identify domains with low hit rates and adjust `prefetchThreshold`/`prefetchPercent`.
