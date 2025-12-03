@@ -53,8 +53,6 @@ func (i *instance) AcceptProvider(rulesProvider provider.Provider, errorHandler 
 		i.mapMutex.Lock()
 		if _, hasKey := i.nameResolverMap[name]; !hasKey {
 			i.nameResolverMap[name] = r
-		} else if errorHandler != nil {
-			errorHandler(DuplicateRuleWarning(name))
 		}
 		i.mapMutex.Unlock()
 	}, func(err error) {

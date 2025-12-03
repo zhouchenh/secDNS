@@ -7,7 +7,7 @@ The `dnsmasqConf` rule reads domain names from a dnsmasq configuration (`.conf`)
 A valid dnsmasq configuration should contain lines of configuration like `server=/www.example.com/x.x.x.x`. Only the
 domain names will be accepted and take effect - other directives are ignored. Invalid or malformed domains are skipped and reported through the rule provider's error handler.
 
-> **Note:** If the same domain appears multiple times in a dnsmasq file (or across multiple rules), only the first mapping takes effect. Subsequent duplicates trigger a `DuplicateRuleWarning` so configuration mistakes can be detected quickly.
+> **Note:** If the same domain appears multiple times in a dnsmasq file (or across multiple rules), only the first mapping takes effect. Subsequent duplicates are ignored.
 
 ## RuleConfigObject
 

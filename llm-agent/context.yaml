@@ -38,7 +38,7 @@ key_features:
     - response generators: address, alias, noAnswer, notExist.
     - filters: filterOutA, filterOutAAAA, filterOutAIfAAAAPresents, filterOutAAAAIfAPresents.
   rules:
-    - dnsmasqConf provider (dnsmasq-format routing files, closes files, warns on duplicates).
+    - dnsmasqConf provider (dnsmasq-format routing files, closes files, ignores duplicates after the first match).
     - collection provider (JSON name→resolver pairs).
   architecture: Descriptor-based plugin system; features auto-register via `internal/features`.
 

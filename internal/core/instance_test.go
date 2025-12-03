@@ -1,7 +1,6 @@
 package core
 
 import (
-	"errors"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
@@ -33,25 +32,40 @@ func (s *stubProvider) Provide(receive func(name string, r resolver.Resolver), _
 	return s.idx < len(s.names)
 }
 
-func TestAcceptProviderDuplicateWarning(t *testing.T) {
+func TestAcceptProviderDeduplicatesSilently(t *testing.T) {
 	inst := &instance{}
 	inst.initInstance()
-	res := stubResolver{}
-	prov := &stubProvider{
-		names: []string{"example.com.", "example.com."},
-		res:   res,
+	first := stubResolver{}
+	second := stubResolver{}
+
+	firstProvider := &stubProvider{
+		names: []string{"example.com."},
+		res:   first,
+	}
+	secondProvider := &stubProvider{
+		names: []string{"example.com."},
+		res:   second,
 	}
 
-	var warnings []error
-	inst.AcceptProvider(prov, func(err error) {
-		warnings = append(warnings, err)
+	var receivedErrors []error
+	inst.AcceptProvider(firstProvider, func(err error) {
+		receivedErrors = append(receivedErrors, err)
+	})
+	inst.AcceptProvider(secondProvider, func(err error) {
+		receivedErrors = append(receivedErrors, err)
 	})
 
-	if len(warnings) != 1 {
-		t.Fatalf("expected 1 duplicate warning, got %d", len(warnings))
+	if len(receivedErrors) != 0 {
+		t.Fatalf("expected no duplicate warnings, got %d", len(receivedErrors))
 	}
-	var dup DuplicateRuleWarning
-	if !errors.As(warnings[0], &dup) {
-		t.Fatalf("expected DuplicateRuleWarning, got %v", warnings[0])
+
+	inst.mapMutex.RLock()
+	defer inst.mapMutex.RUnlock()
+
+	if got := len(inst.nameResolverMap); got != 1 {
+		t.Fatalf("expected 1 resolver in map, got %d", got)
+	}
+	if got := inst.nameResolverMap["example.com."]; got != first {
+		t.Fatalf("expected first resolver to be kept, got %#v", got)
 	}
 }
