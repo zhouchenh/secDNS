@@ -140,7 +140,7 @@ Default: `""`
 
 ECS handling for outbound queries. `"strip"` removes ECS; `"add"` inserts `ecsClientSubnet` when absent; `"override"` replaces any ECS with `ecsClientSubnet`.
 
-Default: `"passthrough"`
+Default: `""` (treated as `"passthrough"`)
 
 > `ecsClientSubnet`: String _(Optional)_
 
