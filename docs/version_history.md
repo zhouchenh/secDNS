@@ -1,5 +1,14 @@
 # Version History
 
+# Version History
+
+## v1.3.4 - 2025.12.03
+
+Changes
+
+* Added regression tests to ensure ECS defaults are treated as strings for DoH, nameServer, recursive, and ecs resolvers.
+* Config loader now includes the list of registered resolver names when a named resolver lookup fails, making misconfigurations easier to diagnose.
+
 ## v1.3.2 - 2025.12.03
 
 Changes

@@ -122,6 +122,7 @@ known_gaps:
   - pkg-level interfaces lack unit coverage.
   - code-inspection-result-20251127/ remains as backlog reference; ensure warnings stay resolved when editing.
   - Operational risk themes (from retired common-issues and reports): concurrency (buffer ownership, ticker leaks, worker pool starvation, async retry storms), memory (alloc pressure, unbounded stats maps/cache growth), DNS protocol correctness (EDNS0 size mismatch, case-insensitive keys, negative caching TTLs, NXDOMAIN vs NODATA), network I/O (FD exhaustion, UDP buffer sizing, address handling, SO_REUSEPORT gaps), error handling/observability (swallowed errors, lack of tracing/health checks), security (open resolver abuse, cache poisoning, AXFR exposure), performance (logging on hot path, reflection in hot paths), resilience (retry storms, non-atomic reloads, no warm-up), and configuration/deployment/testing gaps (time unit parsing, ACLs, pprof exposure, missing fuzz/load/interop/soak tests).
+  - Descriptor validation currently falls back to defaults silently when a value is present but invalid; add warnings/logging when a filler rejects an invalid value and the next source is used.
 
 llm_agent_notes:
   - Register new listeners/resolvers/providers in internal/features/features.go.
