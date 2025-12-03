@@ -29,7 +29,7 @@ type NameServer struct {
 	EcsClientSubnet   string
 	ecsConfig         *ecs.Config
 	queryClient       *client
-	tcpFallbackClient *client   // Cached TCP client for UDP→TCP fallback
+	tcpFallbackClient *client // Cached TCP client for UDP→TCP fallback
 	initOnce          sync.Once
 	tcpFallbackOnce   sync.Once // Thread-safe TCP fallback client initialization
 }
@@ -140,7 +140,7 @@ func (ns *NameServer) createClientForProtocol(protocol string) *client {
 		dialFunc:     nil,
 		socks5Client: nil,
 		Client: &dns.Client{
-			Net: protocol,
+			Net:     protocol,
 			UDPSize: 4096, // Enable EDNS0 for larger UDP responses
 			TLSConfig: &tls.Config{
 				ServerName: ns.TlsServerName,
@@ -401,7 +401,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: ecs.ModePassthrough},
+					descriptor.DefaultValue{Value: string(ecs.ModePassthrough)},
 				},
 			},
 			descriptor.ObjectFiller{
