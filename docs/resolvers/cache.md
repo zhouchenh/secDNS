@@ -160,7 +160,7 @@ Minimum access count before the cache prefetches an entry in the background. Set
 
 Acceptable formats:
 * Number: e.g., `20`
-* String: `"20"`
+* String: `"10"`
 
 Default: `10`
 
@@ -169,8 +169,8 @@ Default: `10`
 Fraction of the TTL that must elapse before prefetching begins. Example: `0.9` starts refreshing when 90% of the TTL has passed.
 
 Acceptable formats:
-* Number: e.g., `0.85`
-* String: `"0.85"`
+* Number: e.g., `0.9`
+* String: `"0.9"`
 
 Default: `0.9`
 
