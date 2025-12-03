@@ -74,7 +74,7 @@ var (
 		Socks5Username:  "",
 		Socks5Password:  "",
 		SendThrough:     nil,
-		EcsMode:         "",
+		EcsMode:         string(ecs.ModePassthrough),
 		EcsClientSubnet: "",
 	}
 )
