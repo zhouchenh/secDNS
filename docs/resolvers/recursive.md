@@ -138,7 +138,14 @@ Default: `""`
 
 > `ecsMode`: `"passthrough"` | `"add"` | `"override"` | `"strip"` _(Optional)_
 
-ECS handling for outbound queries. `"strip"` removes ECS; `"add"` inserts `ecsClientSubnet` when absent; `"override"` replaces any ECS with `ecsClientSubnet`.
+ECS handling for outbound queries (RFC 7871):
+
+* `"passthrough"`: Forward any client-supplied ECS unchanged.
+* `"add"`: Insert `ecsClientSubnet` only when the client query lacks ECS.
+* `"override"`: Replace any incoming ECS with `ecsClientSubnet`.
+* `"strip"`: Remove all ECS options before forwarding.
+
+EDNS Client Subnet (ECS) lets authoritative servers return geography-aware answers; configure `ecsMode`/`ecsClientSubnet` here to control it. See [EDNS Client Subnet](../edns_client_subnet.md).
 
 Default: `"passthrough"`
 

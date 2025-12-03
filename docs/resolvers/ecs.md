@@ -34,6 +34,8 @@ How ECS is handled on the outbound query. Defaults to `"passthrough"`.
 * `"override"`: Replace any incoming ECS with `ecsClientSubnet`.
 * `"strip"`: Remove all ECS options before forwarding.
 
+EDNS Client Subnet (ECS) lets authoritative servers return geography-aware answers; set `ecsMode`/`ecsClientSubnet` here to control that behavior. See [EDNS Client Subnet](../edns_client_subnet.md).
+
 Default: `"passthrough"`
 
 > `ecsClientSubnet`: String _(Optional)_
