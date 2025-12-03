@@ -221,31 +221,49 @@ func (d *DoH) resolveURL(resolutionDepth int) (resolvedURLs []string) {
 		return
 	}
 	hostname := d.URL.Hostname()
+	seen := make(map[string]struct{})
+	appendURL := func(ip net.IP) {
+		if ip == nil {
+			return
+		}
+		urlStruct := *d.URL
+		var host string
+		if port := d.URL.Port(); port != "" {
+			host = net.JoinHostPort(ip.String(), port)
+		} else {
+			host = ip.String()
+		}
+		urlStruct.Host = host
+		urlStr := urlStruct.String()
+		if _, ok := seen[urlStr]; ok {
+			return
+		}
+		seen[urlStr] = struct{}{}
+		resolvedURLs = append(resolvedURLs, urlStr)
+	}
 	if ip := net.ParseIP(hostname); ip != nil {
-		resolvedURLs = append(resolvedURLs, d.URL.String())
+		appendURL(ip)
 	}
 	if common.IsDomainName(hostname) {
 		hostname = common.EnsureFQDN(hostname)
-		query := new(dns.Msg)
-		query.SetQuestion(hostname, dns.TypeA)
-		reply, err := d.Resolver.Resolve(query, resolutionDepth)
-		if err != nil {
-			return
-		}
-		for _, rawRecord := range reply.Answer {
-			record, ok := rawRecord.(*dns.A)
-			if !ok {
+		for _, qtype := range []uint16{dns.TypeA, dns.TypeAAAA} {
+			if d.Resolver == nil {
+				break
+			}
+			query := new(dns.Msg)
+			query.SetQuestion(hostname, qtype)
+			reply, err := d.Resolver.Resolve(query, resolutionDepth)
+			if err != nil {
 				continue
 			}
-			urlStruct := *d.URL
-			var host string
-			if port := d.URL.Port(); port != "" {
-				host = net.JoinHostPort(record.A.String(), port)
-			} else {
-				host = record.A.String()
+			for _, rawRecord := range reply.Answer {
+				switch record := rawRecord.(type) {
+				case *dns.A:
+					appendURL(record.A)
+				case *dns.AAAA:
+					appendURL(record.AAAA)
+				}
 			}
-			urlStruct.Host = host
-			resolvedURLs = append(resolvedURLs, (&urlStruct).String())
 		}
 	}
 	return

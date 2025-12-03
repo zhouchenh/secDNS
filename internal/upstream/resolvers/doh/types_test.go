@@ -121,3 +121,53 @@ func (s *stubResolver) Resolve(*dns.Msg, int) (*dns.Msg, error) {
 	return nil, nil
 }
 func (s *stubResolver) NameServerResolver() {}
+
+func TestResolveURLIncludesAAAA(t *testing.T) {
+	parsed, err := url.Parse("https://dns.example:443/dns-query")
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+
+	hostname := common.EnsureFQDN(parsed.Hostname())
+	reply := new(dns.Msg)
+	reply.SetQuestion(hostname, dns.TypeA)
+	reply.Answer = []dns.RR{
+		&dns.AAAA{
+			Hdr: dns.RR_Header{
+				Name:   hostname,
+				Rrtype: dns.TypeAAAA,
+				Class:  dns.ClassINET,
+				Ttl:    60,
+			},
+			AAAA: net.ParseIP("2001:4860:4860::8888"),
+		},
+		&dns.A{
+			Hdr: dns.RR_Header{
+				Name:   hostname,
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    60,
+			},
+			A: net.IPv4(8, 8, 8, 8),
+		},
+	}
+
+	d := &DoH{
+		URL:      parsed,
+		Resolver: &stubResolver{response: reply},
+	}
+	urls := d.resolveURL(4)
+	if len(urls) != 2 {
+		t.Fatalf("expected 2 resolved URLs (AAAA + A), got %d: %v", len(urls), urls)
+	}
+	expected := map[string]bool{
+		"https://[2001:4860:4860::8888]:443/dns-query": true,
+		"https://8.8.8.8:443/dns-query":                true,
+	}
+	for _, u := range urls {
+		if !expected[u] {
+			t.Fatalf("unexpected resolved url %q", u)
+		}
+		delete(expected, u)
+	}
+}
