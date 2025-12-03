@@ -92,7 +92,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: ""},
+					descriptor.DefaultValue{Value: ednsecs.ModePassthrough},
 				},
 			},
 			descriptor.ObjectFiller{

@@ -401,7 +401,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: ""},
+					descriptor.DefaultValue{Value: ecs.ModePassthrough},
 				},
 			},
 			descriptor.ObjectFiller{

@@ -34,7 +34,7 @@ How ECS is handled on the outbound query. Defaults to `"passthrough"`.
 * `"override"`: Replace any incoming ECS with `ecsClientSubnet`.
 * `"strip"`: Remove all ECS options before forwarding.
 
-Default: `""` (treated as `"passthrough"`)
+Default: `"passthrough"`
 
 > `ecsClientSubnet`: String _(Optional)_
 

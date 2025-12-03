@@ -93,7 +93,7 @@ Default: `""`
 
 EDNS Client Subnet (ECS) lets authoritative servers return geography-aware answers; configure `ecsMode`/`ecsClientSubnet` here to control it. See [EDNS Client Subnet](../edns_client_subnet.md).
 
-Default: `""` (treated as `"passthrough"`)
+Default: `"passthrough"`
 
 > `ecsClientSubnet`: String _(Optional)_
 
