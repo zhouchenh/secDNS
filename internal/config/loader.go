@@ -2,10 +2,12 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/zhouchenh/secDNS/internal/common"
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
 	"io"
+	"sort"
 )
 
 func LoadConfig(r io.Reader) (core.Instance, error) {
@@ -51,6 +53,13 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	}
 	err = named.InitKnownNamedResolvers()
 	if err != nil {
+		if _, ok := err.(named.NotFoundError); ok {
+			names := config.Resolvers.Names()
+			if len(names) > 0 {
+				sort.Strings(names)
+				return nil, fmt.Errorf("%w (registered resolvers: %v)", err, names)
+			}
+		}
 		return nil, err
 	}
 	return instance, nil

@@ -19,3 +19,18 @@ func (nr *NameRegistry) NameResolver(name string, r resolver.Resolver) error {
 	nr.registry[name] = r
 	return nil
 }
+
+// Names returns the list of registered resolver names.
+func (nr *NameRegistry) Names() []string {
+	if nr == nil || nr.registry == nil {
+		return nil
+	}
+	names := make([]string, 0, len(nr.registry))
+	for name := range nr.registry {
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
