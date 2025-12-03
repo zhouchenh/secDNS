@@ -1092,28 +1092,31 @@ func init() {
 			// Also support string format for durations
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"ServeStale"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"serveStale"},
-					AssignableKind: descriptor.AssignableKinds{
-						descriptor.KindBool,
-						descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								str, ok := original.(string)
-								if !ok {
-									return nil, false
-								}
-								switch strings.ToLower(str) {
-								case "true":
-									return true, true
-								case "false":
-									return false, true
-								default:
-									return nil, false
-								}
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"serveStale"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.KindBool,
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									switch strings.ToLower(str) {
+									case "true":
+										return true, true
+									case "false":
+										return false, true
+									default:
+										return nil, false
+									}
+								},
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: true},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1148,6 +1151,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: 30 * time.Second},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1217,7 +1221,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: time.Duration(0)},
+					descriptor.DefaultValue{Value: 5 * time.Minute},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1322,6 +1326,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: 0.05},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1356,6 +1361,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: uint64(10)},
 				},
 			},
 			descriptor.ObjectFiller{
@@ -1390,6 +1396,7 @@ func init() {
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: 0.9},
 				},
 			},
 			descriptor.ObjectFiller{

@@ -17,18 +17,20 @@ The `cache` resolver provides high-performance DNS response caching with LRU (Le
     }
   },
   "maxEntries": 10000,
-  "minTTL": 60,
-  "maxTTL": 3600,
+  "minTTL": 0,
+  "maxTTL": 0,
   "negativeTTL": 300,
-  "nxDomainTTL": 900,
-  "noDataTTL": 300,
+  "nxDomainTTL": 0,
+  "noDataTTL": 0,
   "serveStale": true,
   "staleDuration": 30,
-  "prefetchThreshold": 20,
-  "prefetchPercent": 0.85,
+  "defaultPositiveTTL": 3600,
+  "defaultFallbackTTL": 300,
+  "prefetchThreshold": 10,
+  "prefetchPercent": 0.9,
   "ttlJitterPercent": 0.05,
   "cleanupInterval": 60,
-  "cacheControlEnabled": true
+  "cacheControlEnabled": false
 }
 ```
 
@@ -293,11 +295,10 @@ Aggressively cache popular domains and prefetch them before expiration while all
         "url": "https://cloudflare-dns.com/dns-query"
       }
     },
-    "prefetchThreshold": 15,
+    "prefetchThreshold": 10,
     "prefetchPercent": 0.9,
     "serveStale": true,
     "staleDuration": 45,
-    "ttlJitterPercent": 0.05,
     "cacheControlEnabled": true
   }
 }
