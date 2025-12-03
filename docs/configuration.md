@@ -132,7 +132,7 @@ Resolver-specific configuration. See `ResolverConfigObject` defined in each type
 
 ## Example: HTTP API With Cache Prefetch
 
-The following snippet wires the HTTP API listener to a cache resolver that prefetches popular domains and warms the cache at startup. See [listeners/http_api_server.md](listeners/http_api_server.md) and [resolvers/cache.md](resolvers/cache.md) for the detailed option reference.
+The following snippet wires the HTTP API listener to a cache resolver that prefetches popular domains. See [listeners/http_api_server.md](listeners/http_api_server.md) and [resolvers/cache.md](resolvers/cache.md) for the detailed option reference.
 
 ```json
 {

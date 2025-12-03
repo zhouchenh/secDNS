@@ -1,5 +1,13 @@
 # Version History
 
+## v1.3.2 - 2025.12.03
+
+Changes
+
+* Removed the cache `warmupQueries` option; cache now relies on runtime traffic and prefetch to build entries.
+* Moved the HTTP API server package to `internal/listeners/servers/http/api/server` to align with other listeners.
+* Updated documentation and agent metadata for the 1.3.2 release, including HTTP API notes.
+
 ## v1.3.1 - 2025.12.01
 
 Enhancements

@@ -1,11 +1,11 @@
 # secDNS Project Knowledge Base
 # Updated for downstream LLM agents
-# Last Updated: 2025-12-01
+# Last Updated: 2025-12-03
 
 metadata:
   project_name: secDNS
-  version: 1.3.1
-  release_date: 2025-12-01
+  version: 1.3.2
+  release_date: 2025-12-03
   language: Go
   go_version: "1.23"
   toolchain: "1.24.7"
@@ -80,6 +80,8 @@ architecture_details:
     - internal/rules/providers/collection/types.go
 
 recent_work:
+  - Removed cache warmupQueries option; cache now builds state from live traffic/prefetch without startup warmers.
+  - Moved HTTP API server implementation under internal/listeners/servers/http/api/server to match listener layout.
   - Added HTTP API listener with GET/POST form+JSON handling and docs (v1.2.1).
   - Expanded cache resolver (prefetch, stale-while-revalidate, TTL jitter, cache-control hints, per-domain stats) and aligned descriptors to accept numeric strings and numbers; ECS cache keying now uses response scope, falling back to source prefix when scope=0.
   - Cache resolver docs now clarify `resolver` accepts a named resolver string or inline ResolverObject (same pattern as ecs/dns64).
@@ -105,7 +107,7 @@ documentation:
     - docs/listeners.md + docs/listeners/http_api_server.md
     - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
     - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
-    - docs/version_history.md (through v1.3.1 dated 2025.12.01)
+    - docs/version_history.md (through v1.3.2 dated 2025.12.03)
     - llm-agent/config_guidance.yaml (LLM-facing config generation prompts)
   notes: Docs are ASCII-only with consistent bullet/heading style; cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching; resolver pages now include config placement notes and inline/named examples; dnsmasqConf rule docs describe config.json placement and duplicate handling.
 
