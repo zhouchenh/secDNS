@@ -1,7 +1,5 @@
 # Version History
 
-# Version History
-
 ## v1.3.5 - 2025.12.03
 
 Changes
