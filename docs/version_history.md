@@ -1,16 +1,16 @@
 # Version History
 
-## v1.3.5 - 2025.12.03
-
-Changes
-
-* DoH upstream URL resolution now queries both A and AAAA records, allowing IPv6 endpoints to be discovered automatically.
-
 ## v1.3.6 - 2025.12.04
 
 Bug Fixes
 
 * DoH URL resolution now wraps IPv6 literals in brackets when no port is specified, preventing bad host lookups during HTTPS dial.
+
+## v1.3.5 - 2025.12.03
+
+Changes
+
+* DoH upstream URL resolution now queries both A and AAAA records, allowing IPv6 endpoints to be discovered automatically.
 
 ## v1.3.4 - 2025.12.03
 
