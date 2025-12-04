@@ -231,7 +231,11 @@ func (d *DoH) resolveURL(resolutionDepth int) (resolvedURLs []string) {
 		if port := d.URL.Port(); port != "" {
 			host = net.JoinHostPort(ip.String(), port)
 		} else {
-			host = ip.String()
+			if ip.To4() != nil {
+				host = ip.String()
+			} else {
+				host = "[" + ip.String() + "]"
+			}
 		}
 		urlStruct.Host = host
 		urlStr := urlStruct.String()

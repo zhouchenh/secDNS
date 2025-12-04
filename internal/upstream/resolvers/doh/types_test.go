@@ -171,3 +171,32 @@ func TestResolveURLIncludesAAAA(t *testing.T) {
 		delete(expected, u)
 	}
 }
+
+func TestResolveURLIPv6WithoutPortAddsBrackets(t *testing.T) {
+	parsed, err := url.Parse("https://dns.example/dns-query")
+	if err != nil {
+		t.Fatalf("parse url: %v", err)
+	}
+	hostname := common.EnsureFQDN(parsed.Hostname())
+	reply := new(dns.Msg)
+	reply.SetQuestion(hostname, dns.TypeAAAA)
+	reply.Answer = []dns.RR{
+		&dns.AAAA{
+			Hdr: dns.RR_Header{
+				Name:   hostname,
+				Rrtype: dns.TypeAAAA,
+				Class:  dns.ClassINET,
+				Ttl:    60,
+			},
+			AAAA: net.ParseIP("2001:4860:4860::8888"),
+		},
+	}
+	d := &DoH{
+		URL:      parsed,
+		Resolver: &stubResolver{response: reply},
+	}
+	urls := d.resolveURL(4)
+	if len(urls) != 1 || urls[0] != "https://[2001:4860:4860::8888]/dns-query" {
+		t.Fatalf("expected bracketed IPv6 URL, got %v", urls)
+	}
+}
