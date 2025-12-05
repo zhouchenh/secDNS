@@ -1,0 +1,67 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx || sudo apt-get install -y upx-ucl
+
+      - name: Build cross-platform binaries
+        env:
+          CGO_ENABLED: 0
+        run: |
+          chmod +x ./go-build-module-thin.sh
+          rm -rf bin
+          mkdir -p bin
+          ./go-build-module-thin.sh bin/secDNS
+
+      - name: Prepare release notes
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          cat > release_notes.md <<EOF
+## Downloads
+- Windows: download \`secDNS-windows-amd64.exe\` (64-bit) or \`secDNS-windows-386.exe\` (32-bit); Arm builds: \`secDNS-windows-arm64.exe\` and \`secDNS-windows-arm.exe\`.
+- macOS: download \`secDNS-darwin-arm64\` (Apple silicon) or \`secDNS-darwin-amd64\` (Intel).
+- Linux: download \`secDNS-linux-amd64\` (64-bit), \`secDNS-linux-386\` (32-bit), \`secDNS-linux-arm64\` (modern Arm boards), or \`secDNS-linux-arm\` (older Arm boards).
+- Other platforms: additional builds for BSD, Solaris, AIX, and Plan9 are attached below.
+
+## Usage
+- Make the downloaded binary executable when needed (e.g. \`chmod +x ./secDNS-darwin-arm64\` on macOS/Linux) and run from your terminal; append \`--help\` to see flags.
+- Example configuration: [config.json](https://github.com/zhouchenh/secDNS/blob/${TAG_NAME}/config.json). It expects a domain list file such as [accelerated-domains.china.conf](https://github.com/felixonmars/dnsmasq-china-list/blob/master/accelerated-domains.china.conf) placed alongside the config.
+
+## What's new
+- Full change log for this release: https://github.com/zhouchenh/secDNS/blob/${TAG_NAME}/docs/version_history.md
+EOF
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body_path: release_notes.md
+          files: bin/secDNS-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
