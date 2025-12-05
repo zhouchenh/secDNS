@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          asset_url=$(
+          get_upx_url() {
             python3 - <<'PY'
             import json
             import sys
@@ -44,9 +44,11 @@ jobs:
                         sys.exit(0)
             except Exception as exc:
                 print(f"failed to query latest UPX release: {exc}", file=sys.stderr)
-            sys.exit(0)
+            sys.exit(1)
             PY
-          )
+          }
+
+          asset_url="$(get_upx_url 2>/dev/null || true)"
 
           if [[ -n "${asset_url}" ]]; then
             temp_dir=$(mktemp -d)
