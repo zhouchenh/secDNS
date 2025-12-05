@@ -23,10 +23,44 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install build dependencies
+      - name: Install latest UPX
         run: |
-          sudo apt-get update
-          sudo apt-get install -y upx || sudo apt-get install -y upx-ucl
+          set -euo pipefail
+
+          asset_url=$(
+            python3 - <<'PY'
+            import json
+            import sys
+            import urllib.request
+
+            api_url = "https://api.github.com/repos/upx/upx/releases/latest"
+            try:
+                with urllib.request.urlopen(api_url) as resp:
+                    data = json.load(resp)
+                for asset in data.get("assets", []):
+                    name = asset.get("name", "")
+                    if "amd64_linux" in name and name.endswith(".tar.xz"):
+                        print(asset["browser_download_url"])
+                        sys.exit(0)
+            except Exception as exc:
+                print(f"failed to query latest UPX release: {exc}", file=sys.stderr)
+            sys.exit(0)
+            PY
+          )
+
+          if [[ -n "${asset_url}" ]]; then
+            temp_dir=$(mktemp -d)
+            curl -sSL "$asset_url" -o "${temp_dir}/upx.tar.xz"
+            tar -xJf "${temp_dir}/upx.tar.xz" -C "${temp_dir}"
+            upx_dir=$(find "${temp_dir}" -maxdepth 1 -type d -name "upx-*" | head -n 1)
+            sudo install -m 0755 "${upx_dir}/upx" /usr/local/bin/upx
+            upx -V
+          else
+            echo "Unable to find amd64_linux UPX asset in latest release, falling back to APT package"
+            sudo apt-get update
+            sudo apt-get install -y upx || sudo apt-get install -y upx-ucl
+            upx -V
+          fi
 
       - name: Build cross-platform binaries
         env:
@@ -97,7 +131,9 @@ jobs:
 
             echo "Building ${output_name}"
             env GOOS="${GOOS}" GOARCH="${GOARCH}" go build -ldflags="-s -w" -o "${output_name}"
-            upx --best --ultra-brute "${output_name}"
+            if ! upx --best --ultra-brute "${output_name}"; then
+              echo "UPX skipped for ${output_name} (unsupported format?)"
+            fi
           done
 
       - name: Prepare release notes
