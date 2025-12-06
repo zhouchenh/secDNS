@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/miekg/dns"
+	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"net"
 	"sync"
@@ -691,6 +692,89 @@ func TestCacheControlNoStale(t *testing.T) {
 	}
 }
 
+func TestCacheUpstreamLimiterQueuesAndDrops(t *testing.T) {
+	blocking := &blockingResolver{
+		start:   make(chan struct{}, 8),
+		unblock: make(chan struct{}),
+	}
+	cache := &Cache{
+		Resolver:              blocking,
+		MaxEntries:            16,
+		ServeStale:            false,
+		TTLJitterPercent:      0,
+		PrefetchThreshold:     0,
+		PrefetchPercent:       1,
+		MaxConcurrentRequests: 2,
+		MaxQueuedRequests:     1,
+		RequestQueueTimeout:   200 * time.Millisecond,
+	}
+	defer cache.Stop()
+
+	makeQuery := func(name string) *dns.Msg {
+		q := new(dns.Msg)
+		q.SetQuestion(name, dns.TypeA)
+		return q
+	}
+
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		q := makeQuery(fmt.Sprintf("limiter-%d.example.", i))
+		go func() {
+			_, err := cache.Resolve(q, 10)
+			errs <- err
+		}()
+	}
+
+	// Only two upstream calls should start immediately.
+	for i := 0; i < 2; i++ {
+		select {
+		case <-blocking.start:
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for concurrent upstream requests to start")
+		}
+	}
+
+	// No additional starts while both slots are held.
+	select {
+	case <-blocking.start:
+		t.Fatalf("upstream limiter exceeded MaxConcurrentRequests")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// Free one slot so the queued request can proceed.
+	blocking.unblock <- struct{}{}
+
+	select {
+	case <-blocking.start:
+	case <-time.After(time.Second):
+		t.Fatal("queued request did not start after a slot became available")
+	}
+
+	// Drain remaining requests.
+	blocking.unblock <- struct{}{}
+	blocking.unblock <- struct{}{}
+
+	var queueErrors int
+	for i := 0; i < 4; i++ {
+		select {
+		case err := <-errs:
+			if err != nil {
+				if errors.Is(err, ErrRequestQueueFull) || errors.Is(err, ErrRequestQueueTimeout) {
+					queueErrors++
+				} else {
+					t.Fatalf("unexpected resolve error: %v", err)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timeout waiting for resolver results")
+		}
+	}
+
+	if queueErrors != 1 {
+		t.Fatalf("expected one queued request to be dropped, got %d", queueErrors)
+	}
+}
+
 func TestCacheDomainStats(t *testing.T) {
 	response := new(dns.Msg)
 	response.SetQuestion("example.com.", dns.TypeA)
@@ -718,4 +802,31 @@ func TestCacheDomainStats(t *testing.T) {
 	if stats.Hits != 1 || stats.Misses != 1 {
 		t.Fatalf("unexpected stats: %+v", stats)
 	}
+}
+
+type blockingResolver struct {
+	start   chan struct{}
+	unblock chan struct{}
+}
+
+func (r *blockingResolver) Type() descriptor.Type { return resolver.Type() }
+func (r *blockingResolver) TypeName() string      { return "blocking" }
+func (r *blockingResolver) NameServerResolver()   {}
+
+func (r *blockingResolver) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
+	r.start <- struct{}{}
+	<-r.unblock
+
+	resp := new(dns.Msg)
+	resp.SetReply(query)
+	resp.Answer = append(resp.Answer, &dns.A{
+		Hdr: dns.RR_Header{
+			Name:   query.Question[0].Name,
+			Rrtype: dns.TypeA,
+			Class:  dns.ClassINET,
+			Ttl:    60,
+		},
+		A: net.ParseIP("192.0.2.1").To4(),
+	})
+	return resp, nil
 }

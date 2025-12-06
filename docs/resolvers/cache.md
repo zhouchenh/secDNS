@@ -28,6 +28,9 @@ The `cache` resolver provides high-performance DNS response caching with LRU (Le
   "defaultFallbackTTL": 300,
   "prefetchThreshold": 10,
   "prefetchPercent": 0.9,
+  "maxConcurrentRequests": 256,
+  "maxQueuedRequests": 512,
+  "requestQueueTimeout": 1,
   "ttlJitterPercent": 0.05,
   "cleanupInterval": 60,
   "cacheControlEnabled": false
@@ -144,16 +147,6 @@ Acceptable formats:
 
 Default: `0` (falls back to `negativeTTL` or SOA minimum TTL when present)
 
-> `ttlJitterPercent`: Number | String _(Optional)_
-
-Adds +/- percentage jitter to cached TTLs to avoid the thundering herd problem when many entries expire simultaneously.
-
-Acceptable formats:
-* Number: e.g., `0.05`
-* String: `"0.05"`
-
-Default: `0.05` (+/-5%)
-
 > `prefetchThreshold`: Number | String _(Optional)_
 
 Minimum access count before the cache prefetches an entry in the background. Set to `0` to disable.
@@ -173,6 +166,46 @@ Acceptable formats:
 * String: `"0.9"`
 
 Default: `0.9`
+
+> `maxConcurrentRequests`: Number | String _(Optional)_
+
+Upper bound on in-flight upstream fetches, including cache misses and background prefetches. When this limit is reached, additional requests wait in the queue (controlled by `maxQueuedRequests`/`requestQueueTimeout`) instead of overwhelming upstream servers.
+
+Acceptable formats:
+* Number: e.g., `256`
+* String: `"256"`
+
+Default: `256`
+
+> `maxQueuedRequests`: Number | String _(Optional)_
+
+Maximum number of upstream fetches that may wait for a concurrency slot. Once the queue is full, new requests fail fast with an error rather than piling up.
+
+Acceptable formats:
+* Number: e.g., `512`
+* String: `"512"`
+
+Default: `512`
+
+> `requestQueueTimeout`: Number | String _(Optional)_
+
+How long (seconds) a queued upstream fetch may wait for a free slot. Requests still waiting after this timeout are dropped, preventing a backlog from delaying new queries.
+
+Acceptable formats:
+* Number: e.g., `1`
+* String: `"1"`
+
+Default: `1` (second)
+
+> `ttlJitterPercent`: Number | String _(Optional)_
+
+Adds +/- percentage jitter to cached TTLs to avoid the thundering herd problem when many entries expire simultaneously.
+
+Acceptable formats:
+* Number: e.g., `0.05`
+* String: `"0.05"`
+
+Default: `0.05` (+/-5%)
 
 > `cacheControlEnabled`: Boolean _(Optional)_
 
@@ -335,3 +368,4 @@ When `cacheControlEnabled` is `true` upstream resolvers can send EDNS0 local opt
 4. **Monitor Statistics**: Track hit rate to ensure cache is effective. >70% hit rate is ideal.
 5. **Combine with Other Resolvers**: Cache works well wrapping sequence, dns64, or filter resolvers.
 6. **Monitor Per-Domain Stats**: Identify domains with low hit rates and adjust `prefetchThreshold`/`prefetchPercent`.
+7. **Limit Upstream Concurrency**: Tune `maxConcurrentRequests`/`maxQueuedRequests`/`requestQueueTimeout` to prevent prefetch bursts from flooding upstream resolvers; start with a conservative limit and raise slowly if latency remains low.

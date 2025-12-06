@@ -4,8 +4,8 @@
 
 metadata:
   project_name: secDNS
-  version: 1.3.2
-  release_date: 2025-12-03
+  version: 1.3.7
+  release_date: 2025-12-06
   language: Go
   go_version: "1.23"
   toolchain: "1.24.7"
@@ -80,6 +80,7 @@ architecture_details:
     - internal/rules/providers/collection/types.go
 
 recent_work:
+  - Added upstream request limiting for the cache resolver (maxConcurrentRequests/maxQueuedRequests/requestQueueTimeout) to throttle miss/prefetch bursts; updated docs, tests, and prod config defaults.
   - Removed cache warmupQueries option; cache now builds state from live traffic/prefetch without startup warmers.
   - Moved HTTP API server implementation under internal/listeners/servers/http/api/server to match listener layout.
   - Added HTTP API listener with GET/POST form+JSON handling and docs (v1.2.1).
@@ -96,7 +97,7 @@ recent_work:
   - Documented ECS strip availability for nameServer/DoH and aligned ECS wrapper naming with its directory.
 
 testing:
-  status: "`go test -mod=readonly ./...` passing (2025-11-29)."
+  status: "`go test -mod=readonly ./...` passing (2025-12-06)."
   coverage: Unit-heavy for cache/resolvers/rule providers; limited integration/e2e coverage.
   notes: Core/pkg packages still mostly lack tests; long-running cache tests are short (<1s) after recent changes.
 
@@ -107,7 +108,7 @@ documentation:
     - docs/listeners.md + docs/listeners/http_api_server.md
     - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
     - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
-    - docs/version_history.md (through v1.3.2 dated 2025.12.03)
+    - docs/version_history.md (stale; still ends at v1.1.5 even though code is v1.3.7+)
     - llm-agent/config_guidance.yaml (LLM-facing config generation prompts)
   notes: Docs are ASCII-only with consistent bullet/heading style; cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching; resolver pages now include config placement notes and inline/named examples; dnsmasqConf rule docs describe config.json placement and duplicate handling.
 

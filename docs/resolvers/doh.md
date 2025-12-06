@@ -9,12 +9,16 @@ The `doh` resolver sends the queries to an upstream DNS server and sends back th
 ```json
 {
   "url": "https://dns.google/dns-query",
-  "queryTimeout": 1.5,
+  "queryTimeout": 8,
   "tlsServerName": "dns.google",
   "sendThrough": "0.0.0.0",
   "urlResolver": "",
   "ecsMode": "add",
-  "ecsClientSubnet": "192.168.1.0/24"
+  "ecsClientSubnet": "192.168.1.0/24",
+  "maxIdleConnsPerHost": 32,
+  "maxConnsPerHost": 128,
+  "idleConnTimeout": 90,
+  "maxConcurrentRequests": 256
 }
 ```
 
@@ -29,7 +33,7 @@ The time that the resolver waits before a query is failed. Acceptable formats ar
 * Number: The number of seconds to wait before the timeout.
 * String: A numeric string value, such as `"1.5"`, representing the number of seconds to wait before the timeout.
 
-Default: `2`
+Default: `8`
 
 > `tlsServerName`: String _(Optional)_
 
@@ -51,6 +55,30 @@ Default: `"0.0.0.0"`
 name in `url`.
 
 Default: `""`
+
+> `maxIdleConnsPerHost`: Number | String _(Optional)_
+
+Maximum idle HTTP connections to keep per upstream DoH host. Raising this reduces TLS handshakes during bursts.
+
+Default: `32`
+
+> `maxConnsPerHost`: Number | String _(Optional)_
+
+Maximum total HTTP connections allowed per upstream DoH host. Set higher for heavy parallel load; `0` falls back to Go's default.
+
+Default: `128`
+
+> `idleConnTimeout`: Number | String _(Optional)_
+
+Timeout (seconds) before idle HTTP connections are closed.
+
+Default: `90`
+
+> `maxConcurrentRequests`: Number | String _(Optional)_
+
+Upper bound for in-flight DoH requests per resolver. Additional requests queue until a slot opens, preventing overload.
+
+Default: `256`
 
 > `socks5Proxy`: String _(Optional)_
 

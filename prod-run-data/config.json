@@ -1,0 +1,153 @@
+{
+  "listeners": [
+    {
+      "type": "dnsServer",
+      "config": {
+        "listen": "::",
+        "port": 53,
+        "protocol": "tcp"
+      }
+    },
+    {
+      "type": "dnsServer",
+      "config": {
+        "listen": "::",
+        "port": 53,
+        "protocol": "udp"
+      }
+    },
+    {
+      "type": "httpAPIServer",
+      "config": {
+        "listen": "::",
+        "port": 8053,
+        "path": "/resolve"
+      }
+    }
+  ],
+  "resolvers": {
+    "cache": {
+      "Google-DoH-Cached": {
+        "resolver": "Google-DoH",
+        "maxEntries": 1000000,
+        "maxTTL": 7200,
+        "negativeTTL": 30,
+        "cleanupInterval": 300,
+        "maxConcurrentRequests": 128,
+        "maxQueuedRequests": 256,
+        "requestQueueTimeout": 1
+      }
+    },
+    "concurrentNameServerList": {
+      "Google-DoT": [
+        "Google-DoT6-main",
+        "Google-DoT6-backup",
+        "Google-DoT4-main",
+        "Google-DoT4-backup"
+      ],
+      "NameServer-DNS": [
+        "NameServer-DNS6",
+        "NameServer-DNS4"
+      ]
+    },
+    "doh": {
+      "Google-DoH": {
+        "url": "https://dns.google/dns-query",
+        "urlResolver": "Google-DoT"
+      }
+    },
+    "ecs": {
+      "Google-DoH-Cached-ECS-CMCC": {
+        "resolver": "Google-DoH-Cached",
+        "ecsMode": "add",
+        "ecsClientSubnet": "120.196.165.0/24"
+      }
+    },
+    "filterOutAAAAIfAPresents": {
+      "Google-DoH-Cached-ECS-CMCC-Prefers-IPv4": "Google-DoH-Cached-ECS-CMCC"
+    },
+    "nameServer": {
+      "Google-DoT6-main": {
+        "address": "2001:4860:4860::8888",
+        "port": 853,
+        "protocol": "tcp-tls",
+        "tlsServerName": "dns.google"
+      },
+      "Google-DoT6-backup": {
+        "address": "2001:4860:4860::8844",
+        "port": 853,
+        "protocol": "tcp-tls",
+        "tlsServerName": "dns.google"
+      },
+      "Google-DoT4-main": {
+        "address": "8.8.8.8",
+        "port": 853,
+        "protocol": "tcp-tls",
+        "tlsServerName": "dns.google"
+      },
+      "Google-DoT4-backup": {
+        "address": "8.8.4.4",
+        "port": 853,
+        "protocol": "tcp-tls",
+        "tlsServerName": "dns.google"
+      },
+      "NameServer-DNS6": {
+        "address": "2001:470:f9d1:feed::99",
+        "protocol": "tcp"
+      },
+      "NameServer-DNS4": {
+        "address": "100.94.4.85",
+        "protocol": "tcp"
+      }
+    }
+  },
+  "rules": [
+    {
+      "type": "collection",
+      "config": [
+        {
+          "name": "\"localhost.test.dns.aircloud.pro\"",
+          "resolver": {
+            "type": "address",
+            "config": [
+              "::1",
+              "127.0.0.1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "type": "collection",
+      "config": [
+        {
+          "name": "aircloud.pro",
+          "resolver": "NameServer-DNS"
+        },
+        {
+          "name": "n2ocloud.com",
+          "resolver": "NameServer-DNS"
+        },
+        {
+          "name": "nnn.one",
+          "resolver": "NameServer-DNS"
+        }
+      ]
+    },
+    {
+      "type": "dnsmasqConf",
+      "config": {
+        "filePath": "bypass.accelerated-domains.china.conf",
+        "resolver": "Google-DoH-Cached"
+      }
+    },
+    {
+      "type": "dnsmasqConf",
+      "config": {
+        "filePath": "accelerated-domains.china.conf",
+        "resolver": "Google-DoH-Cached-ECS-CMCC-Prefers-IPv4"
+      }
+    }
+  ],
+  "defaultResolver": "Google-DoH-Cached"
+}

@@ -18,19 +18,24 @@ import (
 )
 
 type DoH struct {
-	URL             *url.URL
-	QueryTimeout    time.Duration
-	TlsServerName   string
-	SendThrough     net.IP
-	Resolver        resolver.Resolver
-	Socks5Proxy     string
-	Socks5Username  string
-	Socks5Password  string
-	EcsMode         string
-	EcsClientSubnet string
-	ecsConfig       *ecs.Config
-	queryClient     *client
-	initOnce        sync.Once
+	URL                   *url.URL
+	QueryTimeout          time.Duration
+	TlsServerName         string
+	SendThrough           net.IP
+	Resolver              resolver.Resolver
+	Socks5Proxy           string
+	Socks5Username        string
+	Socks5Password        string
+	EcsMode               string
+	EcsClientSubnet       string
+	MaxIdleConnsPerHost   int
+	MaxConnsPerHost       int
+	IdleConnTimeout       time.Duration
+	MaxConcurrentRequests int
+	ecsConfig             *ecs.Config
+	queryClient           *client
+	requestLimiter        chan struct{}
+	initOnce              sync.Once
 }
 
 type client struct {
@@ -48,6 +53,14 @@ func (d *DoH) Type() descriptor.Type {
 
 func (d *DoH) TypeName() string {
 	return "doh"
+}
+
+func (d *DoH) acquireRequestSlot() func() {
+	if d.requestLimiter == nil || d.MaxConcurrentRequests <= 0 {
+		return func() {}
+	}
+	d.requestLimiter <- struct{}{}
+	return func() { <-d.requestLimiter }
 }
 
 func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
@@ -87,6 +100,8 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	wg.Add(len(urls))
 	sendRequest := func(urlString string) {
 		defer wg.Done()
+		release := d.acquireRequestSlot()
+		defer release()
 		request, e := http.NewRequest(http.MethodPost, urlString, bytes.NewReader(wireFormattedQuery))
 		if e != nil {
 			errCollector <- e
@@ -178,6 +193,21 @@ func (d *DoH) initClient() {
 			return u, nil
 		}
 	}
+
+	if d.MaxIdleConnsPerHost == 0 {
+		d.MaxIdleConnsPerHost = 32
+	}
+	if d.MaxConnsPerHost == 0 {
+		d.MaxConnsPerHost = 128
+	}
+	if d.IdleConnTimeout == 0 {
+		d.IdleConnTimeout = 90 * time.Second
+	}
+	if d.MaxConcurrentRequests <= 0 {
+		d.MaxConcurrentRequests = 256
+	}
+	d.requestLimiter = make(chan struct{}, d.MaxConcurrentRequests)
+
 	d.queryClient = &client{
 		httpClient: &http.Client{
 			Transport: &http.Transport{
@@ -188,6 +218,10 @@ func (d *DoH) initClient() {
 				TLSClientConfig: &tls.Config{
 					ServerName: serverName,
 				},
+				MaxIdleConns:        d.MaxIdleConnsPerHost * 2,
+				MaxIdleConnsPerHost: d.MaxIdleConnsPerHost,
+				MaxConnsPerHost:     d.MaxConnsPerHost,
+				IdleConnTimeout:     d.IdleConnTimeout,
 			},
 			Timeout: d.QueryTimeout,
 		},
@@ -327,9 +361,9 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: 2 * time.Second},
+						descriptor.DefaultValue{Value: 8 * time.Second},
+					},
 				},
-			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"TlsServerName"},
 				ValueSource: descriptor.ValueSources{
@@ -340,11 +374,11 @@ func init() {
 					descriptor.DefaultValue{Value: ""},
 				},
 			},
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"SendThrough"},
-				ValueSource: descriptor.ValueSources{
-					descriptor.ObjectAtPath{
-						ObjectPath: descriptor.Path{"sendThrough"},
+				descriptor.ObjectFiller{
+					ObjectPath: descriptor.Path{"SendThrough"},
+					ValueSource: descriptor.ValueSources{
+						descriptor.ObjectAtPath{
+							ObjectPath: descriptor.Path{"sendThrough"},
 						AssignableKind: descriptor.ConvertibleKind{
 							Kind: descriptor.KindString,
 							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
@@ -357,14 +391,154 @@ func init() {
 								return
 							},
 						},
+						},
+						descriptor.DefaultValue{Value: nil},
 					},
-					descriptor.DefaultValue{Value: nil},
 				},
-			},
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"Resolver"},
-				ValueSource: descriptor.ValueSources{
-					descriptor.ObjectAtPath{
+				descriptor.ObjectFiller{
+					ObjectPath: descriptor.Path{"MaxIdleConnsPerHost"},
+					ValueSource: descriptor.ValueSources{
+						descriptor.ObjectAtPath{
+							ObjectPath: descriptor.Path{"maxIdleConnsPerHost"},
+							AssignableKind: descriptor.AssignableKinds{
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindFloat64,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										num, ok := original.(float64)
+										if !ok || num < 0 {
+											return nil, false
+										}
+										return int(num), true
+									},
+								},
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindString,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										str, ok := original.(string)
+										if !ok {
+											return nil, false
+										}
+										i, err := strconv.Atoi(str)
+										if err != nil || i < 0 {
+											return nil, false
+										}
+										return i, true
+									},
+								},
+							},
+						},
+						descriptor.DefaultValue{Value: 32},
+					},
+				},
+				descriptor.ObjectFiller{
+					ObjectPath: descriptor.Path{"MaxConnsPerHost"},
+					ValueSource: descriptor.ValueSources{
+						descriptor.ObjectAtPath{
+							ObjectPath: descriptor.Path{"maxConnsPerHost"},
+							AssignableKind: descriptor.AssignableKinds{
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindFloat64,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										num, ok := original.(float64)
+										if !ok || num < 0 {
+											return nil, false
+										}
+										return int(num), true
+									},
+								},
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindString,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										str, ok := original.(string)
+										if !ok {
+											return nil, false
+										}
+										i, err := strconv.Atoi(str)
+										if err != nil || i < 0 {
+											return nil, false
+										}
+										return i, true
+									},
+								},
+							},
+						},
+						descriptor.DefaultValue{Value: 128},
+					},
+				},
+				descriptor.ObjectFiller{
+					ObjectPath: descriptor.Path{"IdleConnTimeout"},
+					ValueSource: descriptor.ValueSources{
+						descriptor.ObjectAtPath{
+							ObjectPath: descriptor.Path{"idleConnTimeout"},
+							AssignableKind: descriptor.AssignableKinds{
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindFloat64,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										num, ok := original.(float64)
+										if !ok || num < 0 {
+											return nil, false
+										}
+										return time.Duration(num * float64(time.Second)), true
+									},
+								},
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindString,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										str, ok := original.(string)
+										if !ok {
+											return nil, false
+										}
+										num, err := strconv.ParseFloat(str, 64)
+										if err != nil || num < 0 {
+											return nil, false
+										}
+										return time.Duration(num * float64(time.Second)), true
+									},
+								},
+							},
+						},
+						descriptor.DefaultValue{Value: 90 * time.Second},
+					},
+				},
+				descriptor.ObjectFiller{
+					ObjectPath: descriptor.Path{"MaxConcurrentRequests"},
+					ValueSource: descriptor.ValueSources{
+						descriptor.ObjectAtPath{
+							ObjectPath: descriptor.Path{"maxConcurrentRequests"},
+							AssignableKind: descriptor.AssignableKinds{
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindFloat64,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										num, ok := original.(float64)
+										if !ok || num < 0 {
+											return nil, false
+										}
+										return int(num), true
+									},
+								},
+								descriptor.ConvertibleKind{
+									Kind: descriptor.KindString,
+									ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+										str, ok := original.(string)
+										if !ok {
+											return nil, false
+										}
+										i, err := strconv.Atoi(str)
+										if err != nil || i < 0 {
+											return nil, false
+										}
+										return i, true
+									},
+								},
+							},
+						},
+						descriptor.DefaultValue{Value: 256},
+					},
+				},
+				descriptor.ObjectFiller{
+					ObjectPath: descriptor.Path{"Resolver"},
+					ValueSource: descriptor.ValueSources{
+						descriptor.ObjectAtPath{
 						ObjectPath: descriptor.Path{"urlResolver"},
 						AssignableKind: descriptor.AssignmentFunction(func(i interface{}) (object interface{}, ok bool) {
 							object, s, f := resolver.Descriptor().Describe(i)

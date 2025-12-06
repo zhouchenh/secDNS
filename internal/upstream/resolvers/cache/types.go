@@ -2,6 +2,7 @@ package cache
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
@@ -20,22 +21,25 @@ import (
 // Cache implements a high-performance, thread-safe DNS caching resolver with LRU eviction.
 type Cache struct {
 	// Configuration (immutable after init)
-	Resolver            resolver.Resolver // Upstream resolver
-	MaxEntries          int               // Maximum cache entries (0 = unlimited)
-	MinTTL              time.Duration     // Minimum TTL override (0 = no override)
-	MaxTTL              time.Duration     // Maximum TTL override (0 = no override)
-	NegativeTTL         time.Duration     // TTL for negative responses (NXDOMAIN, NODATA)
-	NXDomainTTL         time.Duration     // Override TTL for NXDOMAIN
-	NoDataTTL           time.Duration     // Override TTL for NODATA
-	CleanupInterval     time.Duration     // How often to run cleanup (default 60s)
-	ServeStale          bool              // Serve stale responses while refreshing
-	StaleDuration       time.Duration     // How long stale responses are valid
-	DefaultPositiveTTL  time.Duration     // Default TTL for positive responses lacking TTLs
-	DefaultFallbackTTL  time.Duration     // Fallback TTL when no records contain TTL
-	TTLJitterPercent    float64           // Randomize expirations to avoid thundering herd
-	PrefetchThreshold   uint64            // Access count threshold for background refresh
-	PrefetchPercent     float64           // Fraction of TTL elapsed before prefetching
-	CacheControlEnabled bool              // Honor cache-control hints from upstream
+	Resolver              resolver.Resolver // Upstream resolver
+	MaxEntries            int               // Maximum cache entries (0 = unlimited)
+	MinTTL                time.Duration     // Minimum TTL override (0 = no override)
+	MaxTTL                time.Duration     // Maximum TTL override (0 = no override)
+	NegativeTTL           time.Duration     // TTL for negative responses (NXDOMAIN, NODATA)
+	NXDomainTTL           time.Duration     // Override TTL for NXDOMAIN
+	NoDataTTL             time.Duration     // Override TTL for NODATA
+	CleanupInterval       time.Duration     // How often to run cleanup (default 60s)
+	ServeStale            bool              // Serve stale responses while refreshing
+	StaleDuration         time.Duration     // How long stale responses are valid
+	DefaultPositiveTTL    time.Duration     // Default TTL for positive responses lacking TTLs
+	DefaultFallbackTTL    time.Duration     // Fallback TTL when no records contain TTL
+	TTLJitterPercent      float64           // Randomize expirations to avoid thundering herd
+	PrefetchThreshold     uint64            // Access count threshold for background refresh
+	PrefetchPercent       float64           // Fraction of TTL elapsed before prefetching
+	MaxConcurrentRequests int               // Max in-flight upstream fetches (including prefetch)
+	MaxQueuedRequests     int               // Max queued fetches waiting for a slot
+	RequestQueueTimeout   time.Duration     // Max time to wait for an upstream slot
+	CacheControlEnabled   bool              // Honor cache-control hints from upstream
 
 	// Cache state (protected by mutex)
 	entries map[string]*Entry
@@ -57,6 +61,8 @@ type Cache struct {
 	rngMutex    sync.Mutex
 
 	domainStats sync.Map
+
+	upstreamLimiter *requestLimiter
 }
 
 // Entry represents a single cached DNS response.
@@ -93,6 +99,15 @@ var typeOfCache = descriptor.TypeOfNew(new(*Cache))
 
 const cacheControlOptionCode = 0xFDE9
 
+const (
+	cleanupMaxBatchEntries = 256
+	cleanupMaxBatchTime    = 10 * time.Millisecond
+
+	defaultMaxConcurrentRequests = 256
+	defaultMaxQueuedRequests     = 512
+	defaultRequestQueueTimeout   = time.Second
+)
+
 type domainStatsCounters struct {
 	hits        uint64
 	misses      uint64
@@ -105,6 +120,65 @@ type cacheControlDirectives struct {
 	disablePrefetch bool
 	disableStale    bool
 	ttlOverride     *uint32
+}
+
+var (
+	ErrRequestQueueFull    = errors.New("upstream request queue is full")
+	ErrRequestQueueTimeout = errors.New("upstream request timed out while waiting for a slot")
+)
+
+type requestLimiter struct {
+	slots   chan struct{}
+	queue   chan struct{}
+	timeout time.Duration
+}
+
+func newRequestLimiter(maxConcurrent, maxQueue int, timeout time.Duration) *requestLimiter {
+	if maxConcurrent <= 0 {
+		return nil
+	}
+	if maxQueue < 0 {
+		maxQueue = 0
+	}
+	if timeout <= 0 {
+		timeout = defaultRequestQueueTimeout
+	}
+	return &requestLimiter{
+		slots:   make(chan struct{}, maxConcurrent),
+		queue:   make(chan struct{}, maxQueue),
+		timeout: timeout,
+	}
+}
+
+func (rl *requestLimiter) acquire() (func(), error) {
+	if rl == nil {
+		return func() {}, nil
+	}
+	select {
+	case rl.slots <- struct{}{}:
+		return func() { <-rl.slots }, nil
+	default:
+	}
+
+	if cap(rl.queue) == 0 {
+		return nil, ErrRequestQueueFull
+	}
+	select {
+	case rl.queue <- struct{}{}:
+	default:
+		return nil, ErrRequestQueueFull
+	}
+
+	timer := time.NewTimer(rl.timeout)
+	defer timer.Stop()
+	select {
+	case rl.slots <- struct{}{}:
+		<-rl.queue
+		return func() { <-rl.slots }, nil
+	case <-timer.C:
+		<-rl.queue
+		return nil, ErrRequestQueueTimeout
+	}
 }
 
 // Type returns the descriptor type for the Cache resolver.
@@ -286,6 +360,12 @@ func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, 
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
+	release, err := c.acquireUpstreamSlot()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	response, err := c.Resolver.Resolve(query, depth)
 	if err != nil {
 		return nil, err
@@ -566,6 +646,13 @@ func (c *Cache) adjustTTL(response *dns.Msg, remainingTTL uint32) {
 	}
 }
 
+func (c *Cache) acquireUpstreamSlot() (func(), error) {
+	if c.upstreamLimiter == nil {
+		return func() {}, nil
+	}
+	return c.upstreamLimiter.acquire()
+}
+
 // shouldCache determines if a DNS response should be cached.
 func (c *Cache) shouldCache(response *dns.Msg) bool {
 	if response == nil {
@@ -671,6 +758,16 @@ func (c *Cache) init() {
 	if c.PrefetchThreshold == 0 {
 		c.PrefetchThreshold = 10
 	}
+	if c.MaxConcurrentRequests <= 0 {
+		c.MaxConcurrentRequests = defaultMaxConcurrentRequests
+	}
+	if c.MaxQueuedRequests <= 0 {
+		c.MaxQueuedRequests = defaultMaxQueuedRequests
+	}
+	if c.RequestQueueTimeout <= 0 {
+		c.RequestQueueTimeout = defaultRequestQueueTimeout
+	}
+	c.upstreamLimiter = newRequestLimiter(c.MaxConcurrentRequests, c.MaxQueuedRequests, c.RequestQueueTimeout)
 	if c.rng == nil {
 		c.rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
@@ -702,25 +799,44 @@ func (c *Cache) startCleanup() {
 // cleanupExpired removes all expired entries from the cache.
 // This runs in the background and doesn't block query processing.
 func (c *Cache) cleanupExpired() {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	for {
+		batchStart := time.Now()
+		removed := 0
+		hasMoreExpired := false
+		now := time.Now()
 
-	now := time.Now()
-	for c.queue.Len() > 0 {
-		item := c.queue[0]
-		if item.expiresAt.After(now) {
-			break
+		c.mutex.Lock()
+		for c.queue.Len() > 0 {
+			item := c.queue[0]
+			if item.expiresAt.After(now) {
+				break
+			}
+			heap.Pop(&c.queue)
+			entry, ok := c.entries[item.key]
+			if !ok {
+				continue
+			}
+			if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
+				continue
+			}
+			delete(c.entries, item.key)
+			c.lru.Remove(entry.lruNode)
+			removed++
+			if removed >= cleanupMaxBatchEntries || time.Since(batchStart) >= cleanupMaxBatchTime {
+				break
+			}
 		}
-		heap.Pop(&c.queue)
-		entry, ok := c.entries[item.key]
-		if !ok {
-			continue
+		if c.queue.Len() > 0 {
+			next := c.queue[0]
+			if !next.expiresAt.After(time.Now()) {
+				hasMoreExpired = true
+			}
 		}
-		if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
-			continue
+		c.mutex.Unlock()
+
+		if removed == 0 || !hasMoreExpired {
+			return
 		}
-		delete(c.entries, item.key)
-		c.lru.Remove(entry.lruNode)
 	}
 }
 
@@ -1397,6 +1513,111 @@ func init() {
 						},
 					},
 					descriptor.DefaultValue{Value: 0.9},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"MaxConcurrentRequests"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"maxConcurrentRequests"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num <= 0 {
+										return nil, false
+									}
+									return int(num), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									i, err := strconv.Atoi(str)
+									if err != nil || i <= 0 {
+										return nil, false
+									}
+									return i, true
+								},
+							},
+						},
+					},
+					descriptor.DefaultValue{Value: defaultMaxConcurrentRequests},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"MaxQueuedRequests"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"maxQueuedRequests"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return int(num), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									i, err := strconv.Atoi(str)
+									if err != nil || i < 0 {
+										return nil, false
+									}
+									return i, true
+								},
+							},
+						},
+					},
+					descriptor.DefaultValue{Value: defaultMaxQueuedRequests},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"RequestQueueTimeout"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"requestQueueTimeout"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									num, ok := original.(float64)
+									if !ok || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									str, ok := original.(string)
+									if !ok {
+										return nil, false
+									}
+									num, err := strconv.ParseFloat(str, 64)
+									if err != nil || num < 0 {
+										return nil, false
+									}
+									return time.Duration(num * float64(time.Second)), true
+								},
+							},
+						},
+					},
+					descriptor.DefaultValue{Value: defaultRequestQueueTimeout},
 				},
 			},
 			descriptor.ObjectFiller{
