@@ -116,6 +116,8 @@ findings:
   - v1.3.7 tag was initially pushed before adding release notes; tag was removed, notes added, and tag re-pushed.
   - docs/version_history.md was briefly misread as stale; confirmed current and updated with v1.3.7 entry.
   - Remember to update docs/version_history.md before creating new version tags.
+  - If a tag is pushed prematurely, delete the remote tag before re-tagging after docs/tests are updated.
+  - When adding new config fields (e.g., concurrency knobs), update descriptors, docs, and any shipped prod configs together.
 
 current_state:
   repo_status: go test clean; working tree on master with untracked artifacts (.idea/, binaries); config-google-doh-cached.json removed; former feature branch deleted.
