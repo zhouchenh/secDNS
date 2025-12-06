@@ -1,5 +1,13 @@
 # Version History
 
+## v1.3.7 - 2025.12.06
+
+Changes
+
+* Cache: add configurable upstream request limiting (`maxConcurrentRequests`, `maxQueuedRequests`, `requestQueueTimeout`) to prevent bursty misses/prefetches from flooding upstream resolvers; defaults set to 256/512/1s.
+* DoH: document connection pool and concurrency defaults alongside existing tuning options.
+* Bump version to 1.3.7.
+
 ## v1.3.6 - 2025.12.04
 
 Bug Fixes
