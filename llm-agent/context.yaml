@@ -108,9 +108,13 @@ documentation:
     - docs/listeners.md + docs/listeners/http_api_server.md
     - docs/resolvers.md + resolver-specific docs (cache, doh, nameserver, dns64, filters, etc.)
     - docs/rules.md + docs/rules/collection.md + docs/rules/dnsmasq_conf.md
-    - docs/version_history.md (stale; still ends at v1.1.5 even though code is v1.3.7+)
+    - docs/version_history.md (current through v1.3.7 after adding release notes; earlier misread as stale)
     - llm-agent/config_guidance.yaml (LLM-facing config generation prompts)
   notes: Docs are ASCII-only with consistent bullet/heading style; cache docs clarify numeric-string acceptance and SOA TTL preference for negative caching; resolver pages now include config placement notes and inline/named examples; dnsmasqConf rule docs describe config.json placement and duplicate handling.
+
+findings:
+  - v1.3.7 tag was initially pushed before adding release notes; tag was removed, notes added, and tag re-pushed.
+  - docs/version_history.md was briefly misread as stale; confirmed current and updated with v1.3.7 entry.
 
 current_state:
   repo_status: go test clean; working tree on master with untracked artifacts (.idea/, binaries); config-google-doh-cached.json removed; former feature branch deleted.
