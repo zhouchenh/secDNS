@@ -136,6 +136,7 @@ llm_agent_notes:
   - Register new listeners/resolvers/providers in internal/features/features.go.
   - Follow descriptor pattern; numeric configs should accept number or numeric string with sane defaults.
   - Keep docs consistent with existing style and navigation paths.
+  - Preserve existing code and doc style (ASCII, heading/bullet conventions, concise comments) when making changes.
   - Preserve AGPLv3 headers where applicable; avoid deleting user edits.
   - Default test command: `go test -mod=readonly ./...`.
   - Quick runbook (using release binaries): `./secDNS -test -config config.json`; `./secDNS -config config.json`.
