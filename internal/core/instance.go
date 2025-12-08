@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
+	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
@@ -50,9 +51,13 @@ func (i *instance) AcceptProvider(rulesProvider provider.Provider, errorHandler 
 		if r == nil {
 			return
 		}
+		key := common.CanonicalName(name)
+		if key == "" {
+			return
+		}
 		i.mapMutex.Lock()
-		if _, hasKey := i.nameResolverMap[name]; !hasKey {
-			i.nameResolverMap[name] = r
+		if _, hasKey := i.nameResolverMap[key]; !hasKey {
+			i.nameResolverMap[key] = r
 		}
 		i.mapMutex.Unlock()
 	}, func(err error) {
@@ -128,15 +133,15 @@ func (i *instance) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
-	name := query.Question[0].Name
-	labels := strings.Split(name, ".")
+	canonicalName := dns.CanonicalName(query.Question[0].Name)
+	labels := strings.Split(canonicalName, ".")
 	if len(labels) < 2 {
 		return nil, ErrInvalidDomainName
 	}
 
 	// Check exact match with quotes
 	i.mapMutex.RLock()
-	r, ok := i.nameResolverMap["\""+name+"\""]
+	r, ok := i.nameResolverMap["\""+canonicalName+"\""]
 	i.mapMutex.RUnlock()
 	if ok {
 		msg, err := r.Resolve(query, depth-1)

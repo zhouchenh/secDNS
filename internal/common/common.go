@@ -52,6 +52,25 @@ func IsDomainName(name string) (ok bool) {
 	return
 }
 
+// CanonicalName lowercases and fqdn-normalizes a domain name, preserving literal-match quotes.
+func CanonicalName(name string) string {
+	if name == "" {
+		return ""
+	}
+	if hasPrefixAndSuffix(name, "\"", "\"") {
+		inner := dns.CanonicalName(trimPrefixAndSuffix(name, "\"", "\""))
+		if inner == "" {
+			return ""
+		}
+		return "\"" + ensureFQDN(inner) + "\""
+	}
+	canonical := dns.CanonicalName(name)
+	if canonical == "" {
+		return ""
+	}
+	return ensureFQDN(canonical)
+}
+
 func EnsureFQDN(name string) string {
 	if hasPrefixAndSuffix(name, "\"", "\"") {
 		return "\"" + ensureFQDN(trimPrefixAndSuffix(name, "\"", "\"")) + "\""

@@ -92,7 +92,14 @@ func (d *DnsmasqConf) ensureEntries(canReceiveError bool, receiveError func(err 
 			}
 			continue
 		}
-		entries = append(entries, common.EnsureFQDN(name))
+		canonical := common.CanonicalName(name)
+		if canonical == "" {
+			if canReceiveError {
+				receiveError(InvalidDomainNameError(name))
+			}
+			continue
+		}
+		entries = append(entries, canonical)
 	}
 	if err := scanner.Err(); err != nil {
 		if canReceiveError {

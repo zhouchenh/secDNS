@@ -1,5 +1,12 @@
 # Version History
 
+## v1.3.8 - 2025.12.07
+
+Bug Fixes
+
+* Rules: canonicalize rule keys and lookups so domain matching is case-insensitive (including literal quoted rules) across collection and dnsmasqConf providers; added regression tests.
+* Core: ensure rule map deduplication is performed on canonical names to avoid duplicate entries that only differ by case.
+
 ## v1.3.7 - 2025.12.06
 
 Changes

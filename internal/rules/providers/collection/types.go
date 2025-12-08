@@ -36,7 +36,15 @@ func (c *Collection) Provide(receive func(name string, r resolver.Resolver), rec
 			c.index++
 			continue
 		}
-		receive(common.EnsureFQDN(c.Rules[c.index].Name), c.Rules[c.index].Resolver)
+		canonical := common.CanonicalName(c.Rules[c.index].Name)
+		if canonical == "" {
+			if canReceiveError {
+				receiveError(InvalidDomainNameError(c.Rules[c.index].Name))
+			}
+			c.index++
+			continue
+		}
+		receive(canonical, c.Rules[c.index].Resolver)
 		c.index++
 		break
 	}

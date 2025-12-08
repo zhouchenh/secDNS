@@ -75,3 +75,28 @@ func TestCollectionProvideNilReceiver(t *testing.T) {
 		t.Fatalf("nil collection should return false")
 	}
 }
+
+func TestCollectionProvideCanonicalizesNames(t *testing.T) {
+	res := &stubResolver{name: "A"}
+	c := &Collection{
+		Rules: []*rule.NameResolutionRule{
+			{Name: "ExAmPle.CoM", Resolver: res},
+		},
+	}
+
+	var received []string
+	for c.Provide(func(name string, r resolver.Resolver) {
+		received = append(received, name)
+		if r != res {
+			t.Fatalf("unexpected resolver returned")
+		}
+	}, nil) {
+	}
+
+	if len(received) != 1 {
+		t.Fatalf("expected one entry, got %d", len(received))
+	}
+	if received[0] != "example.com." {
+		t.Fatalf("expected canonical fqdn, got %q", received[0])
+	}
+}
