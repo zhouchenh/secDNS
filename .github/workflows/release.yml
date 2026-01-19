@@ -96,9 +96,13 @@ jobs:
             "linux/arm64"
             "linux/loong64"
             "linux/mips"
+            "linux/mips/softfloat"
             "linux/mips64"
+            "linux/mips64/softfloat"
             "linux/mips64le"
+            "linux/mips64le/softfloat"
             "linux/mipsle"
+            "linux/mipsle/softfloat"
             "linux/ppc64"
             "linux/ppc64le"
             "linux/riscv64"
@@ -125,14 +129,28 @@ jobs:
           )
 
           for platform in "${platforms[@]}"; do
-            IFS='/' read -r GOOS GOARCH <<< "${platform}"
+            IFS='/' read -r GOOS GOARCH GOEXTRA <<< "${platform}"
             output_name="${executable_name}-${GOOS}-${GOARCH}"
+            if [[ -n "${GOEXTRA:-}" ]]; then
+              output_name+="-${GOEXTRA}"
+            fi
             if [[ "${GOOS}" == "windows" ]]; then
               output_name+=".exe"
             fi
 
             echo "Building ${output_name}"
-            env GOOS="${GOOS}" GOARCH="${GOARCH}" go build -ldflags="-s -w" -o "${output_name}"
+            build_env=(GOOS="${GOOS}" GOARCH="${GOARCH}")
+            if [[ "${GOARCH}" == "mips" || "${GOARCH}" == "mipsle" ]]; then
+              if [[ "${GOEXTRA:-}" == "softfloat" ]]; then
+                build_env+=(GOMIPS=softfloat)
+              fi
+            fi
+            if [[ "${GOARCH}" == "mips64" || "${GOARCH}" == "mips64le" ]]; then
+              if [[ "${GOEXTRA:-}" == "softfloat" ]]; then
+                build_env+=(GOMIPS64=softfloat)
+              fi
+            fi
+            env "${build_env[@]}" go build -ldflags="-s -w" -o "${output_name}"
             if ! upx --best --ultra-brute "${output_name}"; then
               echo "UPX skipped for ${output_name} (unsupported format?)"
             fi
@@ -146,7 +164,7 @@ jobs:
           ## Downloads
           - Windows: download \`secDNS-windows-amd64.exe\` (64-bit) or \`secDNS-windows-386.exe\` (32-bit); Arm builds: \`secDNS-windows-arm64.exe\` and \`secDNS-windows-arm.exe\`.
           - macOS: download \`secDNS-darwin-arm64\` (Apple silicon) or \`secDNS-darwin-amd64\` (Intel).
-          - Linux: download \`secDNS-linux-amd64\` (64-bit), \`secDNS-linux-386\` (32-bit), \`secDNS-linux-arm64\` (modern Arm boards), or \`secDNS-linux-arm\` (older Arm boards).
+          - Linux: download \`secDNS-linux-amd64\` (64-bit), \`secDNS-linux-386\` (32-bit), \`secDNS-linux-arm64\` (modern Arm boards), or \`secDNS-linux-arm\` (older Arm boards). MIPS builds include \`secDNS-linux-mips\`, \`secDNS-linux-mipsle\`, \`secDNS-linux-mips64\`, \`secDNS-linux-mips64le\`, plus \`-softfloat\` variants.
           - Other platforms: additional builds for BSD, Solaris, AIX, and Plan9 are attached below.
 
           ## Usage
