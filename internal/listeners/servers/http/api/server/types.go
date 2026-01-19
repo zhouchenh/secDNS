@@ -106,8 +106,8 @@ func (qr queryRequest) qType() uint16 {
 	if v, ok := dns.StringToType[strings.ToUpper(qr.Type)]; ok {
 		return v
 	}
-	if n, err := strconv.Atoi(qr.Type); err == nil {
-		return uint16(n)
+	if v, ok := parseUint16(qr.Type); ok {
+		return v
 	}
 	return dns.TypeA
 }
@@ -119,10 +119,22 @@ func (qr queryRequest) qClass() uint16 {
 	if v, ok := dns.StringToClass[strings.ToUpper(qr.Class)]; ok {
 		return v
 	}
-	if n, err := strconv.Atoi(qr.Class); err == nil {
-		return uint16(n)
+	if v, ok := parseUint16(qr.Class); ok {
+		return v
 	}
 	return dns.ClassINET
+}
+
+func parseUint16(value string) (uint16, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseUint(value, 10, 16)
+	if err != nil {
+		return 0, false
+	}
+	return uint16(parsed), true
 }
 
 func (h *HTTPAPIServer) parseRequest(r *http.Request) (queryRequest, error) {

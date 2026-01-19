@@ -698,8 +698,8 @@ func (c *Cache) parseCacheControl(response *dns.Msg) cacheControlDirectives {
 		case directive == "nostale":
 			d.disableStale = true
 		case strings.HasPrefix(directive, "ttl="):
-			value := strings.TrimPrefix(directive, "ttl=")
-			if secs, err := strconv.Atoi(value); err == nil && secs > 0 {
+			value := strings.TrimSpace(strings.TrimPrefix(directive, "ttl="))
+			if secs, err := strconv.ParseUint(value, 10, 32); err == nil && secs > 0 {
 				v := uint32(secs)
 				d.ttlOverride = &v
 			}

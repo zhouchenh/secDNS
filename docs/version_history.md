@@ -1,5 +1,12 @@
 # Version History
 
+## v1.3.9 - 2026.01.19
+
+Bug Fixes
+
+* HTTP API: validate numeric qtype/qclass inputs to avoid overflow when parsing numeric values.
+* Cache: bound cache-control TTL override parsing to uint32 and ignore invalid values.
+
 ## v1.3.8 - 2025.12.07
 
 Bug Fixes
