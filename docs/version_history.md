@@ -1,5 +1,33 @@
 # Version History
 
+## v1.4.0 - 2026.06.02
+
+DNSSEC Validation Hardening
+
+This release reworks the recursive resolver's DNSSEC validation around an explicit
+security status and closes several forgery and availability defects. Configuration is
+backward-compatible and the shipped default policy remains `permissive`; documentation
+recommends `strict`, which is now functional. Further denial-of-existence hardening
+(authenticated insecure-delegation proofs, NSEC/NSEC3 NXDOMAIN/NODATA correctness)
+continues in a follow-up release.
+
+* recursive: validate the terminal answer against an explicit Secure/Insecure/Bogus
+  status. The AD bit is set only when the answer is Secure, the client requested DNSSEC
+  (the DO or AD bit was set), CD is not set, and the whole Answer+Authority is authentic
+  (RFC 4035 / RFC 6840). Unsigned (insecure) zones are served without AD instead of being
+  SERVFAILed under `strict`; `strict` SERVFAILs only genuinely bogus answers. Adds the
+  `honorClientCD` option (default `true`, RFC 4035 section 3.2.2).
+* recursive: concurrent queries that differ only in their CD or DO bit no longer share a
+  validation result — the singleflight key includes CD and DO, and the AD/SERVFAIL
+  decision is stamped on a per-waiter copy.
+* recursive: enforce signer bailiwick (RFC 4035 section 5.3.1) on every signature used,
+  closing a cross-zone-signer forgery that `miekg/dns` `RRSIG.Verify` does not catch.
+* recursive: bind the parent DS to the DNSKEY that actually signs the zone's DNSKEY
+  RRset (RFC 4035 section 5.2), closing an append-extra-key forgery.
+* recursive: treat a zone whose DS uses only an unsupported signing algorithm or digest
+  type as Insecure (RFC 6840 section 5.2 / RFC 8624) instead of SERVFAIL.
+* cache: fix a data race between prefetch reads and entry updates on cached entry fields.
+
 ## v1.3.11 - 2026.06.02
 
 Security / Hardening
