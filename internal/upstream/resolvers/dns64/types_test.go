@@ -176,3 +176,51 @@ func TestDNS64DepthLimit(t *testing.T) {
 		t.Fatalf("expected ErrLoopDetected, got %v", err)
 	}
 }
+
+func TestDNS64DoesNotSynthesizeOnServfail(t *testing.T) {
+	servfail := new(dns.Msg)
+	servfail.SetQuestion("svc.example.", dns.TypeAAAA)
+	servfail.Response = true
+	servfail.Rcode = dns.RcodeServerFailure
+	upstream := &fakeResolver{response: servfail}
+	res := &DNS64{Resolver: upstream, Prefix: net.ParseIP("64:ff9b::")}
+
+	query := new(dns.Msg)
+	query.SetQuestion("svc.example.", dns.TypeAAAA)
+	resp, err := res.Resolve(query, 4)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if resp == nil || resp.Rcode != dns.RcodeServerFailure {
+		t.Fatalf("expected SERVFAIL to pass through unchanged, got %v", resp)
+	}
+	if upstream.calls != 1 {
+		t.Fatalf("expected no A fallback on SERVFAIL, got %d upstream calls", upstream.calls)
+	}
+}
+
+func TestDNS64DoesNotMutateCallerQuery(t *testing.T) {
+	a := &dns.A{
+		Hdr: dns.RR_Header{Name: "x.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+		A:   net.IP{192, 0, 2, 1},
+	}
+	upstream := &fakeResolver{response: newAResponse("x.example.", a)}
+	res := &DNS64{Resolver: upstream, Prefix: net.ParseIP("64:ff9b::")}
+
+	query := new(dns.Msg)
+	query.SetQuestion("x.example.", dns.TypeAAAA)
+	if _, err := res.Resolve(query, 4); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if query.Question[0].Qtype != dns.TypeAAAA {
+		t.Fatalf("caller query qtype was mutated to %d", query.Question[0].Qtype)
+	}
+}
+
+func TestDNS64EmptyQuestionReturnsError(t *testing.T) {
+	res := &DNS64{Resolver: &fakeResolver{}, Prefix: net.ParseIP("64:ff9b::")}
+	query := new(dns.Msg) // no question section
+	if _, err := res.Resolve(query, 4); err == nil {
+		t.Fatalf("expected an error for a query with no question, got nil")
+	}
+}

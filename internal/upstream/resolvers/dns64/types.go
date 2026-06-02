@@ -28,38 +28,53 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
-	switch qType := query.Question[0].Qtype; qType {
-	case dns.TypeAAAA:
-		if d.IgnoreExistingAAAA {
-			return d.dns64(query, depth)
-		} else {
-			reply, err := d.Resolver.Resolve(query, depth-1)
-			if err != nil || !isNoErrorReply(reply) || !hasAAAA(reply) {
-				return d.dns64(query, depth)
-			}
-			return reply, nil
-		}
-	default:
+	if len(query.Question) == 0 {
+		return nil, resolver.ErrNotSupportedQuestion
+	}
+	if query.Question[0].Qtype != dns.TypeAAAA {
 		return d.Resolver.Resolve(query, depth-1)
 	}
-}
-
-func (d *DNS64) dns64(query *dns.Msg, depth int) (*dns.Msg, error) {
-	query.Question[0].Qtype = dns.TypeA
+	if d.IgnoreExistingAAAA {
+		return d.synthesize(query, depth)
+	}
 	reply, err := d.Resolver.Resolve(query, depth-1)
-	query.Question[0].Qtype = dns.TypeAAAA
 	if err != nil {
 		return nil, err
 	}
-	reply.Question[0].Qtype = dns.TypeAAAA
-	if isNoErrorReply(reply) {
-		for i := range reply.Answer {
-			if a, ok := reply.Answer[i].(*dns.A); ok {
-				reply.Answer[i] = d.aToAAAA(a)
+	// Only synthesize on an authoritative "no AAAA records" answer (NOERROR with no
+	// AAAA). SERVFAIL/REFUSED/NXDOMAIN and existing AAAA are returned unchanged, so
+	// DNS64 never masks an upstream or DNSSEC failure with a synthesized address.
+	if reply == nil || !isNoErrorReply(reply) || hasAAAA(reply) {
+		return reply, nil
+	}
+	return d.synthesize(query, depth)
+}
+
+// synthesize resolves the A records for the query name and rewrites them as AAAA
+// records under the DNS64 prefix. It operates on copies so neither the caller's
+// query nor the upstream resolver's response is mutated.
+func (d *DNS64) synthesize(query *dns.Msg, depth int) (*dns.Msg, error) {
+	aQuery := query.Copy()
+	aQuery.Question[0].Qtype = dns.TypeA
+	reply, err := d.Resolver.Resolve(aQuery, depth-1)
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return nil, nil
+	}
+	out := reply.Copy()
+	if len(out.Question) > 0 {
+		out.Question[0].Qtype = dns.TypeAAAA
+	}
+	if isNoErrorReply(out) {
+		for i := range out.Answer {
+			if a, ok := out.Answer[i].(*dns.A); ok {
+				out.Answer[i] = d.aToAAAA(a)
 			}
 		}
 	}
-	return reply, nil
+	return out, nil
 }
 
 func (d *DNS64) aToAAAA(a *dns.A) *dns.AAAA {
