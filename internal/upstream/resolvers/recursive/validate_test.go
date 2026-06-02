@@ -85,7 +85,7 @@ func TestValidatorDsMismatch(t *testing.T) {
 	t.Logf("ds name=%s sig name=%s", ds.Hdr.Name, dsSig.Hdr.Name)
 	dsSet, dsSigs := extractRRSet(&dns.Msg{Answer: []dns.RR{ds, dsSig}}, dns.TypeDS, "example.")
 	t.Logf("extracted ds %d sigs %d", len(dsSet), len(dsSigs))
-	t.Logf("ds matches child key: %v", dsMatchesDNSKEY([]dns.RR{ds}, []*dns.DNSKEY{childKey}))
+	t.Logf("ds binds child DNSKEY: %v", bindDSToDNSKEY([]dns.RR{ds}, []dns.RR{childKey}, []*dns.RRSIG{dnskeySig}, []*dns.DNSKEY{childKey}))
 	state, stateErr := v.trustedKeys("example.")
 	t.Logf("trustedKeys(example.): state=%+v err=%v", state, stateErr)
 
