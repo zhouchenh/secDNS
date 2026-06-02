@@ -475,6 +475,14 @@ func verifyRRSetWithKeys(rrs []dns.RR, sigs []*dns.RRSIG, keys []*dns.DNSKEY, be
 		return false, errDNSSECUntrustedKey
 	}
 	for _, sig := range sigs {
+		// RFC 4035 section 5.3.1: the signer must be in bailiwick of the RRset owner.
+		// miekg/dns RRSIG.Verify checks SignerName == key owner and the cryptography
+		// but NOT that the signer is an ancestor of the RR owner, so without this a
+		// cross-zone signer (the holder of any signed zone signing a forged RRset for
+		// an unrelated name) would be accepted.
+		if len(rrs) == 0 || !signerInBailiwick(sig, rrs[0].Header().Name) {
+			continue
+		}
 		for _, key := range keys {
 			if sig.KeyTag != key.KeyTag() || sig.Algorithm != key.Algorithm {
 				continue
