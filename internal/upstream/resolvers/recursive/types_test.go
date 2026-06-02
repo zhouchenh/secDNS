@@ -118,9 +118,16 @@ func TestSingleflightKeyDiffersByECS(t *testing.T) {
 	_ = (&Recursive{}).applyECS(msg1, base1)
 	_ = (&Recursive{}).applyECS(msg2, base2)
 
-	key1 := singleflightKey(msg1)
-	key2 := singleflightKey(msg2)
+	key1 := singleflightKey(msg1, false, false)
+	key2 := singleflightKey(msg2, false, false)
 	if key1 == key2 {
 		t.Fatalf("singleflight key should differ when ECS differs")
+	}
+	// CD and DO must also separate the key.
+	if singleflightKey(msg1, false, false) == singleflightKey(msg1, true, false) {
+		t.Fatalf("singleflight key should differ when the CD bit differs")
+	}
+	if singleflightKey(msg1, false, false) == singleflightKey(msg1, false, true) {
+		t.Fatalf("singleflight key should differ when the DO bit differs")
 	}
 }

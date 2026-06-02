@@ -1,6 +1,10 @@
 package recursive
 
-import "github.com/miekg/dns"
+import (
+	"errors"
+
+	"github.com/miekg/dns"
+)
 
 // DNSSEC validation policies. The shipped default is permissive; documentation
 // recommends strict.
@@ -82,5 +86,55 @@ func applyPolicy(status secStatus, policy string, clientCD, clientDO, clientAD, 
 	default:
 		// Unknown policy: fail closed.
 		return validationResult{status: statusBogus, servfail: true}
+	}
+}
+
+// validatedMsg carries a resolved answer together with its policy-independent DNSSEC
+// security status across the singleflight boundary, so the (AD, SERVFAIL) decision
+// can be stamped per waiter — with that waiter's own CD/DO/AD bits — instead of on
+// the shared object.
+type validatedMsg struct {
+	msg       *dns.Msg
+	status    secStatus
+	authentic bool
+}
+
+// dnssecOK reports whether the query set the EDNS0 DO (DNSSEC OK) bit.
+func dnssecOK(msg *dns.Msg) bool {
+	if opt := msg.IsEdns0(); opt != nil {
+		return opt.Do()
+	}
+	return false
+}
+
+// classifyTerminal computes the policy-independent DNSSEC security status of a
+// resolved terminal answer plus its AD-eligibility (whole-message authenticity).
+//
+// This is a bridge over the existing validator: it maps the current
+// (validated, error) verdict into the tri-state. The full per-RRset chain and
+// denial-of-existence classification replaces these internals in later PRs; here it
+// already lets applyPolicy enforce the correct gating (Insecure serves in strict,
+// AD requires DO/AD + CD=0, strict SERVFAILs only Bogus).
+func (r *Recursive) classifyTerminal(msg *dns.Msg, q dns.Question) (secStatus, bool) {
+	switch r.ValidateDNSSEC {
+	case policyPermissive, policyStrict:
+	default:
+		return statusIndeterminate, false // "off" or unknown: no validation, never AD
+	}
+	validated, err := r.validator.validateResponse(msg, q, policyStrict, true)
+	switch {
+	case err != nil:
+		// "No usable signatures" is ambiguous (legitimately unsigned vs a stripped
+		// signature); treat it as Insecure until the authenticated DS-absence proof
+		// lands, so strict no longer SERVFAILs unsigned zones (LAB C-01). A broken
+		// chain or a failed signature verification is genuine Bogus.
+		if errors.Is(err, errDNSSECMissingSig) {
+			return statusInsecure, false
+		}
+		return statusBogus, false
+	case validated:
+		return statusSecure, true
+	default:
+		return statusInsecure, false
 	}
 }
