@@ -68,12 +68,24 @@ func (d *DNS64) synthesize(query *dns.Msg, depth int) (*dns.Msg, error) {
 		out.Question[0].Qtype = dns.TypeAAAA
 	}
 	if isNoErrorReply(out) {
-		for i := range out.Answer {
-			if a, ok := out.Answer[i].(*dns.A); ok {
-				out.Answer[i] = d.aToAAAA(a)
+		// Rewrite A records as synthesized AAAA and drop the A RRset's signatures:
+		// those RRSIGs cover the A records, not the synthesized AAAA, and synthesized
+		// data cannot be DNSSEC-authenticated (RFC 6147 section 5.5).
+		filtered := out.Answer[:0]
+		for _, rr := range out.Answer {
+			switch v := rr.(type) {
+			case *dns.A:
+				filtered = append(filtered, d.aToAAAA(v))
+			case *dns.RRSIG:
+				// drop signatures over the original A RRset
+			default:
+				filtered = append(filtered, rr)
 			}
 		}
+		out.Answer = filtered
 	}
+	// Never advertise DNSSEC authentication for a synthesized response.
+	out.AuthenticatedData = false
 	return out, nil
 }
 
