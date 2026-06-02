@@ -31,8 +31,43 @@ func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHa
 		return
 	}
 	handleIfError(dns.ListenAndServe(net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), d.Protocol, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
-		handleIfError(w.WriteMsg(handler(query)), errorHandler)
+		reply := handler(query)
+		if reply == nil {
+			reply = new(dns.Msg)
+			reply.SetRcode(query, dns.RcodeServerFailure)
+		}
+		if d.Protocol == "udp" {
+			reply = clampUDPResponse(reply, query)
+		}
+		handleIfError(w.WriteMsg(reply), errorHandler)
 	})), errorHandler)
+}
+
+// clampUDPResponse returns reply truncated (TC=1) to the requestor's advertised UDP
+// payload size so secDNS never emits an oversized UDP datagram (a reflection /
+// amplification vector). It only copies-and-truncates when the reply actually
+// exceeds the limit, leaving the common case — and any shared/cached message — alone.
+func clampUDPResponse(reply *dns.Msg, query *dns.Msg) *dns.Msg {
+	max := udpSize(query)
+	if reply.Len() <= max {
+		return reply
+	}
+	out := reply.Copy()
+	out.Truncate(max)
+	return out
+}
+
+// udpSize is the maximum UDP payload the requestor will accept: the EDNS0 advertised
+// size (floored at the 512-octet minimum), or 512 when the query carries no OPT.
+func udpSize(query *dns.Msg) int {
+	if query != nil {
+		if opt := query.IsEdns0(); opt != nil {
+			if size := int(opt.UDPSize()); size > dns.MinMsgSize {
+				return size
+			}
+		}
+	}
+	return dns.MinMsgSize
 }
 
 func handleIfError(err error, errorHandler func(err error)) {
