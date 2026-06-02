@@ -48,10 +48,14 @@ type validationResult struct {
 // signerInBailiwick reports whether an RRSIG's signer is the zone apex at or above
 // the owner name it signs (RFC 4035 section 5.3.1). miekg/dns RRSIG.Verify checks
 // that SignerName equals the key's owner and the cryptography, but NOT that the
-// signer is in bailiwick of the RR owner. Without this check the holder of any
-// DNSSEC-signed zone could produce a cryptographically valid signature over a forged
-// RRset for an unrelated name (claiming their own zone as the signer) and have it
-// graded Secure.
+// signer is in bailiwick of the RR owner; without that ancestry check the holder of
+// any DNSSEC-signed zone could produce a cryptographically valid signature over a
+// forged RRset for an unrelated name (claiming their own zone as the signer).
+//
+// This is the primitive that the per-RRset verify path uses to reject such
+// cross-zone signers; it becomes an enforced precondition once chain validation is
+// wired in (the follow-up PR). It does not, on its own, change the current
+// classification.
 func signerInBailiwick(sig *dns.RRSIG, ownerFQDN string) bool {
 	if sig == nil {
 		return false
