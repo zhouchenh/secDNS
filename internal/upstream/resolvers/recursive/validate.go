@@ -338,11 +338,8 @@ func (v *dnssecValidator) trustedKeys(zone string) (*keyState, error) {
 	if len(dnskeys) == 0 {
 		return nil, errDNSSECNoKeys
 	}
-	if _, err := verifyRRSetWithKeys(dnskeyRRs, dnskeySigs, dnskeys, false); err != nil {
-		return nil, err
-	}
-	if !dsMatchesDNSKEY(dsSet, dnskeys) {
-		return nil, fmt.Errorf("dnssec: ds mismatch for %s", zone)
+	if !bindDSToDNSKEY(dsSet, dnskeyRRs, dnskeySigs, dnskeys) {
+		return nil, fmt.Errorf("dnssec: no DS-vouched key signs the DNSKEY RRset for %s", zone)
 	}
 
 	expiry := rrsetExpiry(dnskeyRRs, dnskeySigs, v.now())
@@ -405,7 +402,13 @@ func rrsetExpiry(rrs []dns.RR, sigs []*dns.RRSIG, now time.Time) time.Time {
 	}
 }
 
-func dsMatchesDNSKEY(dsSet []dns.RR, keys []*dns.DNSKEY) bool {
+// bindDSToDNSKEY reports whether the zone's DNSKEY RRset is vouched for by the
+// parent: some DS must match a key (KeyTag + Algorithm + digest) AND that same key
+// must sign the DNSKEY RRset (RFC 4035 section 5.2). Checking the DS match and the
+// DNSKEY self-signature independently would let an attacker append an extra key,
+// self-sign the DNSKEY RRset with it, and pass both checks while the DS only vouches
+// for the legitimate key. All key-tag matches are tried (RFC 4034 appendix B).
+func bindDSToDNSKEY(dsSet []dns.RR, dnskeyRRs []dns.RR, dnskeySigs []*dns.RRSIG, keys []*dns.DNSKEY) bool {
 	for _, dsRR := range dsSet {
 		ds, ok := dsRR.(*dns.DS)
 		if !ok {
@@ -415,7 +418,11 @@ func dsMatchesDNSKEY(dsSet []dns.RR, keys []*dns.DNSKEY) bool {
 			if ds.KeyTag != k.KeyTag() || ds.Algorithm != k.Algorithm {
 				continue
 			}
-			if generated := k.ToDS(ds.DigestType); generated != nil && strings.EqualFold(generated.Digest, ds.Digest) {
+			gen := k.ToDS(ds.DigestType)
+			if gen == nil || !strings.EqualFold(gen.Digest, ds.Digest) {
+				continue
+			}
+			if vouched, _ := verifyRRSetWithKeys(dnskeyRRs, dnskeySigs, []*dns.DNSKEY{k}, false); vouched {
 				return true
 			}
 		}
