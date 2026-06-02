@@ -1,0 +1,86 @@
+package recursive
+
+import "github.com/miekg/dns"
+
+// DNSSEC validation policies. The shipped default is permissive; documentation
+// recommends strict.
+const (
+	policyOff        = "off"
+	policyPermissive = "permissive"
+	policyStrict     = "strict"
+)
+
+// secStatus is the DNSSEC security status of an answer (RFC 4033 section 5).
+type secStatus uint8
+
+const (
+	statusIndeterminate secStatus = iota // no trust anchor reaches this name
+	statusInsecure                       // proven unsigned (authenticated DS absence) or unsupported-algorithm only
+	statusSecure                         // the answering RRset chains to a trust anchor and verifies
+	statusBogus                          // signatures or proofs are present but failed; the chain is broken
+)
+
+func (s secStatus) String() string {
+	switch s {
+	case statusInsecure:
+		return "insecure"
+	case statusSecure:
+		return "secure"
+	case statusBogus:
+		return "bogus"
+	default:
+		return "indeterminate"
+	}
+}
+
+// validationResult is the per-waiter outcome applied to a response: whether to set
+// the AD bit and whether to replace the answer with SERVFAIL.
+type validationResult struct {
+	status   secStatus
+	setAD    bool
+	servfail bool
+}
+
+// signerInBailiwick reports whether an RRSIG's signer is the zone apex at or above
+// the owner name it signs (RFC 4035 section 5.3.1). miekg/dns RRSIG.Verify checks
+// that SignerName equals the key's owner and the cryptography, but NOT that the
+// signer is in bailiwick of the RR owner. Without this check the holder of any
+// DNSSEC-signed zone could produce a cryptographically valid signature over a forged
+// RRset for an unrelated name (claiming their own zone as the signer) and have it
+// graded Secure.
+func signerInBailiwick(sig *dns.RRSIG, ownerFQDN string) bool {
+	if sig == nil {
+		return false
+	}
+	return dns.IsSubDomain(dns.CanonicalName(sig.SignerName), dns.CanonicalName(ownerFQDN))
+}
+
+// applyPolicy is the single chokepoint that turns a DNSSEC security status into the
+// per-waiter (AD, SERVFAIL) decision, given the validation policy and the client's
+// CD/DO/AD request bits. It is a pure function; the normative decision table is in
+// the DNSSEC design (section 2.5).
+//
+// AD is asserted only when the answer is Secure, the client requested DNSSEC (the DO
+// or AD bit was set, RFC 6840 section 5.8), CD is not set, the policy validates, and
+// the whole Answer+Authority section is authentic (RFC 4035 section 3.2.3, the
+// `authentic` argument). Insecure is never SERVFAIL; strict SERVFAILs only on Bogus.
+func applyPolicy(status secStatus, policy string, clientCD, clientDO, clientAD, honorCD, authentic bool) validationResult {
+	if clientCD && honorCD {
+		// RFC 4035 section 3.2.2 / RFC 6840 section 5.9: a CD=1 query must not be
+		// validation-rejected, and AD must never be asserted when validation was
+		// bypassed (RFC 6840 section 5.8).
+		return validationResult{status: status}
+	}
+	adEligible := status == statusSecure && (clientDO || clientAD) && authentic
+	switch policy {
+	case policyOff:
+		return validationResult{status: status}
+	case policyPermissive:
+		return validationResult{status: status, setAD: adEligible}
+	case policyStrict:
+		return validationResult{status: status, setAD: adEligible, servfail: status == statusBogus}
+	default:
+		// Unknown policy: fail closed.
+		return validationResult{status: statusBogus, servfail: true}
+	}
+}
