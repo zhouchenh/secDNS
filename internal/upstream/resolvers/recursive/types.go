@@ -40,6 +40,7 @@ type Recursive struct {
 	SendThrough     net.IP
 	EcsMode         string
 	EcsClientSubnet string
+	HonorClientCD   bool
 
 	initOnce       sync.Once
 	clients        map[string]*dns.Client
@@ -101,20 +102,46 @@ func (r *Recursive) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if len(query.Question) == 0 {
 		return nil, resolver.ErrNotSupportedQuestion
 	}
+	// Client DNSSEC signalling bits, read from the original query. They are NOT part
+	// of the shared resolution; they select the per-waiter AD/SERVFAIL decision below.
+	clientCD := query.CheckingDisabled
+	clientAD := query.AuthenticatedData
+	clientDO := dnssecOK(query)
+	question := query.Question[0]
+
 	baseECS := cloneECSOption(extractECSOption(query))
 	queryCopy := query.Copy()
 	if err := r.applyECS(queryCopy, baseECS); err != nil {
 		return nil, err
 	}
-	key := singleflightKey(queryCopy)
+	// CD and DO are keyed into singleflight so CD/DO-distinct queries never share an
+	// in-flight result; the AD/SERVFAIL stamp below is per-waiter regardless.
+	key := singleflightKey(queryCopy, clientCD, clientDO)
 	result, err, _ := r.reqGroup.Do(key, func() (interface{}, error) {
 		resp, e := r.resolveIterative(queryCopy, depth, baseECS)
-		return resp, e
+		if e != nil {
+			return nil, e
+		}
+		// Classify the security status once on the shared answer with AD cleared;
+		// only the per-waiter applyPolicy stamp may set AD.
+		resp.AuthenticatedData = false
+		status, authentic := r.classifyTerminal(resp, question)
+		return &validatedMsg{msg: resp, status: status, authentic: authentic}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return result.(*dns.Msg), nil
+	vm := result.(*validatedMsg)
+	res := applyPolicy(vm.status, r.ValidateDNSSEC, clientCD, clientDO, clientAD, r.HonorClientCD, vm.authentic)
+	if res.servfail {
+		sf := new(dns.Msg)
+		sf.SetRcode(query, dns.RcodeServerFailure)
+		return sf, nil
+	}
+	// Per-waiter copy so no waiter mutates the shared, AD-cleared message.
+	out := vm.msg.Copy()
+	out.AuthenticatedData = res.setAD
+	return out, nil
 }
 
 func init() {
@@ -347,6 +374,7 @@ func init() {
 					descriptor.DefaultValue{Value: nil},
 				},
 			},
+			boolFiller("HonorClientCD", "honorClientCD", true),
 		},
 	}); err != nil {
 		common.ErrOutput(err)
@@ -509,15 +537,6 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 		r.scoreboard.markSuccess(ip, rtt)
 
 		nsNames := extractNS(resp)
-
-		if validated, err := r.validator.validateResponse(resp, question, r.ValidateDNSSEC, validate); err != nil {
-			if r.ValidateDNSSEC == "strict" {
-				return nil, err
-			}
-			// permissive/off: continue without AD.
-		} else if validated {
-			resp.AuthenticatedData = true
-		}
 
 		// Cache DNSKEY/DS from authority for later trust decisions.
 		r.cacheAuthDNSKEYDS(resp)
@@ -919,6 +938,9 @@ func (r *Recursive) finalizeResponse(resp *dns.Msg) *dns.Msg {
 	}
 	resp.RecursionAvailable = true
 	resp.Authoritative = false
+	// Never trust an upstream AD bit; this resolver asserts AD only via its own
+	// per-waiter applyPolicy stamp.
+	resp.AuthenticatedData = false
 	return resp
 }
 
@@ -930,12 +952,18 @@ func (r *Recursive) socks5Timeout(timeout time.Duration) int {
 	return int(d)
 }
 
-func singleflightKey(msg *dns.Msg) string {
+func singleflightKey(msg *dns.Msg, clientCD, clientDO bool) string {
 	if len(msg.Question) == 0 {
 		return ""
 	}
 	q := msg.Question[0]
 	key := strings.ToLower(q.Name) + "|" + strconv.Itoa(int(q.Qtype)) + "|" + strconv.Itoa(int(q.Qclass))
+	if clientCD {
+		key += "|cd"
+	}
+	if clientDO {
+		key += "|do"
+	}
 	if opt := msg.IsEdns0(); opt != nil {
 		for _, o := range opt.Option {
 			if ecsOpt, ok := o.(*dns.EDNS0_SUBNET); ok {
@@ -1147,6 +1175,34 @@ func intFiller(field, jsonKey string, min, max int, def int) descriptor.ObjectFi
 								return nil, false
 							}
 							return i, true
+						},
+					},
+				},
+			},
+			descriptor.DefaultValue{Value: def},
+		},
+	}
+}
+
+func boolFiller(field, jsonKey string, def bool) descriptor.ObjectFiller {
+	return descriptor.ObjectFiller{
+		ObjectPath: descriptor.Path{field},
+		ValueSource: descriptor.ValueSources{
+			descriptor.ObjectAtPath{
+				ObjectPath: descriptor.Path{jsonKey},
+				AssignableKind: descriptor.AssignableKinds{
+					descriptor.KindBool,
+					descriptor.ConvertibleKind{
+						Kind: descriptor.KindString,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							switch strings.ToLower(strings.TrimSpace(original.(string))) {
+							case "true":
+								return true, true
+							case "false":
+								return false, true
+							default:
+								return nil, false
+							}
 						},
 					},
 				},
