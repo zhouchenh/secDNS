@@ -122,9 +122,6 @@ func init() {
 		Type: typeOfRecursive,
 		Filler: descriptor.Fillers{
 			descriptor.ObjectFiller{
-				ValueSource: descriptor.DefaultValue{Value: defaultRecursiveConfig},
-			},
-			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"RootServers"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{
@@ -166,74 +163,83 @@ func init() {
 			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"ValidateDNSSEC"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"validateDNSSEC"},
-					AssignableKind: descriptor.ConvertibleKind{
-						Kind: descriptor.KindString,
-						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-							str, ok := original.(string)
-							if !ok {
-								return nil, false
-							}
-							str = strings.ToLower(strings.TrimSpace(str))
-							switch str {
-							case "strict", "permissive", "off":
-								return str, true
-							default:
-								return nil, false
-							}
-						},
-					},
-				},
-			},
-			descriptor.ObjectFiller{
-				ObjectPath: descriptor.Path{"QNameMinimize"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"qnameMinimize"},
-					AssignableKind: descriptor.AssignableKinds{
-						descriptor.KindBool,
-						descriptor.ConvertibleKind{
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"validateDNSSEC"},
+						AssignableKind: descriptor.ConvertibleKind{
 							Kind: descriptor.KindString,
 							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								switch strings.ToLower(strings.TrimSpace(original.(string))) {
-								case "true":
-									return true, true
-								case "false":
-									return false, true
+								str, ok := original.(string)
+								if !ok {
+									return nil, false
+								}
+								str = strings.ToLower(strings.TrimSpace(str))
+								switch str {
+								case "strict", "permissive", "off":
+									return str, true
 								default:
 									return nil, false
 								}
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: "permissive"},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"QNameMinimize"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"qnameMinimize"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.KindBool,
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									switch strings.ToLower(strings.TrimSpace(original.(string))) {
+									case "true":
+										return true, true
+									case "false":
+										return false, true
+									default:
+										return nil, false
+									}
+								},
+							},
+						},
+					},
+					descriptor.DefaultValue{Value: true},
 				},
 			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"EDNSSize"},
-				ValueSource: descriptor.ObjectAtPath{
-					ObjectPath: descriptor.Path{"ednsSize"},
-					AssignableKind: descriptor.AssignableKinds{
-						descriptor.ConvertibleKind{
-							Kind: descriptor.KindFloat64,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								val := int(original.(float64))
-								if val <= 0 || val > 4096 {
-									return nil, false
-								}
-								return uint16(val), true
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"ednsSize"},
+						AssignableKind: descriptor.AssignableKinds{
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindFloat64,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									val := int(original.(float64))
+									if val <= 0 || val > 4096 {
+										return nil, false
+									}
+									return uint16(val), true
+								},
 							},
-						},
-						descriptor.ConvertibleKind{
-							Kind: descriptor.KindString,
-							ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
-								i, err := strconv.Atoi(strings.TrimSpace(original.(string)))
-								if err != nil || i <= 0 || i > 4096 {
-									return nil, false
-								}
-								return uint16(i), true
+							descriptor.ConvertibleKind{
+								Kind: descriptor.KindString,
+								ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+									i, err := strconv.Atoi(strings.TrimSpace(original.(string)))
+									if err != nil || i <= 0 || i > 4096 {
+										return nil, false
+									}
+									return uint16(i), true
+								},
 							},
 						},
 					},
+					descriptor.DefaultValue{Value: uint16(1232)},
 				},
 			},
 			durationFiller("Timeout", "timeout", defaultRecursiveConfig.Timeout),
