@@ -329,6 +329,19 @@ func (v *dnssecValidator) trustedKeys(zone string) (*keyState, error) {
 		return nil, err
 	}
 
+	if !dsSetHasSupportedAlgo(dsSet) {
+		// RFC 6840 section 5.2 / RFC 8624: an authenticated DS RRset whose algorithm
+		// or digest types are all unsupported means the path to the child cannot be
+		// verified; the child zone is treated as unsigned (Insecure), never
+		// Bogus/SERVFAIL.
+		state := &keyState{secure: false, keys: nil, expires: fallbackExpiry(v.now())}
+		if !dsExpiry.IsZero() && dsExpiry.Before(state.expires) {
+			state.expires = dsExpiry
+		}
+		v.storeKeyState(zone, state)
+		return state, nil
+	}
+
 	dnskeyMsg, err := v.resolveDNSKEY(zone)
 	if err != nil {
 		return nil, err
@@ -425,6 +438,41 @@ func bindDSToDNSKEY(dsSet []dns.RR, dnskeyRRs []dns.RR, dnskeySigs []*dns.RRSIG,
 			if vouched, _ := verifyRRSetWithKeys(dnskeyRRs, dnskeySigs, []*dns.DNSKEY{k}, false); vouched {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// supportedSignAlgos and supportedDSDigests list the DNSSEC signing algorithms and
+// DS digest types this validator can verify (RFC 8624). Anything else makes a zone
+// Insecure (RFC 6840 section 5.2), never Bogus.
+var supportedSignAlgos = map[uint8]bool{
+	dns.RSASHA1:          true,
+	dns.RSASHA1NSEC3SHA1: true,
+	dns.RSASHA256:        true,
+	dns.RSASHA512:        true,
+	dns.ECDSAP256SHA256:  true,
+	dns.ECDSAP384SHA384:  true,
+	dns.ED25519:          true,
+}
+
+var supportedDSDigests = map[uint8]bool{
+	dns.SHA1:   true,
+	dns.SHA256: true,
+	dns.SHA384: true,
+}
+
+// dsSetHasSupportedAlgo reports whether the DS RRset contains at least one DS whose
+// signing algorithm and digest type are both supported. If not, the child zone must
+// be treated as unsigned (RFC 6840 section 5.2).
+func dsSetHasSupportedAlgo(dsSet []dns.RR) bool {
+	for _, rr := range dsSet {
+		ds, ok := rr.(*dns.DS)
+		if !ok {
+			continue
+		}
+		if supportedSignAlgos[ds.Algorithm] && supportedDSDigests[ds.DigestType] {
+			return true
 		}
 	}
 	return false
