@@ -320,8 +320,8 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 		existing.OriginalTTL = newTTL
 		existing.CachedAt = time.Now()
 		existing.ExpiresAt = existing.CachedAt.Add(time.Duration(existing.OriginalTTL) * time.Second)
-		existing.AccessCount = 0
-		existing.prefetching = 0
+		atomic.StoreUint64(&existing.AccessCount, 0)
+		atomic.StoreUint32(&existing.prefetching, 0)
 		existing.DisablePrefetch = directives.disablePrefetch
 		existing.DisableStale = directives.disableStale
 		c.lru.MoveToFront(existing.lruNode)
@@ -947,17 +947,28 @@ func (c *Cache) maybePrefetch(key string, entry *Entry, query *dns.Msg, depth in
 	if entry == nil || query == nil {
 		return
 	}
-	if entry.DisablePrefetch || c.PrefetchThreshold == 0 || c.PrefetchPercent <= 0 {
+	if c.PrefetchThreshold == 0 || c.PrefetchPercent <= 0 {
 		return
 	}
-	totalTTL := time.Duration(entry.OriginalTTL) * time.Second
+	// Snapshot the per-entry fields that setWithDirectives mutates under the lock;
+	// reading them lock-free here races with a concurrent update of the same entry.
+	c.mutex.RLock()
+	disablePrefetch := entry.DisablePrefetch
+	originalTTL := entry.OriginalTTL
+	cachedAt := entry.CachedAt
+	c.mutex.RUnlock()
+
+	if disablePrefetch {
+		return
+	}
+	totalTTL := time.Duration(originalTTL) * time.Second
 	if totalTTL <= 0 {
 		return
 	}
 	if atomic.LoadUint64(&entry.AccessCount) < c.PrefetchThreshold {
 		return
 	}
-	elapsed := time.Since(entry.CachedAt)
+	elapsed := time.Since(cachedAt)
 	if elapsed <= 0 {
 		return
 	}
