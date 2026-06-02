@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
@@ -31,7 +32,7 @@ func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHa
 		return
 	}
 	handleIfError(dns.ListenAndServe(net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), d.Protocol, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
-		reply := handler(query)
+		reply := safeHandle(handler, query, errorHandler)
 		if reply == nil {
 			reply = new(dns.Msg)
 			reply.SetRcode(query, dns.RcodeServerFailure)
@@ -41,6 +42,19 @@ func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHa
 		}
 		handleIfError(w.WriteMsg(reply), errorHandler)
 	})), errorHandler)
+}
+
+// safeHandle runs handler(query), converting a panic in the resolver tree into a nil
+// reply so the caller can answer SERVFAIL. miekg's server does not recover handler
+// panics, so without this a single defective code path would crash the whole process.
+func safeHandle(handler func(query *dns.Msg) (reply *dns.Msg), query *dns.Msg, errorHandler func(err error)) (reply *dns.Msg) {
+	defer func() {
+		if r := recover(); r != nil {
+			handleIfError(fmt.Errorf("dnsServer: recovered from handler panic: %v", r), errorHandler)
+			reply = nil
+		}
+	}()
+	return handler(query)
 }
 
 // clampUDPResponse returns reply truncated (TC=1) to the requestor's advertised UDP
