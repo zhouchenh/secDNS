@@ -336,3 +336,15 @@ func httptestRequest(method, body string, query url.Values) *http.Request {
 	req, _ := http.NewRequest(method, urlStr, bytes.NewBufferString(body))
 	return req
 }
+
+func TestValidateRequestNameLength(t *testing.T) {
+	if _, err := validateRequest(queryRequest{Name: "example.com"}); err != nil {
+		t.Fatalf("valid name rejected: %v", err)
+	}
+	if _, err := validateRequest(queryRequest{Name: strings.Repeat("a", 256)}); err != ErrNameTooLong {
+		t.Fatalf("expected ErrNameTooLong for a 256-octet name, got %v", err)
+	}
+	if _, err := validateRequest(queryRequest{Name: "   "}); err != ErrMissingName {
+		t.Fatalf("expected ErrMissingName for a blank name, got %v", err)
+	}
+}

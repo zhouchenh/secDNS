@@ -12,7 +12,13 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// maxRequestBodyBytes bounds the request body the /resolve endpoint will read, so a
+// slow or oversized body cannot exhaust memory. A DNS query payload is tiny; 64 KiB
+// is generous.
+const maxRequestBodyBytes = 64 << 10
 
 type HTTPAPIServer struct {
 	Listen net.IP
@@ -40,8 +46,13 @@ func (h *HTTPAPIServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), err
 		h.handleResolve(w, r, handler, errorHandler)
 	})
 	srv := &http.Server{
-		Addr:    net.JoinHostPort(h.Listen.String(), strconv.Itoa(int(h.Port))),
-		Handler: mux,
+		Addr:              net.JoinHostPort(h.Listen.String(), strconv.Itoa(int(h.Port))),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    8 << 10,
 	}
 	handleIfError(srv.ListenAndServe(), errorHandler)
 }
@@ -66,6 +77,7 @@ type queryRequest struct {
 }
 
 func (h *HTTPAPIServer) handleResolve(w http.ResponseWriter, r *http.Request, handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	req, err := h.parseRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -148,8 +160,6 @@ func (h *HTTPAPIServer) parseRequest(r *http.Request) (queryRequest, error) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				return queryRequest{}, err
 			}
-			req.Raw = req.Raw
-			req.Simple = req.Simple
 			return validateRequest(req)
 		}
 		if err := r.ParseForm(); err != nil {
@@ -189,6 +199,11 @@ func validateRequest(req queryRequest) (queryRequest, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		return queryRequest{}, ErrMissingName
+	}
+	// A DNS name is at most 255 octets on the wire; reject anything longer up front
+	// so an oversized name cannot drive superlinear work in downstream rule matching.
+	if len(req.Name) > 255 {
+		return queryRequest{}, ErrNameTooLong
 	}
 	return req, nil
 }
