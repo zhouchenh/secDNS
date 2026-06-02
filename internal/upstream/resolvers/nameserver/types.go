@@ -122,8 +122,11 @@ func (ns *NameServer) queryWithProtocol(query *dns.Msg, address string, protocol
 	}
 	// Read until a response that matches the query (transaction ID + question)
 	// arrives or the deadline fires, discarding unsolicited or mismatched datagrams
-	// so a forged or stray packet cannot be accepted as the answer.
-	for {
+	// so a forged or stray packet cannot be accepted as the answer. A bounded number
+	// of mismatches is tolerated so a flood of spoofed datagrams cannot spin the CPU
+	// for the entire deadline window.
+	const maxMismatchedResponses = 8
+	for mismatches := 0; ; mismatches++ {
 		msg, err := connection.ReadMsg()
 		if err != nil {
 			return nil, err
@@ -131,15 +134,26 @@ func (ns *NameServer) queryWithProtocol(query *dns.Msg, address string, protocol
 		if responseMatchesQuery(msg, query) {
 			return msg, nil
 		}
+		if mismatches >= maxMismatchedResponses {
+			return nil, ErrNoMatchingResponse
+		}
 	}
 }
 
 // responseMatchesQuery reports whether resp is a plausible answer to query: the
-// transaction ID and the question section (name/type/class) must match. Name
-// comparison is case-insensitive per RFC 4343.
+// transaction ID must match, and either the question section (name/type/class, name
+// compared case-insensitively per RFC 4343) is echoed, or the response is a
+// header-only error reply that omits the question. Servers commonly return
+// FORMERR/SERVFAIL/REFUSED/NOTIMP without echoing the question, so rejecting those
+// would stall the query until the deadline instead of surfacing the error.
 func responseMatchesQuery(resp, query *dns.Msg) bool {
 	if resp == nil || resp.Id != query.Id {
 		return false
+	}
+	if len(resp.Question) == 0 {
+		// Accept only an error reply with no question; a question-less NOERROR
+		// carries no usable answer and could be a spoofed empty success.
+		return resp.Rcode != dns.RcodeSuccess
 	}
 	if len(resp.Question) != len(query.Question) {
 		return false

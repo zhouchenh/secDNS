@@ -206,3 +206,83 @@ func mockSpoofThenValidClient(valid *dns.Msg) *client {
 	c.dialTLSFunc = dial
 	return c
 }
+
+func TestResponseMatchesQueryHeaderOnlyError(t *testing.T) {
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeA)
+	q.Id = 0x4242
+
+	servfail := new(dns.Msg)
+	servfail.Id = q.Id
+	servfail.Response = true
+	servfail.Rcode = dns.RcodeServerFailure
+	if !responseMatchesQuery(servfail, q) {
+		t.Fatalf("header-only SERVFAIL with matching ID should be accepted")
+	}
+
+	emptyOK := new(dns.Msg)
+	emptyOK.Id = q.Id
+	emptyOK.Response = true // NOERROR, no question
+	if responseMatchesQuery(emptyOK, q) {
+		t.Fatalf("header-only NOERROR with no question should be rejected")
+	}
+
+	badID := new(dns.Msg)
+	badID.Id = q.Id ^ 0xFFFF
+	badID.Response = true
+	badID.Rcode = dns.RcodeServerFailure
+	if responseMatchesQuery(badID, q) {
+		t.Fatalf("header-only error with wrong ID should be rejected")
+	}
+}
+
+// TestNameServerReturnsHeaderOnlyServfail verifies that an error reply which omits
+// the question (as many servers send) is surfaced immediately rather than being
+// discarded until the deadline.
+func TestNameServerReturnsHeaderOnlyServfail(t *testing.T) {
+	query := new(dns.Msg)
+	query.SetQuestion("example.com.", dns.TypeA)
+
+	ns := &NameServer{
+		Protocol:     "udp",
+		Address:      net.IPv4(127, 0, 0, 1),
+		Port:         53,
+		QueryTimeout: time.Second,
+	}
+	ns.queryClient = mockHeaderOnlyServfailClient()
+	ns.initOnce.Do(func() {})
+
+	resp, err := ns.Resolve(query, 5)
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if resp.Rcode != dns.RcodeServerFailure {
+		t.Fatalf("expected SERVFAIL to pass through, got %s", dns.RcodeToString[resp.Rcode])
+	}
+}
+
+func mockHeaderOnlyServfailClient() *client {
+	c := &client{
+		Client: &dns.Client{Net: "udp", UDPSize: 4096, Dialer: &net.Dialer{Timeout: time.Second}},
+	}
+	dial := func(network, address string) (net.Conn, error) {
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer serverConn.Close()
+			s := &dns.Conn{Conn: serverConn}
+			req, err := s.ReadMsg()
+			if err != nil {
+				return
+			}
+			out := new(dns.Msg)
+			out.Id = req.Id
+			out.Response = true
+			out.Rcode = dns.RcodeServerFailure // header-only: no question echoed
+			_ = s.WriteMsg(out)
+		}()
+		return clientConn, nil
+	}
+	c.dialFunc = dial
+	c.dialTLSFunc = dial
+	return c
+}
