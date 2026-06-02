@@ -59,34 +59,37 @@ func (ns *NameServer) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		ns.initClient()
 	})
 
-	// Apply ECS configuration to query if configured
+	// Work on a copy so the caller's message is never mutated, and randomize the
+	// transaction ID for the upstream query to raise the bar for off-path spoofing.
+	// The caller's original ID is restored on the reply before returning.
+	originalID := query.Id
+	outbound := query.Copy()
+	outbound.Id = dns.Id()
+
+	// Apply ECS configuration to the outbound query if configured.
 	if ns.ecsConfig != nil {
-		// Create a copy of the query to avoid modifying the original
-		queryCopy := query.Copy()
-		if err := ns.ecsConfig.ApplyToQuery(queryCopy); err != nil {
+		if err := ns.ecsConfig.ApplyToQuery(outbound); err != nil {
 			return nil, err
 		}
-		query = queryCopy
 	}
 
 	address := net.JoinHostPort(ns.Address.String(), strconv.Itoa(int(ns.Port)))
 
-	// Try with the configured protocol
-	msg, err := ns.queryWithProtocol(query, address, ns.Protocol)
+	// Try with the configured protocol.
+	msg, err := ns.queryWithProtocol(outbound, address, ns.Protocol)
 	if err != nil {
 		return nil, err
 	}
 
-	// If UDP response is truncated, retry with TCP
+	// If the UDP response is truncated, retry over TCP; keep the truncated UDP
+	// response if the TCP attempt fails.
 	if msg.Truncated && ns.Protocol == "udp" {
-		tcpMsg, tcpErr := ns.queryWithProtocol(query, address, "tcp")
-		if tcpErr != nil {
-			// Return original truncated response if TCP fails
-			return msg, nil
+		if tcpMsg, tcpErr := ns.queryWithProtocol(outbound, address, "tcp"); tcpErr == nil {
+			msg = tcpMsg
 		}
-		return tcpMsg, nil
 	}
 
+	msg.Id = originalID
 	return msg, nil
 }
 
@@ -117,11 +120,38 @@ func (ns *NameServer) queryWithProtocol(query *dns.Msg, address string, protocol
 	if err := connection.WriteMsg(query); err != nil {
 		return nil, err
 	}
-	msg, err := connection.ReadMsg()
-	if err != nil {
-		return nil, err
+	// Read until a response that matches the query (transaction ID + question)
+	// arrives or the deadline fires, discarding unsolicited or mismatched datagrams
+	// so a forged or stray packet cannot be accepted as the answer.
+	for {
+		msg, err := connection.ReadMsg()
+		if err != nil {
+			return nil, err
+		}
+		if responseMatchesQuery(msg, query) {
+			return msg, nil
+		}
 	}
-	return msg, nil
+}
+
+// responseMatchesQuery reports whether resp is a plausible answer to query: the
+// transaction ID and the question section (name/type/class) must match. Name
+// comparison is case-insensitive per RFC 4343.
+func responseMatchesQuery(resp, query *dns.Msg) bool {
+	if resp == nil || resp.Id != query.Id {
+		return false
+	}
+	if len(resp.Question) != len(query.Question) {
+		return false
+	}
+	for i := range query.Question {
+		q := query.Question[i]
+		r := resp.Question[i]
+		if r.Qtype != q.Qtype || r.Qclass != q.Qclass || !strings.EqualFold(r.Name, q.Name) {
+			return false
+		}
+	}
+	return true
 }
 
 func (ns *NameServer) NameServerResolver() {}
