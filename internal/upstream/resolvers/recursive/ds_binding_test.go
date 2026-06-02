@@ -33,3 +33,30 @@ func TestBindDSToDNSKEYRejectsUnvouchedSelfSign(t *testing.T) {
 		t.Fatalf("DNSKEY RRset signed by the DS-vouched key was rejected")
 	}
 }
+
+func TestDSSetHasSupportedAlgo(t *testing.T) {
+	mkDS := func(algo, digest uint8) dns.RR {
+		return &dns.DS{
+			Hdr:        dns.RR_Header{Name: "example.", Rrtype: dns.TypeDS, Class: dns.ClassINET},
+			Algorithm:  algo,
+			DigestType: digest,
+			KeyTag:     1234,
+			Digest:     "abcd",
+		}
+	}
+	if !dsSetHasSupportedAlgo([]dns.RR{mkDS(dns.ECDSAP256SHA256, dns.SHA256)}) {
+		t.Fatalf("ECDSAP256SHA256 / SHA256 should be supported")
+	}
+	if dsSetHasSupportedAlgo([]dns.RR{mkDS(252, dns.SHA256)}) {
+		t.Fatalf("unknown signing algorithm should be unsupported")
+	}
+	if dsSetHasSupportedAlgo([]dns.RR{mkDS(dns.ECDSAP256SHA256, 99)}) {
+		t.Fatalf("unknown digest type should be unsupported")
+	}
+	if !dsSetHasSupportedAlgo([]dns.RR{mkDS(252, 99), mkDS(dns.ECDSAP256SHA256, dns.SHA256)}) {
+		t.Fatalf("a supported DS among unsupported ones should count as supported")
+	}
+	if dsSetHasSupportedAlgo(nil) {
+		t.Fatalf("empty DS set should be unsupported")
+	}
+}
