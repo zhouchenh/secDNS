@@ -224,3 +224,44 @@ func TestDNS64EmptyQuestionReturnsError(t *testing.T) {
 		t.Fatalf("expected an error for a query with no question, got nil")
 	}
 }
+
+func TestDNS64SynthesisStripsSignaturesAndAD(t *testing.T) {
+	a := &dns.A{
+		Hdr: dns.RR_Header{Name: "svc.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+		A:   net.IP{192, 0, 2, 9},
+	}
+	sig := &dns.RRSIG{
+		Hdr:         dns.RR_Header{Name: "svc.example.", Rrtype: dns.TypeRRSIG, Class: dns.ClassINET, Ttl: 60},
+		TypeCovered: dns.TypeA, Algorithm: 13, Labels: 2, OrigTtl: 60,
+		Expiration:  2000000000, Inception: 1000000000, KeyTag: 12345,
+		SignerName:  "example.", Signature: "aGVsbG8=",
+	}
+	resp := newAResponse("svc.example.", a, sig)
+	resp.AuthenticatedData = true
+
+	res := &DNS64{Resolver: &fakeResolver{response: resp}, Prefix: net.ParseIP("64:ff9b::")}
+	query := new(dns.Msg)
+	query.SetQuestion("svc.example.", dns.TypeAAAA)
+	out, err := res.Resolve(query, 4)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if out.AuthenticatedData {
+		t.Fatalf("synthesized response must not set the AD bit (RFC 6147 5.5)")
+	}
+	var aaaa, rrsig int
+	for _, rr := range out.Answer {
+		switch rr.(type) {
+		case *dns.AAAA:
+			aaaa++
+		case *dns.RRSIG:
+			rrsig++
+		}
+	}
+	if aaaa != 1 {
+		t.Fatalf("expected 1 synthesized AAAA, got %d", aaaa)
+	}
+	if rrsig != 0 {
+		t.Fatalf("synthesized response must not retain RRSIG records, got %d", rrsig)
+	}
+}
