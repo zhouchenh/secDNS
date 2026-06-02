@@ -1,5 +1,21 @@
 # Version History
 
+## v1.3.11 - 2026.06.02
+
+Security / Hardening
+
+* nameServer: accept header-only error replies (FORMERR/SERVFAIL/REFUSED/NOTIMP that omit
+  the question) so they are surfaced immediately instead of stalling until the query
+  timeout; bound the response read loop against spoofed-datagram floods.
+* dns64: do not advertise DNSSEC authentication for synthesized AAAA — drop the A RRset's
+  RRSIGs from the answer and clear the AD bit (RFC 6147 section 5.5).
+* dnsServer: truncate oversized UDP responses to the requestor's EDNS/512 size with the TC
+  bit set, closing a reflection/amplification vector; synthesize SERVFAIL for a nil reply.
+* httpAPIServer: add Read/Write/Idle/Header timeouts and an `http.MaxBytesReader` body limit
+  (Slowloris and memory hardening); reject names longer than 255 octets.
+* dnsServer: recover handler panics into SERVFAIL so a resolver-tree defect cannot crash the
+  process.
+
 ## v1.3.10 - 2026.06.02
 
 Bug Fixes
