@@ -1,5 +1,21 @@
 # Version History
 
+## v1.3.10 - 2026.06.02
+
+Bug Fixes
+
+* recursive: build each `recursive` resolver from independent configuration instead of a shared
+  default instance, and default `validateDNSSEC`/`qnameMinimize`/`ednsSize` when omitted. Configs
+  that leave those keys out now load (including the documented minimal example), and a `strict`
+  resolver no longer silently behaves as `permissive` when another recursive resolver is configured.
+* nameServer: validate upstream responses against the query (transaction ID and question section,
+  case-insensitive name per RFC 4343) and randomize the upstream transaction ID per query, so a
+  spoofed or mismatched datagram is no longer accepted as the answer.
+* dns64: guard queries with no question section (previously a panic), synthesize on copies of both
+  the query and the upstream reply (no caller/upstream mutation), and only synthesize on a NOERROR
+  answer with no AAAA records so `SERVFAIL`/`REFUSED`/`NXDOMAIN` are no longer masked.
+* core: report the correct version (the constant was left at `1.3.8`).
+
 ## v1.3.9 - 2026.01.19
 
 Bug Fixes
