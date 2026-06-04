@@ -202,6 +202,50 @@ func mustGenerateKey(name string) (*dns.DNSKEY, crypto.Signer) {
 	return key, signer
 }
 
+// TestValidateDenialWithSOARRSIG guards against a regression where the RRSIG covering
+// the SOA in an NXDOMAIN/NODATA authority section (always present for negative caching)
+// was collected as a denial proof record, leaving an orphan signature that failed
+// strict verification and SERVFAILed every signed negative answer. Real responses
+// always carry SOA + RRSIG(SOA); earlier tests omitted them and missed the bug.
+func TestValidateDenialWithSOARRSIG(t *testing.T) {
+	now := time.Now()
+	key, priv := mustGenerateKey("example.")
+	secureState := func() *dnssecValidator {
+		v := newValidator()
+		v.now = func() time.Time { return now }
+		v.keyCache["example."] = &keyState{keys: []*dns.DNSKEY{key}, secure: true, expires: now.Add(time.Hour)}
+		return v
+	}
+	soa := &dns.SOA{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300}, Ns: "ns.example.", Mbox: "h.example.", Serial: 1, Refresh: 7200, Retry: 3600, Expire: 1209600, Minttl: 300}
+	soaSig := mustSign([]dns.RR{soa}, key, priv, "example.", dns.TypeSOA, now)
+
+	t.Run("NXDOMAIN", func(t *testing.T) {
+		cover := &dns.NSEC{Hdr: dns.RR_Header{Name: "a.example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET, Ttl: 300}, NextDomain: "z.example.", TypeBitMap: []uint16{dns.TypeA}}
+		coverSig := mustSign([]dns.RR{cover}, key, priv, "example.", dns.TypeNSEC, now)
+		apex := &dns.NSEC{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET, Ttl: 300}, NextDomain: "a.example.", TypeBitMap: []uint16{dns.TypeSOA, dns.TypeNS}}
+		apexSig := mustSign([]dns.RR{apex}, key, priv, "example.", dns.TypeNSEC, now)
+		msg := &dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeNameError}}
+		msg.Ns = []dns.RR{soa, soaSig, cover, coverSig, apex, apexSig}
+		q := dns.Question{Name: "nope.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+		proof, _, err := secureState().validateDenial(msg, q, false)
+		if err != nil || !proof {
+			t.Fatalf("NXDOMAIN with SOA+RRSIG must validate: proof=%v err=%v", proof, err)
+		}
+	})
+
+	t.Run("NODATA", func(t *testing.T) {
+		nodata := &dns.NSEC{Hdr: dns.RR_Header{Name: "www.example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET, Ttl: 300}, NextDomain: "x.example.", TypeBitMap: []uint16{dns.TypeA, dns.TypeRRSIG, dns.TypeNSEC}}
+		nodataSig := mustSign([]dns.RR{nodata}, key, priv, "example.", dns.TypeNSEC, now)
+		msg := &dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}}
+		msg.Ns = []dns.RR{soa, soaSig, nodata, nodataSig}
+		q := dns.Question{Name: "www.example.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}
+		proof, _, err := secureState().validateDenial(msg, q, false)
+		if err != nil || !proof {
+			t.Fatalf("NODATA with SOA+RRSIG must validate: proof=%v err=%v", proof, err)
+		}
+	})
+}
+
 func mustSign(rrs []dns.RR, key *dns.DNSKEY, priv crypto.Signer, signer string, covered uint16, now time.Time) *dns.RRSIG {
 	sig := &dns.RRSIG{
 		Hdr: dns.RR_Header{
