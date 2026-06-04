@@ -22,25 +22,26 @@ import (
 // Recursive is a placeholder for a full recursive, DNSSEC-validating resolver.
 // It is scaffolded now to wire descriptors, defaults, and root hints; recursion and validation will be implemented in follow-up steps.
 type Recursive struct {
-	RootServers     []RootServer
-	ValidateDNSSEC  string
-	QNameMinimize   bool
-	EDNSSize        uint16
-	Timeout         time.Duration
-	Retries         int
-	ProbeTopN       int
-	ProbeInterval   time.Duration
-	PreferIPv6      bool
-	MaxDepth        int
-	MaxCNAME        int
-	MaxReferrals    int
-	Socks5Proxy     string
-	Socks5Username  string
-	Socks5Password  string
-	SendThrough     net.IP
-	EcsMode         string
-	EcsClientSubnet string
-	HonorClientCD   bool
+	RootServers        []RootServer
+	ValidateDNSSEC     string
+	QNameMinimize      bool
+	EDNSSize           uint16
+	Timeout            time.Duration
+	Retries            int
+	ProbeTopN          int
+	ProbeInterval      time.Duration
+	PreferIPv6         bool
+	MaxDepth           int
+	MaxCNAME           int
+	MaxReferrals       int
+	Socks5Proxy        string
+	Socks5Username     string
+	Socks5Password     string
+	SendThrough        net.IP
+	EcsMode            string
+	EcsClientSubnet    string
+	HonorClientCD      bool
+	Nsec3MaxIterations int
 
 	initOnce       sync.Once
 	clients        map[string]*dns.Client
@@ -375,6 +376,7 @@ func init() {
 				},
 			},
 			boolFiller("HonorClientCD", "honorClientCD", true),
+			intFiller("Nsec3MaxIterations", "nsec3MaxIterations", 0, 2500, 100),
 		},
 	}); err != nil {
 		common.ErrOutput(err)
@@ -407,6 +409,9 @@ func (r *Recursive) initialize() {
 	validator.resolveDS = r.fetchDS
 	validator.logger = func(msg string) {
 		common.ErrOutput(fmt.Errorf(msg))
+	}
+	if r.Nsec3MaxIterations > 0 {
+		validator.nsec3MaxIter = uint16(r.Nsec3MaxIterations)
 	}
 	r.validator = validator
 	// Initial probes are best-effort; failures keep default ordering.
