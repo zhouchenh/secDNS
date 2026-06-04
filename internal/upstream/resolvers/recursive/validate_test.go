@@ -152,20 +152,22 @@ func TestValidatorNSECNXDOMAIN(t *testing.T) {
 func TestValidatorInsecureDelegation(t *testing.T) {
 	now := time.Now()
 	rootKey, rootPriv := mustGenerateKey(".")
-	childKey, childPriv := mustGenerateKey("example.")
+
+	// The (secure) root proves there is no DS for example. with an NSEC owned by the
+	// delegation point: NS set, SOA and DS clear. This authenticates the insecure
+	// delegation (RFC 4035 section 5.2).
+	noDS := &dns.NSEC{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeNSEC, Class: dns.ClassINET, Ttl: 600}, NextDomain: "zzz.", TypeBitMap: []uint16{dns.TypeNS, dns.TypeRRSIG, dns.TypeNSEC}}
+	noDSSig := mustSign([]dns.RR{noDS}, rootKey, rootPriv, ".", dns.TypeNSEC, now)
 	rootDNSKEYSig := mustSign([]dns.RR{rootKey}, rootKey, rootPriv, ".", dns.TypeDNSKEY, now)
-	dnskeySig := mustSign([]dns.RR{childKey}, childKey, childPriv, "example.", dns.TypeDNSKEY, now)
 
 	v := newValidator()
 	v.trustAnchors = []dns.RR{rootKey}
 	v.now = func() time.Time { return now }
-	v.resolveDS = func(string) (*dns.Msg, error) { return &dns.Msg{}, nil }
+	v.resolveDS = func(string) (*dns.Msg, error) { return &dns.Msg{Ns: []dns.RR{noDS, noDSSig}}, nil }
 	v.resolveDNSKEY = func(name string) (*dns.Msg, error) {
 		switch dns.Fqdn(name) {
 		case ".":
 			return &dns.Msg{Answer: []dns.RR{rootKey, rootDNSKEYSig}}, nil
-		case "example.":
-			return &dns.Msg{Answer: []dns.RR{childKey, dnskeySig}}, nil
 		default:
 			return &dns.Msg{}, nil
 		}
@@ -177,10 +179,46 @@ func TestValidatorInsecureDelegation(t *testing.T) {
 
 	validated, err := v.validateResponse(msg, q, "strict", true)
 	if err != nil {
-		t.Fatalf("unexpected error for insecure delegation: %v", err)
+		t.Fatalf("unexpected error for authenticated insecure delegation: %v", err)
 	}
 	if validated {
 		t.Fatalf("insecure delegation should not be marked validated")
+	}
+}
+
+// TestValidatorDSStripDowngrade verifies that a missing DS RRset under a SECURE parent
+// with no authenticated DS-absence proof (an on-path DS-stripping downgrade) is
+// rejected rather than silently treated as an insecure (unsigned) delegation.
+func TestValidatorDSStripDowngrade(t *testing.T) {
+	now := time.Now()
+	rootKey, rootPriv := mustGenerateKey(".")
+	rootDNSKEYSig := mustSign([]dns.RR{rootKey}, rootKey, rootPriv, ".", dns.TypeDNSKEY, now)
+
+	v := newValidator()
+	v.trustAnchors = []dns.RR{rootKey}
+	v.now = func() time.Time { return now }
+	// DS RRset and its proof both stripped: empty response.
+	v.resolveDS = func(string) (*dns.Msg, error) { return &dns.Msg{}, nil }
+	v.resolveDNSKEY = func(name string) (*dns.Msg, error) {
+		switch dns.Fqdn(name) {
+		case ".":
+			return &dns.Msg{Answer: []dns.RR{rootKey, rootDNSKEYSig}}, nil
+		default:
+			return &dns.Msg{}, nil
+		}
+	}
+
+	if _, err := v.trustedKeys("example."); err == nil {
+		t.Fatalf("expected trustedKeys to reject a stripped DS with no DS-absence proof")
+	}
+
+	// A forged unsigned answer for the downgraded zone must SERVFAIL in strict, not be
+	// served as insecure.
+	msg := &dns.Msg{MsgHdr: dns.MsgHdr{Rcode: dns.RcodeSuccess}}
+	msg.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "www.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.IP{6, 6, 6, 6}}}
+	q := dns.Question{Name: "www.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	if validated, err := v.validateResponse(msg, q, "strict", true); err == nil || validated {
+		t.Fatalf("strict must reject a DS-stripping downgrade: validated=%v err=%v", validated, err)
 	}
 }
 

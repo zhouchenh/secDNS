@@ -109,6 +109,100 @@ func TestVerifyNSECCoverageNXDOMAIN(t *testing.T) {
 	}
 }
 
+func TestNSECProvesNoDS(t *testing.T) {
+	nsec := func(owner string, types ...uint16) *dns.NSEC {
+		return &dns.NSEC{
+			Hdr:        dns.RR_Header{Name: owner, Rrtype: dns.TypeNSEC, Class: dns.ClassINET},
+			NextDomain: "zzz.",
+			TypeBitMap: types,
+		}
+	}
+	// Valid: owner == delegation point, NS set, DS and SOA clear.
+	good := nsec("example.", dns.TypeNS, dns.TypeRRSIG, dns.TypeNSEC)
+	if !nsecProvesNoDS("example.", []*dns.NSEC{good}) {
+		t.Fatalf("NS-only delegation NSEC should prove no DS")
+	}
+	// DS present -> a DS exists, not a no-DS proof.
+	withDS := nsec("example.", dns.TypeNS, dns.TypeDS, dns.TypeRRSIG)
+	if nsecProvesNoDS("example.", []*dns.NSEC{withDS}) {
+		t.Fatalf("an NSEC with the DS bit set must not prove no DS")
+	}
+	// SOA present -> this is the child apex NSEC, not a parent-side proof (RFC 6840 4.3).
+	withSOA := nsec("example.", dns.TypeNS, dns.TypeSOA, dns.TypeRRSIG)
+	if nsecProvesNoDS("example.", []*dns.NSEC{withSOA}) {
+		t.Fatalf("a child-apex NSEC (SOA bit set) must not prove no DS")
+	}
+	// No NS -> not a delegation.
+	noNS := nsec("example.", dns.TypeA, dns.TypeRRSIG)
+	if nsecProvesNoDS("example.", []*dns.NSEC{noNS}) {
+		t.Fatalf("an NSEC without the NS bit must not prove a delegation no-DS")
+	}
+	// Wrong owner -> proves nothing about example.
+	other := nsec("other.", dns.TypeNS, dns.TypeRRSIG)
+	if nsecProvesNoDS("example.", []*dns.NSEC{other}) {
+		t.Fatalf("an NSEC owned by a different name must not prove no DS for example.")
+	}
+}
+
+func TestNextCloserName(t *testing.T) {
+	cases := []struct{ qname, ce, want string }{
+		{"sub.example.", "example.", "sub.example."},
+		{"a.b.example.", "example.", "b.example."},
+		{"a.b.c.example.", "c.example.", "b.c.example."},
+		{"example.", "example.", ""}, // ce not a proper ancestor
+		{"example.", "other.", ""},   // ce longer/unrelated
+	}
+	for _, c := range cases {
+		if got := nextCloserName(c.qname, c.ce); got != c.want {
+			t.Errorf("nextCloserName(%q,%q)=%q want %q", c.qname, c.ce, got, c.want)
+		}
+	}
+}
+
+func TestNSEC3ProvesNoDS(t *testing.T) {
+	const salt = "aabbccdd"
+	ho := func(n string) string { return dns.HashName(n, dns.SHA1, 0, salt) + ".example." }
+	mk := func(owner string, flags uint8, next string, types ...uint16) *dns.NSEC3 {
+		return &dns.NSEC3{
+			Hdr:        dns.RR_Header{Name: owner, Rrtype: dns.TypeNSEC3, Class: dns.ClassINET},
+			Hash:       dns.SHA1,
+			Flags:      flags,
+			Iterations: 0,
+			Salt:       salt,
+			NextDomain: next,
+			TypeBitMap: types,
+		}
+	}
+	// Direct NODATA: NSEC3 matching the delegation, NS set, DS and SOA clear.
+	nodata := mk(ho("sub.example."), 0, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", dns.TypeNS, dns.TypeRRSIG)
+	if !nodata.Match("sub.example.") {
+		t.Skipf("test setup: NSEC3.Match did not hold")
+	}
+	if !nsec3ProvesNoDS("sub.example.", []*dns.NSEC3{nodata}, 100) {
+		t.Fatalf("a matching NS-only NSEC3 should prove no DS")
+	}
+	// DS bit set at the match -> a DS exists.
+	withDS := mk(ho("sub.example."), 0, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", dns.TypeNS, dns.TypeDS)
+	if nsec3ProvesNoDS("sub.example.", []*dns.NSEC3{withDS}, 100) {
+		t.Fatalf("a matching NSEC3 with the DS bit must not prove no DS")
+	}
+	// Opt-out: closest encloser matches (example. apex) and an opt-out NSEC3 covers the
+	// next closer name (sub.example.).
+	ceMatch := mk(ho("example."), 0, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", dns.TypeNS, dns.TypeSOA, dns.TypeDNSKEY)
+	optout := mk("00000000000000000000000000000000.example.", 0x01, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", dns.TypeNS)
+	if !ceMatch.Match("example.") || !optout.Cover("sub.example.") {
+		t.Skipf("test setup: opt-out match/cover assumptions did not hold")
+	}
+	if !nsec3ProvesNoDS("sub.example.", []*dns.NSEC3{ceMatch, optout}, 100) {
+		t.Fatalf("opt-out span should prove an insecure (no-DS) delegation")
+	}
+	// Same span but the opt-out flag is clear -> not an opt-out proof.
+	noOpt := mk("00000000000000000000000000000000.example.", 0x00, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", dns.TypeNS)
+	if nsec3ProvesNoDS("sub.example.", []*dns.NSEC3{ceMatch, noOpt}, 100) {
+		t.Fatalf("a covering NSEC3 without the opt-out flag must not prove no DS")
+	}
+}
+
 func TestVerifyNSEC3CoverageNODATARequiresMatch(t *testing.T) {
 	const salt = "aabbccdd"
 	hashedOwner := func(name string) string {

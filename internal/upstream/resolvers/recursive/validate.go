@@ -313,6 +313,17 @@ func (v *dnssecValidator) trustedKeys(zone string) (*keyState, error) {
 	dsSet, dsSigs := extractRRSet(dsMsg, dns.TypeDS, zone)
 	dsExpiry := rrsetExpiry(dsSet, dsSigs, v.now())
 	if len(dsSet) == 0 {
+		// No DS RRset. Declaring the child Insecure (unsigned) is only sound if the
+		// parent authentically proves that no DS exists at the delegation point;
+		// otherwise an on-path attacker who strips the DS RRset (and its NSEC/NSEC3
+		// proof) would downgrade a secure child to unsigned and have forged data
+		// accepted (RFC 4035 section 5.2, RFC 6840 section 5). If the parent is itself
+		// insecure, insecurity is inherited and no proof is required.
+		if parentState != nil && parentState.secure && len(parentState.keys) > 0 {
+			if !v.proveNoDS(zone, dsMsg, parentState.keys) {
+				return nil, fmt.Errorf("dnssec: no authenticated DS-absence proof for %s (possible downgrade)", zone)
+			}
+		}
 		state := &keyState{secure: false, keys: nil, expires: fallbackExpiry(v.now())}
 		if !dsExpiry.IsZero() && dsExpiry.Before(state.expires) {
 			state.expires = dsExpiry
@@ -820,6 +831,125 @@ func closestEncloserNSEC3(qname string, nsec3s []*dns.NSEC3, params *dns.NSEC3) 
 		}
 	}
 	return ""
+}
+
+// proveNoDS reports whether dsMsg authentically proves that zone has no DS RRset,
+// using NSEC/NSEC3 records signed by the parent (parentKeys). A secure parent must
+// supply this proof before a child may be treated as an insecure (unsigned)
+// delegation; without it, stripping the DS RRset would downgrade a secure child
+// (RFC 4035 section 5.2, RFC 6840 section 5).
+func (v *dnssecValidator) proveNoDS(zone string, dsMsg *dns.Msg, parentKeys []*dns.DNSKEY) bool {
+	if dsMsg == nil {
+		return false
+	}
+	nsecs, nsec3s := validatedDenialRecords(dsMsg.Ns, parentKeys)
+	if nsecProvesNoDS(zone, nsecs) {
+		return true
+	}
+	return nsec3ProvesNoDS(zone, nsec3s, v.nsec3MaxIter)
+}
+
+// validatedDenialRecords returns the NSEC and NSEC3 records from section whose RRSIGs
+// verify against keys (signer in bailiwick). Unsigned or unverifiable records are
+// dropped so that only parent-authenticated proofs are considered.
+func validatedDenialRecords(section []dns.RR, keys []*dns.DNSKEY) ([]*dns.NSEC, []*dns.NSEC3) {
+	var nsecs []*dns.NSEC
+	var nsec3s []*dns.NSEC3
+	for _, set := range groupRRsets(section) {
+		if len(set.rrs) == 0 {
+			continue
+		}
+		switch set.rrs[0].(type) {
+		case *dns.NSEC, *dns.NSEC3:
+		default:
+			continue
+		}
+		if ok, _ := verifyRRSetWithKeys(set.rrs, set.sigs, keys, true); !ok {
+			continue
+		}
+		for _, rr := range set.rrs {
+			switch r := rr.(type) {
+			case *dns.NSEC:
+				nsecs = append(nsecs, r)
+			case *dns.NSEC3:
+				nsec3s = append(nsec3s, r)
+			}
+		}
+	}
+	return nsecs, nsec3s
+}
+
+// nsecProvesNoDS reports whether an NSEC owned by zone proves there is no DS RRset:
+// the DS bit must be clear, the SOA bit must be clear (so the child zone's own apex
+// NSEC cannot be replayed as a parent-side no-DS proof, RFC 6840 section 4.3), and the
+// NS bit must be set (the owner is a delegation point). Matches Unbound's
+// val_nsec_proves_no_ds semantics.
+func nsecProvesNoDS(zone string, nsecs []*dns.NSEC) bool {
+	zone = normalizeName(zone)
+	for _, n := range nsecs {
+		if normalizeName(n.Hdr.Name) != zone {
+			continue
+		}
+		if typeInBitmap(n.TypeBitMap, dns.TypeDS) || typeInBitmap(n.TypeBitMap, dns.TypeSOA) {
+			continue
+		}
+		if !typeInBitmap(n.TypeBitMap, dns.TypeNS) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// nsec3ProvesNoDS reports whether an NSEC3 set proves there is no DS RRset at zone,
+// either directly (an NSEC3 matching zone with NS set, SOA and DS clear) or via an
+// opt-out span (a matching NSEC3 for the closest encloser and an opt-out NSEC3 covering
+// the next closer name, RFC 5155 section 6 / section 7.2.4).
+func nsec3ProvesNoDS(zone string, nsec3s []*dns.NSEC3, maxIter uint16) bool {
+	if len(nsec3s) == 0 || !nsec3ParamsUsable(nsec3s, maxIter) {
+		return false
+	}
+	zone = normalizeName(zone)
+	params := nsec3s[0]
+	// Direct NODATA: an NSEC3 matching zone, DS and SOA clear, NS set.
+	for _, n := range nsec3s {
+		if !n.Match(zone) {
+			continue
+		}
+		if typeInBitmap(n.TypeBitMap, dns.TypeDS) || typeInBitmap(n.TypeBitMap, dns.TypeSOA) {
+			return false
+		}
+		return typeInBitmap(n.TypeBitMap, dns.TypeNS)
+	}
+	// Opt-out: the closest encloser exists and the next closer name is covered by an
+	// NSEC3 whose opt-out flag is set.
+	ce := closestEncloserNSEC3(zone, nsec3s, params)
+	if ce == "" || ce == zone {
+		return false
+	}
+	nextCloser := nextCloserName(zone, ce)
+	if nextCloser == "" {
+		return false
+	}
+	for _, n := range nsec3s {
+		if n.Cover(nextCloser) && n.Flags&0x01 == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// nextCloserName returns the name one label longer than ce on the path from ce to
+// qname (the "next closer name", RFC 5155 section 1.3). It returns "" if ce is not a
+// proper ancestor of qname.
+func nextCloserName(qname, ce string) string {
+	qLabels := dns.SplitDomainName(normalizeName(qname))
+	ceLabels := dns.SplitDomainName(normalizeName(ce))
+	if len(ceLabels) >= len(qLabels) {
+		return ""
+	}
+	idx := len(qLabels) - len(ceLabels) - 1
+	return normalizeName(strings.Join(qLabels[idx:], "."))
 }
 
 func typeInBitmap(types []uint16, qtype uint16) bool {
