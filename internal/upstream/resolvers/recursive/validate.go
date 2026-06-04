@@ -25,6 +25,7 @@ type dnssecValidator struct {
 	resolveDNSKEY func(name string) (*dns.Msg, error)
 	resolveDS     func(name string) (*dns.Msg, error)
 	logger        func(msg string)
+	nsec3MaxIter  uint16 // maximum accepted NSEC3 iteration count (RFC 9276)
 
 	keyCache map[string]*keyState
 	cacheMu  sync.Mutex
@@ -54,9 +55,10 @@ func newValidator() *dnssecValidator {
 		resolveDS: func(string) (*dns.Msg, error) {
 			return nil, errDNSSECNotImplemented
 		},
-		logger:   func(string) {},
-		keyCache: map[string]*keyState{},
-		metrics:  &validationMetrics{},
+		logger:       func(string) {},
+		nsec3MaxIter: 100,
+		keyCache:     map[string]*keyState{},
+		metrics:      &validationMetrics{},
 	}
 }
 
@@ -239,7 +241,7 @@ func (v *dnssecValidator) validateDenial(msg *dns.Msg, q dns.Question, bestEffor
 	if len(nsecRecords) > 0 {
 		covered = verifyNSECCoverage(qname, qtype, msg.Rcode, nsecRecords)
 	} else if len(nsec3Records) > 0 {
-		covered = verifyNSEC3Coverage(qname, qtype, msg.Rcode, nsec3Records)
+		covered = verifyNSEC3Coverage(qname, qtype, msg.Rcode, nsec3Records, v.nsec3MaxIter)
 	} else {
 		if bestEffort {
 			return false, false, nil
@@ -633,28 +635,49 @@ func verifyNSECCoverage(qname string, qtype uint16, rcode int, nsecs []*dns.NSEC
 		wildcard := normalizeName("*." + closest)
 		return nsecCoversName(wildcard, nsecs)
 	}
-	// NODATA: need proof that the name exists but the type does not.
+	// NODATA: an NSEC whose owner is EXACTLY qname with the qtype and CNAME bits clear.
+	// A covering (non-owner) NSEC proves the name does not exist, which is not a NODATA
+	// proof, so it is no longer accepted (RFC 4035 section 4.4.1).
 	for _, n := range nsecs {
-		owner := normalizeName(n.Hdr.Name)
-		if owner == qname && !typeInBitmap(n.TypeBitMap, qtype) {
-			return true
-		}
-		if covers := nsecNameCovered(owner, normalizeName(n.NextDomain), qname); covers && !typeInBitmap(n.TypeBitMap, qtype) {
+		if normalizeName(n.Hdr.Name) == qname && !typeInBitmap(n.TypeBitMap, qtype) && !typeInBitmap(n.TypeBitMap, dns.TypeCNAME) {
 			return true
 		}
 	}
 	return false
 }
 
-func verifyNSEC3Coverage(qname string, qtype uint16, rcode int, nsec3s []*dns.NSEC3) bool {
+// nsec3ParamsUsable gates an NSEC3 set before any hashing (RFC 5155 section 12.1.3,
+// RFC 9276): the hash must be SHA-1, the iteration count must not exceed maxIter, and
+// every record must share the same hash/iterations/salt. miekg's HashName returns ""
+// for an unknown hash, which would make Cover/Match match arbitrary names, and a large
+// iteration count is a CPU-exhaustion vector — so this must run before Cover/Match.
+func nsec3ParamsUsable(nsec3s []*dns.NSEC3, maxIter uint16) bool {
+	if len(nsec3s) == 0 {
+		return false
+	}
+	p := nsec3s[0]
+	if p.Hash != dns.SHA1 || p.Iterations > maxIter {
+		return false
+	}
+	for _, n := range nsec3s {
+		if n.Hash != p.Hash || n.Iterations != p.Iterations || !strings.EqualFold(n.Salt, p.Salt) {
+			return false
+		}
+	}
+	return true
+}
+
+func verifyNSEC3Coverage(qname string, qtype uint16, rcode int, nsec3s []*dns.NSEC3, maxIter uint16) bool {
 	qname = normalizeName(qname)
-	// Choose parameter set from first record.
+	if !nsec3ParamsUsable(nsec3s, maxIter) {
+		return false
+	}
 	params := nsec3s[0]
 	if rcode == dns.RcodeNameError {
-		// Proof 1: qname does not exist.
+		// Proof 1: qname does not exist (a covering NSEC3).
 		var hasNameProof bool
 		for _, n := range nsec3s {
-			if n.Hash == params.Hash && n.Iterations == params.Iterations && n.Salt == params.Salt && n.Cover(qname) {
+			if n.Cover(qname) {
 				hasNameProof = true
 				break
 			}
@@ -662,25 +685,24 @@ func verifyNSEC3Coverage(qname string, qtype uint16, rcode int, nsec3s []*dns.NS
 		if !hasNameProof {
 			return false
 		}
-		// Proof 2: wildcard does not exist for closest encloser.
+		// Proof 2: the wildcard at the closest encloser does not exist.
 		closest := closestEncloserNSEC3(qname, nsec3s, params)
 		if closest == "" {
 			return false
 		}
 		wildcard := normalizeName("*." + closest)
 		for _, n := range nsec3s {
-			if n.Hash == params.Hash && n.Iterations == params.Iterations && n.Salt == params.Salt && n.Cover(wildcard) {
+			if n.Cover(wildcard) {
 				return true
 			}
 		}
 		return false
 	}
-	// NODATA: qname exists but type missing -> either matched hash lacking type or covered by other interval.
+	// NODATA: an NSEC3 that MATCHES qname (exact owner-hash) with the qtype and CNAME
+	// bits clear. A covering (non-matching) record proves non-existence, not NODATA, so
+	// it is no longer accepted (RFC 5155 section 8.5 / RFC 4035 section 4.4.1).
 	for _, n := range nsec3s {
-		if n.Match(qname) && !typeInBitmap(n.TypeBitMap, qtype) {
-			return true
-		}
-		if n.Cover(qname) {
+		if n.Match(qname) && !typeInBitmap(n.TypeBitMap, qtype) && !typeInBitmap(n.TypeBitMap, dns.TypeCNAME) {
 			return true
 		}
 	}
