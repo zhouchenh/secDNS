@@ -153,13 +153,19 @@ func BenchmarkCacheConcurrent(b *testing.B) {
 }
 
 func BenchmarkLRU_AddToFront(b *testing.B) {
+	// Bounded: cap the list at a fixed size by trimming the tail, so memory stays O(1)
+	// in b.N regardless of -benchtime (an earlier unbounded version grew by b.N).
+	const cap = 4096
 	lru := NewLRUList()
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		lru.AddToFront(fmt.Sprintf("key%d", i))
+		lru.AddToFront("key")
+		if lru.Size() > cap {
+			lru.RemoveTail()
+		}
 	}
 }
 
@@ -180,18 +186,24 @@ func BenchmarkLRU_MoveToFront(b *testing.B) {
 }
 
 func BenchmarkLRU_Remove(b *testing.B) {
+	// Bounded: a fixed-size fixture is churned (remove one node, add a replacement) so
+	// memory stays O(fixtureSize), not O(b.N). The previous version pre-allocated
+	// make([]*LRUNode, b.N) plus b.N list nodes, which OOM'd the host under a
+	// time-based -benchtime. This measures the realistic remove+insert eviction churn.
+	const fixtureSize = 4096
 	lru := NewLRUList()
-	nodes := make([]*LRUNode, b.N)
-
-	for i := 0; i < b.N; i++ {
-		nodes[i] = lru.AddToFront(fmt.Sprintf("key%d", i))
+	nodes := make([]*LRUNode, fixtureSize)
+	for i := 0; i < fixtureSize; i++ {
+		nodes[i] = lru.AddToFront("key")
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		lru.Remove(nodes[i])
+		idx := i % fixtureSize
+		lru.Remove(nodes[idx])
+		nodes[idx] = lru.AddToFront("key")
 	}
 }
 
@@ -253,6 +265,47 @@ func BenchmarkCacheWithEviction(b *testing.B) {
 			b.Fatalf("resolve failed: %v", err)
 		}
 	}
+}
+
+// BenchmarkCacheGetHit_Parallel measures concurrent cache-hit throughput across a fixed
+// set of distinct primed keys. Each parallel hitter touches a different entry, so the
+// headline cost is contention on the cache's lock(s) on the get() path — this is the
+// benchmark that the CLOCK change (no writer lock per hit) is meant to improve. Bounded:
+// the working set is a fixed `keys` entries regardless of b.N.
+func BenchmarkCacheGetHit_Parallel(b *testing.B) {
+	const keys = 1024
+	response := new(dns.Msg)
+	response.SetQuestion("example.com.", dns.TypeA)
+	response.Answer = []dns.RR{
+		&dns.A{
+			Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+			A:   []byte{93, 184, 216, 34},
+		},
+	}
+	mock := &mockResolver{response: response}
+	cache := &Cache{Resolver: mock, MaxEntries: keys * 2}
+
+	queries := make([]*dns.Msg, keys)
+	for i := 0; i < keys; i++ {
+		q := new(dns.Msg)
+		q.SetQuestion(fmt.Sprintf("h%d.example.", i), dns.TypeA)
+		queries[i] = q
+		if _, err := cache.Resolve(q, 10); err != nil {
+			b.Fatalf("prime failed: %v", err)
+		}
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			if _, err := cache.Resolve(queries[i%keys], 10); err != nil {
+				b.Fatalf("resolve failed: %v", err)
+			}
+			i++
+		}
+	})
 }
 
 func BenchmarkCacheConcurrent_ReadWrite(b *testing.B) {
