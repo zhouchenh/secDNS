@@ -1,9 +1,14 @@
 package recursive
 
 import (
+	"bytes"
+	"net"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
+	"github.com/zhouchenh/secDNS/internal/logger"
 )
 
 func TestApplyPolicyDecisionTable(t *testing.T) {
@@ -89,6 +94,84 @@ func TestApplyPolicyInvariants(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// withDebugLogger redirects the package logger to a buffer at Debug level for the
+// duration of the test and restores the prior output/level afterwards.
+func withDebugLogger(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	prevOut := logger.Output()
+	prevLevel := logger.LogLevel()
+	buf := new(bytes.Buffer)
+	logger.SetOutput(buf)
+	logger.SetLogLevel(logger.DebugLevel)
+	t.Cleanup(func() {
+		logger.SetOutput(prevOut)
+		logger.SetLogLevel(prevLevel)
+	})
+	return buf
+}
+
+// TestClassifyTerminalLogsBogusReason verifies that a genuine Bogus classification
+// (here: an expired RRSIG, a non-missing-sig failure) surfaces the discarded reason
+// at Debug with the qname/qtype, so a strict-mode SERVFAIL is diagnosable.
+func TestClassifyTerminalLogsBogusReason(t *testing.T) {
+	buf := withDebugLogger(t)
+
+	r := &Recursive{ValidateDNSSEC: policyStrict, validator: newValidator()}
+	fixedNow := time.Unix(2_000_000_000, 0) // pin "now" so the RRSIG below is unambiguously expired
+	r.validator.now = func() time.Time { return fixedNow }
+
+	q := dns.Question{Name: "example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	msg := new(dns.Msg)
+	msg.SetQuestion(q.Name, q.Qtype)
+	msg.Answer = []dns.RR{
+		&dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.IPv4(1, 2, 3, 4)},
+		&dns.RRSIG{
+			Hdr:         dns.RR_Header{Name: q.Name, Rrtype: dns.TypeRRSIG, Class: dns.ClassINET, Ttl: 60},
+			TypeCovered: dns.TypeA,
+			Inception:   1_000_000_000,
+			Expiration:  1_500_000_000, // before fixedNow -> expired -> bogus, not missing-sig
+			SignerName:  q.Name,
+		},
+	}
+
+	status, authentic := r.classifyTerminal(msg, q)
+	if status != statusBogus {
+		t.Fatalf("status = %v, want bogus", status)
+	}
+	if authentic {
+		t.Fatalf("a bogus answer must not be reported authentic")
+	}
+	out := buf.String()
+	for _, want := range []string{"answer classified bogus", "example.com.", "A", "expired"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("diagnostic missing %q; got %q", want, out)
+		}
+	}
+}
+
+// TestClassifyTerminalInsecureDoesNotLog verifies the diagnostic is reserved for
+// genuine Bogus: a missing-signature answer classifies Insecure (served in strict)
+// and must not emit the bogus diagnostic.
+func TestClassifyTerminalInsecureDoesNotLog(t *testing.T) {
+	buf := withDebugLogger(t)
+
+	r := &Recursive{ValidateDNSSEC: policyStrict, validator: newValidator()}
+	q := dns.Question{Name: "unsigned.example.", Qtype: dns.TypeA, Qclass: dns.ClassINET}
+	msg := new(dns.Msg)
+	msg.SetQuestion(q.Name, q.Qtype)
+	msg.Answer = []dns.RR{
+		&dns.A{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.IPv4(1, 2, 3, 4)},
+	}
+
+	status, _ := r.classifyTerminal(msg, q)
+	if status != statusInsecure {
+		t.Fatalf("status = %v, want insecure", status)
+	}
+	if strings.Contains(buf.String(), "answer classified bogus") {
+		t.Fatalf("missing-sig (insecure) must not log a bogus diagnostic; got %q", buf.String())
 	}
 }
 
