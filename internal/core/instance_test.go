@@ -7,6 +7,53 @@ import (
 	"testing"
 )
 
+func TestResolveFastPathWhenNoNamedResolvers(t *testing.T) {
+	inst := &instance{}
+	inst.initInstance()
+	def := &recordingResolver{name: "default"}
+	inst.SetDefaultResolver(def)
+
+	// No AcceptProvider -> hasNamed is false -> the fast path goes straight to default.
+	query := new(dns.Msg)
+	query.SetQuestion("www.example.com.", dns.TypeA)
+	if _, err := inst.Resolve(query, 4); err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if !def.called {
+		t.Fatalf("default resolver should be called on the fast path")
+	}
+	if inst.hasNamed.Load() {
+		t.Fatalf("hasNamed should be false with no named resolvers")
+	}
+}
+
+func BenchmarkInstanceResolveFastPath(b *testing.B) {
+	inst := &instance{}
+	inst.initInstance()
+	inst.SetDefaultResolver(stubResolver{})
+	query := new(dns.Msg)
+	query.SetQuestion("www.example.com.", dns.TypeA)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = inst.Resolve(query, 4)
+	}
+}
+
+func BenchmarkInstanceResolveNamedHierarchy(b *testing.B) {
+	inst := &instance{}
+	inst.initInstance()
+	inst.SetDefaultResolver(stubResolver{})
+	inst.AcceptProvider(&stubProvider{names: []string{"example.org."}, res: stubResolver{}}, nil)
+	query := new(dns.Msg)
+	query.SetQuestion("www.example.com.", dns.TypeA) // no match: walks the hierarchy, then default
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = inst.Resolve(query, 4)
+	}
+}
+
 type stubResolver struct{}
 
 func (stubResolver) Type() descriptor.Type { return nil }
