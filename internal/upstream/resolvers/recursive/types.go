@@ -560,9 +560,6 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 
 		nsNames := extractNS(resp)
 
-		// Cache DNSKEY/DS from authority for later trust decisions.
-		r.cacheAuthDNSKEYDS(resp)
-
 		switch resp.Rcode {
 		case dns.RcodeSuccess:
 			// If answer contains the qtype or CNAME leading to it, return.
@@ -834,6 +831,28 @@ type glueCacheEntry struct {
 	expires time.Time
 }
 
+// maxGlueCacheEntries bounds the glue cache so attacker-chosen NS names cannot grow it
+// without limit (there is no teardown hook to flush it otherwise).
+const maxGlueCacheEntries = 8192
+
+// pruneGlueCache bounds m in place. Callers must hold the glue cache mutex. It first
+// drops expired entries, then, if still over a soft target, drops arbitrary entries
+// (map iteration order) until under the target.
+func pruneGlueCache(m map[string]glueCacheEntry, now time.Time) {
+	for k, e := range m {
+		if !e.expires.After(now) {
+			delete(m, k)
+		}
+	}
+	target := maxGlueCacheEntries / 2
+	for k := range m {
+		if len(m) <= target {
+			break
+		}
+		delete(m, k)
+	}
+}
+
 // maxGlueNamesChased bounds how many distinct NS names a single glueless referral will
 // trigger out-of-band glue resolution for, limiting the fan-out per referral.
 const maxGlueNamesChased = 6
@@ -884,6 +903,9 @@ func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsO
 		if len(collected) > 0 {
 			r.scoreboard.register(collected)
 			r.glueCacheMutex.Lock()
+			if len(r.glueCache) >= maxGlueCacheEntries {
+				pruneGlueCache(r.glueCache, now)
+			}
 			r.glueCache[strings.ToLower(name)] = glueCacheEntry{
 				ips:     collected,
 				expires: now.Add(10 * time.Minute),
@@ -893,24 +915,6 @@ func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsO
 		}
 	}
 	return dedupIPs(ips, r.PreferIPv6)
-}
-
-// cacheAuthDNSKEYDS stores DNSKEY/DS from authority section for reuse in validation.
-func (r *Recursive) cacheAuthDNSKEYDS(resp *dns.Msg) {
-	// Simple in-memory hints via glueCache structure keyed by auth name; reuse its mutex.
-	now := time.Now().Add(1 * time.Hour)
-	r.glueCacheMutex.Lock()
-	defer r.glueCacheMutex.Unlock()
-	for _, rr := range resp.Ns {
-		switch rrTyped := rr.(type) {
-		case *dns.DNSKEY:
-			key := "dnskey:" + strings.ToLower(rrTyped.Hdr.Name)
-			r.glueCache[key] = glueCacheEntry{expires: now}
-		case *dns.DS:
-			key := "ds:" + strings.ToLower(rrTyped.Hdr.Name)
-			r.glueCache[key] = glueCacheEntry{expires: now}
-		}
-	}
 }
 
 // fetchDNSKEY uses the recursive resolver itself (without revalidation) to fetch DNSKEY for a zone.
