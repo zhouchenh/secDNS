@@ -388,9 +388,28 @@ func (v *dnssecValidator) trustedKeys(zone string) (*keyState, error) {
 	return state, nil
 }
 
+// maxKeyCacheEntries bounds the trusted-key cache so an attacker querying many distinct
+// signed zones cannot grow it without limit (there is no teardown hook to flush it).
+const maxKeyCacheEntries = 4096
+
 func (v *dnssecValidator) storeKeyState(zone string, st *keyState) {
 	v.cacheMu.Lock()
 	defer v.cacheMu.Unlock()
+	if len(v.keyCache) >= maxKeyCacheEntries {
+		now := v.now()
+		for k, s := range v.keyCache {
+			if !s.expires.After(now) {
+				delete(v.keyCache, k)
+			}
+		}
+		target := maxKeyCacheEntries / 2
+		for k := range v.keyCache {
+			if len(v.keyCache) <= target {
+				break
+			}
+			delete(v.keyCache, k)
+		}
+	}
 	v.keyCache[zone] = st
 }
 
