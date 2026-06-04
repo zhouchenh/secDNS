@@ -74,6 +74,7 @@ type Entry struct {
 	lruNode         *LRUNode  // Pointer to LRU list node
 	AccessCount     uint64
 	prefetching     uint32
+	referenced      uint32 // CLOCK/second-chance bit: set on a hit, cleared by the evictor
 	DisablePrefetch bool
 	DisableStale    bool
 }
@@ -271,14 +272,13 @@ func (c *Cache) get(key string) (*dns.Msg, *Entry, uint32, bool, bool) {
 	// Copy the response while read lock is held so mutations can't race
 	response := entry.Response.Copy()
 	atomic.AddUint64(&entry.AccessCount, 1)
+	// Mark the entry recently-used for CLOCK/second-chance eviction. This is a single
+	// atomic store on the entry's own field — no LRU list surgery and no writer lock —
+	// so concurrent cache hits no longer serialize on c.mutex (previously every hit
+	// re-acquired the exclusive lock just to MoveToFront). The evictor consults and
+	// clears this bit instead of relying on strict per-hit list ordering.
+	atomic.StoreUint32(&entry.referenced, 1)
 	c.mutex.RUnlock()
-
-	// Update LRU (move to front = most recently used) if entry still current
-	c.mutex.Lock()
-	if current, ok := c.entries[key]; ok && current == entry {
-		c.lru.MoveToFront(entry.lruNode)
-	}
-	c.mutex.Unlock()
 
 	if stale {
 		c.adjustTTL(response, 0)
@@ -297,6 +297,43 @@ func (c *Cache) removeEntryIfCurrent(key string, entry *Entry) {
 	if current, ok := c.entries[key]; ok && current == entry {
 		delete(c.entries, key)
 		c.lru.Remove(entry.lruNode)
+	}
+}
+
+// evictOne removes one entry using a bounded CLOCK / second-chance scan from the LRU
+// tail. It must be called with c.mutex held for writing. An entry whose referenced bit
+// is set is given a second chance — the bit is cleared and the node moved to the front —
+// and the scan advances to the next tail; the first unreferenced entry is evicted. If no
+// unreferenced entry is found within maxEvictScan steps, the current tail is evicted
+// unconditionally, guaranteeing forward progress and the size cap.
+func (c *Cache) evictOne() {
+	const maxEvictScan = 8
+	for i := 0; i < maxEvictScan; i++ {
+		tail := c.lru.tail
+		if tail == nil {
+			return
+		}
+		entry, ok := c.entries[tail.key]
+		if !ok {
+			// LRU node with no live entry (defensive); drop it and continue.
+			c.lru.Remove(tail)
+			continue
+		}
+		if atomic.LoadUint32(&entry.referenced) == 1 {
+			atomic.StoreUint32(&entry.referenced, 0)
+			c.lru.MoveToFront(tail)
+			continue
+		}
+		delete(c.entries, tail.key)
+		c.lru.Remove(tail)
+		atomic.AddUint64(&c.evictions, 1)
+		return
+	}
+	// Every scanned entry was recently referenced; evict the current tail to bound size.
+	if tail := c.lru.tail; tail != nil {
+		delete(c.entries, tail.key)
+		c.lru.Remove(tail)
+		atomic.AddUint64(&c.evictions, 1)
 	}
 }
 
@@ -329,13 +366,9 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 		return
 	}
 
-	// New entry - check if we need to evict (LRU)
+	// New entry - evict if at capacity using a bounded CLOCK / second-chance scan.
 	if c.MaxEntries > 0 && len(c.entries) >= c.MaxEntries {
-		// Need to evict - remove least recently used
-		if oldest := c.lru.RemoveTail(); oldest != nil {
-			delete(c.entries, oldest.key)
-			atomic.AddUint64(&c.evictions, 1)
-		}
+		c.evictOne()
 	}
 
 	// Create new entry with TTL overrides applied
