@@ -1,10 +1,68 @@
 package recursive
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/miekg/dns"
 )
+
+// bumpHash returns the next base32hex string after h (with carry), so that (h, bumpHash(h))
+// is an empty span — a record with NextDomain == bumpHash(owner) covers nothing.
+func bumpHash(h string) string {
+	const b32 = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
+	b := []byte(h)
+	for i := len(b) - 1; i >= 0; i-- {
+		idx := strings.IndexByte(b32, b[i])
+		if idx >= 0 && idx < 31 {
+			b[i] = b32[idx+1]
+			return string(b)
+		}
+		b[i] = '0' // carry into the next position
+	}
+	return string(b)
+}
+
+func TestVerifyNSEC3CoverageNXDOMAIN(t *testing.T) {
+	const salt = "aabbccdd"
+	ceHash := dns.HashName("example.", dns.SHA1, 0, salt)
+	// ceMatch matches example. (the closest encloser) and, with NextDomain == its own
+	// owner hash, covers nothing — so it cannot stand in for the next-closer/wildcard
+	// covers on its own.
+	ceMatch := &dns.NSEC3{
+		Hdr:        dns.RR_Header{Name: ceHash + ".example.", Rrtype: dns.TypeNSEC3, Class: dns.ClassINET},
+		Hash:       dns.SHA1,
+		Iterations: 0,
+		Salt:       salt,
+		NextDomain: bumpHash(ceHash),
+		TypeBitMap: []uint16{dns.TypeSOA, dns.TypeNS, dns.TypeDNSKEY},
+	}
+	// cover spans the whole hash space, so it covers any next-closer name and any wildcard.
+	cover := &dns.NSEC3{
+		Hdr:        dns.RR_Header{Name: "00000000000000000000000000000000.example.", Rrtype: dns.TypeNSEC3, Class: dns.ClassINET},
+		Hash:       dns.SHA1,
+		Iterations: 0,
+		Salt:       salt,
+		NextDomain: "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+	}
+	if !ceMatch.Match("example.") || ceMatch.Cover("sub.example.") || !cover.Cover("sub.example.") {
+		t.Skipf("test setup: NSEC3 match/cover assumptions did not hold")
+	}
+	// Valid: closest encloser matches example., the next closer name (sub.example.) is
+	// covered, and *.example. is covered.
+	if !verifyNSEC3Coverage("sub.example.", dns.TypeA, dns.RcodeNameError, []*dns.NSEC3{ceMatch, cover}, 100) {
+		t.Fatalf("a valid NSEC3 NXDOMAIN proof should validate")
+	}
+	// Reject: a bare covering NSEC3 with no matching closest encloser is not a proof.
+	if verifyNSEC3Coverage("sub.example.", dns.TypeA, dns.RcodeNameError, []*dns.NSEC3{cover}, 100) {
+		t.Fatalf("a covering NSEC3 without a closest-encloser match must not prove NXDOMAIN")
+	}
+	// Reject: a closest-encloser match with nothing covering the next closer name (RFC
+	// 5155 section 8.3) is not a proof.
+	if verifyNSEC3Coverage("sub.example.", dns.TypeA, dns.RcodeNameError, []*dns.NSEC3{ceMatch}, 100) {
+		t.Fatalf("a closest-encloser match with no next-closer cover must not prove NXDOMAIN")
+	}
+}
 
 func TestNSEC3ParamsUsable(t *testing.T) {
 	mk := func(hash uint8, iter uint16, salt string) *dns.NSEC3 {
