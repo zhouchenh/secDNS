@@ -217,7 +217,7 @@ Default: `false`
 
 ### LRU Eviction
 
-The cache uses a Least Recently Used (LRU) eviction policy. When the cache reaches `maxEntries`, the least recently accessed entry is automatically removed to make room for new entries. This ensures frequently accessed domains remain cached while infrequently used ones are evicted.
+The cache uses an approximate Least Recently Used (LRU) eviction policy implemented as a CLOCK / second-chance scan. Each hit sets a "referenced" bit; when the cache reaches `maxEntries`, the evictor skips recently-referenced entries (clearing their bit) and removes the first unreferenced one. This keeps frequently accessed domains cached while infrequently used ones are evicted, without taking a writer lock on the hit path.
 
 ### TTL Management
 
@@ -236,9 +236,9 @@ The cache supports negative caching per RFC 2308:
 
 ### Thread Safety
 
-The cache is fully thread-safe and optimized for concurrent access:
-- Read operations use RWMutex for high concurrency
-- O(1) cache lookups and LRU operations
+The cache is thread-safe and optimized for concurrent reads:
+- A cache hit takes only a read lock and marks the entry recently-used with a single atomic store (a CLOCK / second-chance bit), so concurrent hits no longer serialize on the cache's writer lock
+- O(1) cache lookups and bounded eviction
 - Atomic counters for statistics
 
 ## Examples
@@ -337,7 +337,7 @@ Aggressively cache popular domains and prefetch them before expiration while all
 }
 ```
 
-This configuration refreshes any entry that has been hit 15+ times once 90% of its TTL has passed, serves stale data for up to 45 seconds while refreshing, and honors upstream cache-control hints.
+This configuration refreshes any entry that has been hit 10+ times once 90% of its TTL has passed, serves stale data for up to 45 seconds while refreshing, and honors upstream cache-control hints.
 
 ## Performance Characteristics
 

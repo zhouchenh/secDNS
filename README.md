@@ -19,10 +19,12 @@ Quick start:
 - Download a released binary from GitHub releases.
 - Validate a config: `./secDNS -test -config config.json`
 - Run with a config: `./secDNS -config config.json`
+- Set log verbosity: `./secDNS -config config.json -log-level info` (levels: `trace|debug|info|warn|error|off`; also via `SECDNS_LOG_LEVEL`).
+- Read the config from stdin: `cat config.json | ./secDNS -config -`.
 
 ## Documentation
 
-* [Configuration](docs/configuration.md) - JSON schema, object layout, and examples.
+* [Configuration](docs/configuration.md) - JSON schema, object layout, examples, and the command-line flags / environment variables (`-log-level`, `SECDNS_LOG_LEVEL`, config-file discovery).
 * [Listeners](docs/listeners.md) - Available listeners such as `dnsServer` and the HTTP API, with version notes.
 * [Resolvers](docs/resolvers.md) - All upstream resolver types, capabilities, and minimum supported versions.
 * [Rules](docs/rules.md) - Rule engines for routing queries to specific resolvers.

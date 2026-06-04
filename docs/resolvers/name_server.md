@@ -37,6 +37,10 @@ Default: `53`
 The type of the network protocol used to communicate with the upstream DNS server, `"tcp"`, `"udp"` or `"tcp-tls"` (DNS
 over TLS).
 
+For the stream protocols (`"tcp"` and `"tcp-tls"`), secDNS reuses idle connections from a small bounded per-destination
+pool, avoiding a TCP — and, for DoT, a TLS — handshake on every query; `"udp"` dials per query. The pool size and idle
+timeout are internal constants and need no configuration.
+
 Default: `"udp"`
 
 > `queryTimeout`: Number | String _(Optional)_
