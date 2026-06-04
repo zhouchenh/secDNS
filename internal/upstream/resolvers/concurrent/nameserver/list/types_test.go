@@ -85,6 +85,62 @@ func TestConcurrentListNilEntry(t *testing.T) {
 	}
 }
 
+// mutatingStub repeatedly mutates the query it is handed (like the filterOut*IfPresents
+// resolvers do), to exercise per-child message isolation in the fan-out under -race.
+type mutatingStub struct{}
+
+func (m *mutatingStub) Type() descriptor.Type { return nameserver.Type() }
+func (m *mutatingStub) TypeName() string      { return "mutatingStub" }
+func (m *mutatingStub) NameServerResolver()   {}
+func (m *mutatingStub) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
+	for i := 0; i < 256; i++ {
+		if len(query.Question) > 0 {
+			query.Question[0].Qtype = dns.TypeAAAA
+		}
+	}
+	reply := new(dns.Msg)
+	reply.SetReply(query)
+	return reply, nil
+}
+
+// readingStub repeatedly reads the query it is handed (like a real nameServer reading
+// Id/Question before copying), so a sibling's write races a read on a shared message.
+type readingStub struct{}
+
+func (r *readingStub) Type() descriptor.Type { return nameserver.Type() }
+func (r *readingStub) TypeName() string      { return "readingStub" }
+func (r *readingStub) NameServerResolver()   {}
+func (r *readingStub) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
+	for i := 0; i < 256; i++ {
+		_ = query.Id
+		if len(query.Question) > 0 {
+			_ = query.Question[0].Qtype
+		}
+	}
+	reply := new(dns.Msg)
+	reply.SetReply(query)
+	return reply, nil
+}
+
+// TestConcurrentListIsolatesQueryPerChild ensures the list hands each concurrent child
+// its own copy of the query: a child that mutates its message must neither corrupt the
+// caller's query (deterministic assertion below) nor race a sibling reading it (caught
+// by -race). Without per-child copies this both fails the assertion and trips the race
+// detector.
+func TestConcurrentListIsolatesQueryPerChild(t *testing.T) {
+	var list ConcurrentNameServerList = []resolverpkg.Resolver{&mutatingStub{}, &readingStub{}}
+
+	for i := 0; i < 50; i++ {
+		q := newQuery("example.com.", dns.TypeA)
+		if _, err := list.Resolve(q, 10); err != nil {
+			t.Fatalf("Resolve returned error: %v", err)
+		}
+		if q.Question[0].Qtype != dns.TypeA {
+			t.Fatalf("a child mutated the caller's shared query (Qtype=%d)", q.Question[0].Qtype)
+		}
+	}
+}
+
 func TestConcurrentListDepthLimit(t *testing.T) {
 	res := &stubNameServer{}
 	var list ConcurrentNameServerList = []resolverpkg.Resolver{res}

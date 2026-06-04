@@ -54,10 +54,11 @@ func (fa *FilterOutAAAAIfAPresents) Resolve(query *dns.Msg, depth int) (*dns.Msg
 }
 
 func (fa *FilterOutAAAAIfAPresents) canResolveToA(query *dns.Msg, depth int) (bool, error) {
-	originalQuestionType := query.Question[0].Qtype
-	query.Question[0].Qtype = dns.TypeA
-	reply, err := fa.Resolver.Resolve(query, depth-1)
-	query.Question[0].Qtype = originalQuestionType
+	// Probe on a private copy: the caller's query may be shared across concurrent
+	// resolvers (e.g. concurrentNameServerList), so mutating it in place is a data race.
+	probe := query.Copy()
+	probe.Question[0].Qtype = dns.TypeA
+	reply, err := fa.Resolver.Resolve(probe, depth-1)
 	if err != nil {
 		return false, err
 	}

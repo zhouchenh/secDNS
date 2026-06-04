@@ -34,14 +34,14 @@ func (nsl *ConcurrentNameServerList) Resolve(query *dns.Msg, depth int) (*dns.Ms
 	errCollector := make(chan error, len(*nsl))
 	wg := new(sync.WaitGroup)
 	wg.Add(len(*nsl))
-	request := func(r resolver.Resolver) {
+	request := func(r resolver.Resolver, q *dns.Msg) {
 		ok := r != nil
 		if ok {
 			resolverType := r.Type()
 			ok = resolverType != nil && resolverType.Implements(nameserver.Type())
 		}
 		if ok {
-			m, e := r.Resolve(query, depth-1)
+			m, e := r.Resolve(q, depth-1)
 			if e != nil {
 				errCollector <- e
 			} else {
@@ -56,7 +56,10 @@ func (nsl *ConcurrentNameServerList) Resolve(query *dns.Msg, depth int) (*dns.Ms
 		wg.Done()
 	}
 	for _, nameServerResolver := range *nsl {
-		go request(nameServerResolver)
+		// Hand each child its own copy: the children run concurrently and some
+		// resolvers mutate the query in place, so sharing one *dns.Msg across
+		// goroutines would be a data race.
+		go request(nameServerResolver, query.Copy())
 	}
 	go func() {
 		wg.Wait()
