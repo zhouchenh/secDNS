@@ -362,7 +362,7 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 		existing.DisablePrefetch = directives.disablePrefetch
 		existing.DisableStale = directives.disableStale
 		c.lru.MoveToFront(existing.lruNode)
-		heap.Push(&c.queue, expirationItem{key: key, expiresAt: existing.ExpiresAt})
+		c.pushExpiration(key, existing.ExpiresAt)
 		return
 	}
 
@@ -386,7 +386,33 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 	entry.ExpiresAt = entry.CachedAt.Add(time.Duration(entry.OriginalTTL) * time.Second)
 
 	c.entries[key] = entry
-	heap.Push(&c.queue, expirationItem{key: key, expiresAt: entry.ExpiresAt})
+	c.pushExpiration(key, entry.ExpiresAt)
+}
+
+// pushExpiration adds an expiration item and keeps the expiration heap bounded. A
+// re-cache (refresh/prefetch) pushes a fresh item without removing the prior one, so
+// duplicate items accumulate for frequently-updated keys. cleanupExpired discards stale
+// duplicates lazily (it only acts on the item whose expiry matches the live entry), but
+// the heap itself can still bloat between cleanups. When it grows past ~2x the live
+// entry count, rebuild it from the live entries — one item each — reclaiming the
+// duplicates. This is amortized O(1) per insert and bounds the heap at ~2*len(entries).
+// Callers must hold c.mutex.
+func (c *Cache) pushExpiration(key string, expiresAt time.Time) {
+	heap.Push(&c.queue, expirationItem{key: key, expiresAt: expiresAt})
+	if len(c.queue) > 2*len(c.entries)+16 {
+		c.rebuildExpirationQueueLocked()
+	}
+}
+
+// rebuildExpirationQueueLocked replaces the expiration heap with exactly one item per
+// live entry. Callers must hold c.mutex.
+func (c *Cache) rebuildExpirationQueueLocked() {
+	q := make(expirationHeap, 0, len(c.entries))
+	for k, e := range c.entries {
+		q = append(q, expirationItem{key: k, expiresAt: e.ExpiresAt})
+	}
+	c.queue = q
+	heap.Init(&c.queue)
 }
 
 func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, error) {
