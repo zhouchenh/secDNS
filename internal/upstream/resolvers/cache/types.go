@@ -222,7 +222,7 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		// Set the query ID to match the incoming query
 		response.Id = query.Id
 		if stale {
-			go c.triggerRefresh(key, query.Copy(), depth-1)
+			c.triggerRefresh(key, entry, query, depth-1)
 		} else {
 			c.maybePrefetch(key, entry, query.Copy(), depth-1)
 		}
@@ -391,13 +391,23 @@ func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, 
 	return resp, nil
 }
 
-func (c *Cache) triggerRefresh(key string, query *dns.Msg, depth int) {
-	if query == nil {
+// triggerRefresh asynchronously refreshes a stale entry. It bounds fan-out to at most
+// one in-flight refresh per entry by claiming the entry's prefetching flag (shared with
+// maybePrefetch and reset on re-cache and on completion), so serving stale for a hot
+// name no longer spawns a goroutine per request. The caller must not have already
+// wrapped this in its own goroutine — triggerRefresh starts exactly one.
+func (c *Cache) triggerRefresh(key string, entry *Entry, query *dns.Msg, depth int) {
+	if query == nil || entry == nil {
 		return
 	}
+	if !atomic.CompareAndSwapUint32(&entry.prefetching, 0, 1) {
+		return
+	}
+	queryCopy := query.Copy()
 	go func() {
+		defer atomic.StoreUint32(&entry.prefetching, 0)
 		_, _, _ = c.requests.Do(key, func() (interface{}, error) {
-			return c.fetchAndStore(query, depth, key)
+			return c.fetchAndStore(queryCopy, depth, key)
 		})
 	}()
 }
@@ -814,6 +824,16 @@ func (c *Cache) cleanupExpired() {
 			heap.Pop(&c.queue)
 			entry, ok := c.entries[item.key]
 			if !ok {
+				continue
+			}
+			// A re-cache (refresh/prefetch) pushes a fresh heap item without removing
+			// the prior one, so a key can have several heap items with divergent
+			// expiry. Only the item whose expiresAt matches the entry's current
+			// ExpiresAt reflects the live expiry; any other popped item is a stale
+			// duplicate from a superseded TTL and must NOT delete the (now-fresh)
+			// entry — otherwise a refreshed entry is evicted prematurely whenever
+			// ServeStale is off.
+			if !entry.ExpiresAt.Equal(item.expiresAt) {
 				continue
 			}
 			if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
