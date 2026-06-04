@@ -9,6 +9,7 @@ import (
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 type Instance interface {
@@ -25,6 +26,7 @@ type instance struct {
 	listeners       []server.Server
 	nameResolverMap map[string]resolver.Resolver // fully qualified names are required
 	mapMutex        sync.RWMutex
+	hasNamed        atomic.Bool // true once any named resolver is registered
 	defaultResolver resolver.Resolver
 	resolutionDepth int
 }
@@ -58,6 +60,7 @@ func (i *instance) AcceptProvider(rulesProvider provider.Provider, errorHandler 
 		i.mapMutex.Lock()
 		if _, hasKey := i.nameResolverMap[key]; !hasKey {
 			i.nameResolverMap[key] = r
+			i.hasNamed.Store(true)
 		}
 		i.mapMutex.Unlock()
 	}, func(err error) {
@@ -133,13 +136,20 @@ func (i *instance) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
+	// Fast path: no named resolvers are registered (the common case for a config with
+	// only a defaultResolver), so skip canonicalization, splitting, and the map lookups
+	// entirely and go straight to the default resolver.
+	if !i.hasNamed.Load() {
+		return i.defaultResolver.Resolve(query, depth-1)
+	}
+
 	canonicalName := dns.CanonicalName(query.Question[0].Name)
 	labels := strings.Split(canonicalName, ".")
 	if len(labels) < 2 {
 		return nil, ErrInvalidDomainName
 	}
 
-	// Check exact match with quotes
+	// Check exact match with quotes.
 	i.mapMutex.RLock()
 	r, ok := i.nameResolverMap["\""+canonicalName+"\""]
 	i.mapMutex.RUnlock()
@@ -150,9 +160,12 @@ func (i *instance) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		}
 	}
 
-	// Check domain hierarchy
+	// Check domain hierarchy. Slice the already-canonicalized name at successive label
+	// offsets instead of re-joining the label slice on every level (no per-level alloc).
+	offset := 0
 	for level := 0; level < len(labels)-1; level++ {
-		domainName := strings.Join(labels[level:], ".")
+		domainName := canonicalName[offset:]
+		offset += len(labels[level]) + 1
 		i.mapMutex.RLock()
 		r, ok := i.nameResolverMap[domainName]
 		i.mapMutex.RUnlock()
