@@ -626,13 +626,18 @@ func splitProofs(rrs []dns.RR) ([]*dns.NSEC, []*dns.NSEC3) {
 
 func verifyNSECCoverage(qname string, qtype uint16, rcode int, nsecs []*dns.NSEC) bool {
 	qname = normalizeName(qname)
-	// NXDOMAIN: need proof that name doesn't exist and that wildcard closest encloser doesn't exist.
+	// NXDOMAIN (RFC 4035 section 5.4): prove qname does not exist and that no wildcard
+	// at the closest encloser could have synthesized an answer. The closest encloser is
+	// derived from the NSEC that actually covers qname (the existing names immediately
+	// bracketing the non-existence gap), never inferred as the root — so a single
+	// covering NSEC plus an apex-wildcard NSEC can no longer "prove" NXDOMAIN for a
+	// wildcard-answerable name.
 	if rcode == dns.RcodeNameError {
-		if !nsecCoversName(qname, nsecs) {
+		ce, ok := nsecClosestEncloser(qname, nsecs)
+		if !ok || ce == qname {
 			return false
 		}
-		closest := closestEncloser(qname, nsecs)
-		wildcard := normalizeName("*." + closest)
+		wildcard := normalizeName("*." + ce)
 		return nsecCoversName(wildcard, nsecs)
 	}
 	// NODATA: an NSEC whose owner is EXACTLY qname with the qtype and CNAME bits clear.
@@ -720,28 +725,78 @@ func nsecCoversName(name string, nsecs []*dns.NSEC) bool {
 	return false
 }
 
-func nsecNameCovered(owner, next, name string) bool {
-	if owner == name {
-		return true
+// canonicalLess reports whether a sorts strictly before b in DNSSEC canonical name
+// order (RFC 4034 section 6.1): labels are compared from the rightmost (TLD) label
+// inward, each as a case-insensitive octet string; a shorter name (a proper ancestor)
+// sorts first. Plain Go string comparison is not equivalent for multi-label names.
+func canonicalLess(a, b string) bool {
+	al := dns.SplitDomainName(a)
+	bl := dns.SplitDomainName(b)
+	i, j := len(al)-1, len(bl)-1
+	for i >= 0 && j >= 0 {
+		ai := strings.ToLower(al[i])
+		bj := strings.ToLower(bl[j])
+		if ai != bj {
+			return ai < bj
+		}
+		i--
+		j--
 	}
-	if owner < next {
-		return owner < name && name < next
-	}
-	// Wrap-around interval.
-	return owner < name || name < next
+	return i < j // the name with fewer remaining labels sorts first
 }
 
-func closestEncloser(qname string, nsecs []*dns.NSEC) string {
-	labels := dns.SplitDomainName(qname)
-	for i := 0; i < len(labels); i++ {
-		candidate := normalizeName(strings.Join(labels[i:], "."))
-		for _, n := range nsecs {
-			if normalizeName(n.Hdr.Name) == candidate {
-				return candidate
-			}
-		}
+// nsecNameCovered reports whether name falls strictly inside the gap an NSEC proves
+// to be empty, i.e. owner < name < next in canonical order (with wrap-around for the
+// last NSEC). An endpoint (name == owner or name == next) exists and is not covered.
+func nsecNameCovered(owner, next, name string) bool {
+	if name == owner || name == next {
+		return false
 	}
-	return "."
+	if canonicalLess(owner, next) {
+		return canonicalLess(owner, name) && canonicalLess(name, next)
+	}
+	// Wrap-around: the last NSEC's next is the zone apex (<= owner canonically).
+	return canonicalLess(owner, name) || canonicalLess(name, next)
+}
+
+// longestCommonAncestor returns the deepest DNS name that is an ancestor (or self) of
+// both a and b, comparing labels from the right (RFC 4034 section 6.1).
+func longestCommonAncestor(a, b string) string {
+	al := dns.SplitDomainName(a)
+	bl := dns.SplitDomainName(b)
+	i, j := len(al)-1, len(bl)-1
+	var common []string
+	for i >= 0 && j >= 0 && strings.EqualFold(al[i], bl[j]) {
+		common = append([]string{al[i]}, common...)
+		i--
+		j--
+	}
+	if len(common) == 0 {
+		return "."
+	}
+	return normalizeName(strings.Join(common, "."))
+}
+
+// nsecClosestEncloser returns the closest encloser of qname proven by the NSEC chain.
+// It requires an NSEC covering qname (proving qname does not exist) and derives the
+// closest encloser as the deepest ancestor of qname that the covering NSEC shows to
+// exist — the longer of the common ancestors of qname with the covering NSEC's owner
+// and next names (RFC 4035 section 5.4).
+func nsecClosestEncloser(qname string, nsecs []*dns.NSEC) (string, bool) {
+	for _, n := range nsecs {
+		owner := normalizeName(n.Hdr.Name)
+		next := normalizeName(n.NextDomain)
+		if !nsecNameCovered(owner, next, qname) {
+			continue
+		}
+		a := longestCommonAncestor(qname, owner)
+		b := longestCommonAncestor(qname, next)
+		if dns.CountLabel(b) > dns.CountLabel(a) {
+			return b, true
+		}
+		return a, true
+	}
+	return "", false
 }
 
 func closestEncloserNSEC3(qname string, nsec3s []*dns.NSEC3, params *dns.NSEC3) string {
