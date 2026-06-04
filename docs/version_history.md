@@ -1,5 +1,34 @@
 # Version History
 
+## v1.4.2 - 2026.06.04
+
+Cache Correctness and Performance
+
+This release fixes a cache data-loss bug, removes the cache's per-hit lock contention,
+and adds upstream connection reuse. Configuration is backward-compatible.
+
+* cache: fix a data-loss bug where a refreshed entry could be deleted by a stale
+  expiration-heap item left behind by an earlier (shorter) TTL — cleanup now acts only
+  on the heap item whose expiry matches the entry's current expiry, so a re-cached entry
+  is no longer evicted prematurely when serve-stale is disabled.
+* cache: bound stale-refresh fan-out. Serving stale for a hot name previously spawned a
+  goroutine per request (two, in fact — a redundant wrapper); refresh is now a single
+  goroutine gated by the entry's prefetch flag, capping in-flight refresh at one per
+  entry.
+* cache: remove the exclusive lock taken on every cache hit. Each hit re-acquired the
+  cache's writer lock solely to move the entry to the LRU front, serializing concurrent
+  hits. Hits now set a CLOCK / second-chance "referenced" bit with a single atomic store
+  (no lock), and eviction uses a bounded second-chance scan. Concurrent cache-hit
+  throughput improves several-fold on multi-core hosts (about 5.7x at 12 cores in the
+  parallel-hit benchmark).
+* cache: bound the expiration heap. Frequent re-caching accumulated duplicate heap items;
+  the heap is now rebuilt from the live entries once it exceeds about twice the entry
+  count, keeping it bounded by the live entry count.
+* nameServer: reuse TCP and DoT (tcp-tls) connections from a small bounded idle pool
+  instead of dialing — and, for DoT, completing a TLS handshake — on every query. UDP is
+  unchanged. Reuse is one outstanding query per connection and relies on the existing
+  per-query random transaction ID to discard any stale response on a reused connection.
+
 ## v1.4.1 - 2026.06.04
 
 DNSSEC Denial-of-Existence and Resolver Availability Hardening
