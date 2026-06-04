@@ -60,6 +60,55 @@ func TestVerifyNSECCoverageNODATAExactMatch(t *testing.T) {
 	}
 }
 
+func TestCanonicalLess(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"example.", "a.example.", true},      // ancestor sorts first
+		{"a.example.", "example.", false},     //
+		{"a.example.", "z.example.", true},    //
+		{"*.example.", "a.example.", true},    // '*' (0x2a) < 'a' (0x61)
+		{"a.example.", "a.example.", false},   // equal
+		{"a.z.example.", "b.example.", false}, // right-to-left: 'z' > 'b' (byte order would disagree)
+		{"b.example.", "a.z.example.", true},
+	}
+	for _, c := range cases {
+		if got := canonicalLess(c.a, c.b); got != c.want {
+			t.Errorf("canonicalLess(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+func TestVerifyNSECCoverageNXDOMAIN(t *testing.T) {
+	nsec := func(owner, next string, types ...uint16) *dns.NSEC {
+		return &dns.NSEC{
+			Hdr:        dns.RR_Header{Name: owner, Rrtype: dns.TypeNSEC, Class: dns.ClassINET},
+			NextDomain: next,
+			TypeBitMap: types,
+		}
+	}
+	// Legitimate NXDOMAIN for nope.example.: covered by (a.example., z.example.), and
+	// the wildcard *.example. is covered by (example., a.example.) -> proof holds.
+	proof := []*dns.NSEC{
+		nsec("example.", "a.example.", dns.TypeSOA, dns.TypeNS, dns.TypeRRSIG, dns.TypeNSEC),
+		nsec("a.example.", "z.example.", dns.TypeA, dns.TypeRRSIG, dns.TypeNSEC),
+	}
+	if !verifyNSECCoverage("nope.example.", dns.TypeA, dns.RcodeNameError, proof) {
+		t.Fatalf("a legitimate NXDOMAIN proof should be accepted")
+	}
+	// R2-02 forgery: a wildcard *.example. EXISTS, so nope.example. should have been
+	// answered by the wildcard, not NXDOMAIN. The covering NSEC must not prove NXDOMAIN
+	// (the old closestEncloser collapsed to root and accepted this).
+	forge := []*dns.NSEC{
+		nsec("a.example.", "z.example.", dns.TypeA, dns.TypeRRSIG, dns.TypeNSEC), // covers nope.example.
+		nsec("*.example.", "a.example.", dns.TypeA, dns.TypeRRSIG, dns.TypeNSEC), // the wildcard exists
+	}
+	if verifyNSECCoverage("nope.example.", dns.TypeA, dns.RcodeNameError, forge) {
+		t.Fatalf("NXDOMAIN must be rejected when a wildcard at the closest encloser exists")
+	}
+}
+
 func TestVerifyNSEC3CoverageNODATARequiresMatch(t *testing.T) {
 	const salt = "aabbccdd"
 	hashedOwner := func(name string) string {
