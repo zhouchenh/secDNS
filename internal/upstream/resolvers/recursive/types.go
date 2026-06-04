@@ -54,6 +54,9 @@ type Recursive struct {
 	validator      *dnssecValidator
 	log            func(msg string)
 	ecsConfig      *ecs.Config
+	// exchangeFn, when set, replaces the real network exchange (tests inject it to
+	// drive resolveWithServers deterministically); nil uses r.exchange.
+	exchangeFn func(query *dns.Msg, ip net.IP) (*dns.Msg, time.Duration, error)
 }
 
 var (
@@ -533,8 +536,15 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 		return nil, err
 	}
 	question := query.Question[0]
+	exchange := r.exchange
+	if r.exchangeFn != nil {
+		exchange = r.exchangeFn
+	}
+	// A SERVFAIL/FORMERR from one server is not authoritative; remember it but keep
+	// trying the remaining servers, and only surface it if every server fails.
+	var lastFailure *dns.Msg
 	for _, ip := range servers {
-		resp, rtt, err := r.exchange(query, ip)
+		resp, rtt, err := exchange(query, ip)
 		if err != nil {
 			if r.log != nil {
 				r.log(fmt.Sprintf("exchange to %s failed: %v", ip, err))
@@ -569,8 +579,13 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 				return resp, nil
 			}
 			// No answer: treat like referral handling below.
-		case dns.RcodeNameError, dns.RcodeServerFailure, dns.RcodeFormatError:
+		case dns.RcodeNameError:
+			// Definitive authenticated/authoritative non-existence; return it.
 			return resp, nil
+		case dns.RcodeServerFailure, dns.RcodeFormatError:
+			// One server could not answer; try the next, keeping this as a fallback.
+			lastFailure = resp
+			continue
 		}
 
 		if isTerminalNoData(resp, nsNames) {
@@ -593,6 +608,11 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 		if err == nil {
 			return next, nil
 		}
+	}
+	// Every server either errored or returned SERVFAIL/FORMERR. Prefer surfacing a real
+	// upstream failure response over a synthetic error when one is available.
+	if lastFailure != nil {
+		return lastFailure, nil
 	}
 	return nil, errors.New("recursive resolver: all servers failed")
 }
