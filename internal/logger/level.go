@@ -1,6 +1,10 @@
 package logger
 
-import "github.com/rs/zerolog"
+import (
+	"strings"
+
+	"github.com/rs/zerolog"
+)
 
 type Level zerolog.Level
 
@@ -38,4 +42,27 @@ func LogLevel() Level {
 func SetLogLevel(level Level) {
 	stdoutLogger = stdoutLogger.Level(zerolog.Level(level))
 	stderrLogger = stderrLogger.Level(zerolog.Level(level))
+}
+
+// ParseLevel maps a case-insensitive level name to a Level. It reports false for an
+// unrecognized name (callers should keep the current/default level and warn).
+func ParseLevel(name string) (Level, bool) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "trace":
+		return TraceLevel, true
+	case "debug":
+		return DebugLevel, true
+	case "info":
+		return InfoLevel, true
+	case "warn", "warning":
+		return WarningLevel, true
+	case "error", "quiet":
+		return ErrorLevel, true
+	case "fatal":
+		return FatalLevel, true
+	case "off", "none", "disabled":
+		return Disabled, true
+	default:
+		return DefaultLogLevel, false
+	}
 }

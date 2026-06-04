@@ -6,6 +6,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/config"
 	"github.com/zhouchenh/secDNS/internal/core"
 	_ "github.com/zhouchenh/secDNS/internal/features"
+	"github.com/zhouchenh/secDNS/internal/logger"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,7 +16,26 @@ var (
 	configFilePath = flag.String("config", "", "Specify a config file")
 	version        = flag.Bool("version", false, "Print version information and exit")
 	test           = flag.Bool("test", false, "Test the config file and exit")
+	logLevel       = flag.String("log-level", "", "Log verbosity: trace|debug|info|warn|error|off (env "+core.EnvKey("log", "level")+")")
 )
+
+// applyLogLevel sets the log level from the --log-level flag, falling back to the
+// SECDNS_LOG_LEVEL env var, then the default. An unrecognized value keeps the default
+// and warns rather than aborting.
+func applyLogLevel(flagValue string) {
+	value := flagValue
+	if value == "" {
+		value = os.Getenv(core.EnvKey("log", "level"))
+	}
+	if value == "" {
+		return
+	}
+	if level, ok := logger.ParseLevel(value); ok {
+		logger.SetLogLevel(level)
+	} else {
+		logger.Warning().Msgf("config: unknown log level %q; keeping default", value)
+	}
+}
 
 func printVersion() {
 	version := core.VersionStatement()
@@ -47,6 +67,7 @@ func open(filePath string) (*os.File, error) {
 
 func main() {
 	flag.Parse()
+	applyLogLevel(*logLevel)
 	printVersion()
 	if *version {
 		return
@@ -67,12 +88,14 @@ func main() {
 		os.Exit(1)
 	}
 	_ = os.Setenv(envConfigDirPath, filepath.Dir(file.Name()))
+	configSource := file.Name()
 	instance, err := config.LoadConfig(file)
 	_ = file.Close()
 	if err != nil {
 		common.ErrOutput(common.Concatenate("config: Failed to load config: ", err))
 		os.Exit(1)
 	}
+	logger.Info().Str("source", configSource).Msg("config loaded")
 	if *test {
 		common.Output("config: Syntax is OK")
 		os.Exit(0)
