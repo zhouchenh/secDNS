@@ -414,8 +414,12 @@ func (r *Recursive) initialize() {
 		validator.nsec3MaxIter = uint16(r.Nsec3MaxIterations)
 	}
 	r.validator = validator
-	// Initial probes are best-effort; failures keep default ordering.
-	r.scoreboard.probe(func(ip net.IP) (time.Duration, error) {
+	// Initial probes are best-effort and only refine root ordering; they MUST NOT block
+	// the first query. Running them on the request path would stall startup on a host
+	// with a broken address family (e.g. dead IPv6 egress) for the sum of every dead
+	// root's timeout. Run them in the background — queries use the optimistic default
+	// ordering (IPv4-first) until the scoreboard is refined.
+	go r.scoreboard.probe(func(ip net.IP) (time.Duration, error) {
 		msg := new(dns.Msg)
 		msg.SetQuestion(".", dns.TypeNS)
 		var best time.Duration
@@ -1019,10 +1023,18 @@ func (s *nsScoreboard) markSuccess(ip net.IP, rtt time.Duration) {
 		s.scores[key] = entry
 	}
 	const alpha = 0.3
+	// Store the EWMA in milliseconds. The optimistic seed used for untried servers
+	// (scoreValue) is also in milliseconds, so a proven-fast server outranks an untried
+	// one. Storing raw nanoseconds here would make every tried server score in the
+	// millions and thus always lose to untried (often dead) servers.
+	ms := float64(rtt) / float64(time.Millisecond)
+	if ms <= 0 {
+		ms = 0.1 // sub-millisecond RTT floor
+	}
 	if entry.ewmaRTT == 0 {
-		entry.ewmaRTT = float64(rtt)
+		entry.ewmaRTT = ms
 	} else {
-		entry.ewmaRTT = alpha*float64(rtt) + (1-alpha)*entry.ewmaRTT
+		entry.ewmaRTT = alpha*ms + (1-alpha)*entry.ewmaRTT
 	}
 	entry.failStreak = 0
 	entry.successes++
@@ -1057,20 +1069,25 @@ func (s *nsScoreboard) register(ips []net.IP) {
 	}
 }
 
+// probe measures every root concurrently. Probing all roots sequentially would, on a
+// host with a broken address family, block for the sum of every dead server's timeout;
+// running them in parallel bounds the wall time to the slowest single probe. The caller
+// should still run probe off the request path (see initialize).
 func (s *nsScoreboard) probe(exchange func(ip net.IP) (time.Duration, error)) {
+	var wg sync.WaitGroup
 	for _, ip := range s.roots {
-		var best time.Duration
-		var err error
-		best, err = exchange(ip)
-		if err != nil {
-			best = 0
-		}
-		if best > 0 {
+		wg.Add(1)
+		go func(ip net.IP) {
+			defer wg.Done()
+			best, err := exchange(ip)
+			if err != nil || best <= 0 {
+				s.markFailure(ip)
+				return
+			}
 			s.markSuccess(ip, best)
-		} else {
-			s.markFailure(ip)
-		}
+		}(ip)
 	}
+	wg.Wait()
 }
 
 // pickRoots returns the top ranked root IPs.
@@ -1092,12 +1109,16 @@ func (s *nsScoreboard) pickFrom(ips []net.IP, preferIPv6 bool, limit int) []net.
 		seen[key] = true
 		entry := s.scores[key]
 		if entry == nil {
-			entry = &nsScore{ip: ip, ewmaRTT: 50} // optimistic seed
+			entry = &nsScore{ip: ip} // untried; scoreValue applies the optimistic seed
 		}
 		list = append(list, entry)
 	}
 	sort.Slice(list, func(i, j int) bool {
-		return scoreValue(list[i], preferIPv6) < scoreValue(list[j], preferIPv6)
+		si, sj := scoreValue(list[i], preferIPv6), scoreValue(list[j], preferIPv6)
+		if si != sj {
+			return si < sj
+		}
+		return list[i].ip.String() < list[j].ip.String() // deterministic tiebreak
 	})
 	if limit <= 0 || limit > len(list) {
 		limit = len(list)
@@ -1106,19 +1127,64 @@ func (s *nsScoreboard) pickFrom(ips []net.IP, preferIPv6 bool, limit int) []net.
 	for i := 0; i < limit; i++ {
 		out = append(out, list[i].ip)
 	}
-	return out
+	return ensureFamilyDiversity(out, list, limit)
 }
 
+// ensureFamilyDiversity guarantees that, whenever both address families are present in
+// the candidate set, the returned selection contains at least one server of each. On a
+// host where one family's egress is broken, the working family must always be attempted
+// rather than starved by a full-of-the-dead-family selection. If the selection is
+// single-family, the worst slot is replaced by the best-scored server of the missing
+// family (the candidate list is already sorted best-first).
+func ensureFamilyDiversity(out []net.IP, sorted []*nsScore, limit int) []net.IP {
+	if limit < 2 || len(out) < 2 {
+		return out
+	}
+	haveV4, haveV6 := false, false
+	for _, ip := range out {
+		if ip.To4() != nil {
+			haveV4 = true
+		} else {
+			haveV6 = true
+		}
+	}
+	if haveV4 && haveV6 {
+		return out
+	}
+	missingIsV6 := !haveV6 // selection is all-IPv4 -> we need an IPv6, and vice versa
+	for _, sc := range sorted {
+		if (sc.ip.To4() == nil) == missingIsV6 {
+			out[len(out)-1] = sc.ip
+			return out
+		}
+	}
+	return out // the missing family is not available at all
+}
+
+// familyBiasMillis is the small RTT-equivalent margin (in ms) that biases server
+// selection toward the preferred address family (IPv4 by default). It is intentionally
+// small so a genuinely faster opposite-family server still wins, but it breaks
+// cold-start ties deterministically so a host with broken IPv6 egress does not stall on
+// dead IPv6 servers.
+const familyBiasMillis = 15.0
+
+// scoreValue ranks a nameserver; lower is better. Score = EWMA RTT (ms) + a steep
+// per-consecutive-failure penalty (a server that just failed drops far down) + the
+// address-family bias.
 func scoreValue(entry *nsScore, preferIPv6 bool) float64 {
 	base := entry.ewmaRTT
-	if base == 0 {
-		base = 50 // seed default
+	if base <= 0 {
+		base = 50 // optimistic seed (ms) for an untried server
 	}
-	penalty := float64(entry.failStreak * 100)
-	if preferIPv6 && entry.ip.To4() == nil {
-		return base + penalty - 5
+	score := base + float64(entry.failStreak)*100
+	if entry.ip.To4() == nil { // IPv6
+		if preferIPv6 {
+			score -= familyBiasMillis
+		} else {
+			score += familyBiasMillis
+		}
 	}
-	return base + penalty
+	return score
 }
 
 func durationFiller(field, jsonKey string, def time.Duration) descriptor.ObjectFiller {
