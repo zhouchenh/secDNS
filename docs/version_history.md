@@ -1,5 +1,42 @@
 # Version History
 
+## v1.4.3 - 2026.06.04
+
+Concurrency Correctness and Recursive-Resolver Stability
+
+This release fixes data races in the concurrent and conditional-filter resolvers, hardens
+the recursive resolver against premature failure and out-of-band glue amplification, and
+activates a runtime log-level control. Configuration is backward-compatible.
+
+* resolvers: fix a data race in concurrent fan-out. `concurrentNameServerList` launched a
+  goroutine per child but passed all of them the same `*dns.Msg`; because the
+  `filterOutAIfAAAAPresents`/`filterOutAAAAIfAPresents` resolvers (valid list members)
+  mutate the query in place to probe the opposite record type, a child rewriting the
+  question raced a sibling reading the shared message. The list now hands each child its
+  own `query.Copy()`, and the two filters probe on a private copy instead of mutating the
+  shared message in place.
+* recursive: a single server's SERVFAIL/FORMERR no longer short-circuits the
+  sibling-server loop. Previously NXDOMAIN, SERVFAIL, and FORMERR were grouped into one
+  case that returned the first server's response immediately, so one flaky server turned
+  every query routed through it into SERVFAIL. NXDOMAIN still returns immediately
+  (definitive non-existence); a SERVFAIL/FORMERR is now remembered as a fallback while the
+  loop tries the remaining servers, and is surfaced only after every server has failed.
+* recursive: bound out-of-band glue resolution. Chasing glue for a glueless referral
+  previously restarted iterative resolution at a fresh `maxDepth` budget per NS name with
+  the NS list uncapped, so a chain of glueless referrals could recurse without a monotonic
+  bound and amplify one client query into runaway upstream traffic. Glue lookups are now
+  charged against the caller's remaining recursion depth (decremented down the tree, never
+  reset), a depth-exhausted referral chases no glue, and the NS names chased per referral
+  are de-duplicated and capped at six.
+* logging: add a `--log-level` flag (and `SECDNS_LOG_LEVEL` environment variable) that sets
+  verbosity to `trace`, `debug`, `info`, `warn`, `error`, or `off` (with `warning`,
+  `quiet`, and `none`/`disabled` aliases); values are case-insensitive. The level machinery
+  already existed but nothing called it, pinning output to the `warn` default and hiding
+  every Info/Debug message. The flag takes precedence over the environment variable, an
+  unrecognized value warns and keeps the default rather than aborting, and the level is
+  applied before config load so config-load errors honor it. The loaded config source is
+  now logged at info level.
+
 ## v1.4.2 - 2026.06.04
 
 Cache Correctness and Performance
