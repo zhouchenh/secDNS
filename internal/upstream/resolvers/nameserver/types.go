@@ -38,6 +38,7 @@ type client struct {
 	dialFunc     func(network, address string) (conn net.Conn, err error)
 	dialTLSFunc  func(network, address string) (conn net.Conn, err error)
 	socks5Client *socks5.Client
+	pool         *connPool // idle connection reuse for stream (TCP/DoT) protocols
 	*dns.Client
 }
 
@@ -111,20 +112,62 @@ func (ns *NameServer) queryWithProtocol(query *dns.Msg, address string, protocol
 		clientToUse = ns.createClientForProtocol(protocol)
 	}
 
+	// Stream protocols (TCP and DoT) reuse idle connections from a bounded pool to
+	// avoid a TCP — and for DoT, a TLS — handshake on every query. UDP is
+	// connectionless and dials fresh each time as before.
+	if strings.HasPrefix(protocol, "tcp") && clientToUse.pool != nil {
+		return ns.streamExchange(clientToUse, address, query)
+	}
+
 	connection, err := clientToUse.Dial(address)
 	if err != nil {
 		return nil, err
 	}
 	defer connection.Close()
-	_ = connection.SetDeadline(time.Now().Add(ns.QueryTimeout))
+	return ns.exchangeOnConn(connection, query)
+}
+
+// streamExchange performs a query over a stream (TCP/DoT) connection, reusing a pooled
+// idle connection when available and returning it to the pool only after a clean
+// exchange. A pooled connection that fails (the peer closed it while idle) is discarded
+// and the query retried once on a fresh dial. Reuse is safe because each query carries a
+// fresh random transaction ID and exchangeOnConn discards any non-matching (stale)
+// response from a prior query on the connection before accepting an answer.
+func (ns *NameServer) streamExchange(c *client, address string, query *dns.Msg) (*dns.Msg, error) {
+	if conn := c.pool.get(); conn != nil {
+		msg, err := ns.exchangeOnConn(conn, query)
+		if err == nil {
+			c.pool.put(conn)
+			return msg, nil
+		}
+		conn.Close()
+	}
+	conn, err := c.Dial(address)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := ns.exchangeOnConn(conn, query)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	c.pool.put(conn)
+	return msg, nil
+}
+
+// exchangeOnConn writes the query and reads until a response matching the query
+// (transaction ID + question) arrives or the deadline fires, discarding unsolicited or
+// mismatched messages so a forged, stray, or stale (previous-query) message cannot be
+// accepted as the answer. A bounded number of mismatches is tolerated so a flood of
+// spoofed datagrams cannot spin the CPU for the entire deadline window. It does not
+// close the connection — the caller decides whether to pool or close it.
+func (ns *NameServer) exchangeOnConn(connection *dns.Conn, query *dns.Msg) (*dns.Msg, error) {
+	if err := connection.SetDeadline(time.Now().Add(ns.QueryTimeout)); err != nil {
+		return nil, err
+	}
 	if err := connection.WriteMsg(query); err != nil {
 		return nil, err
 	}
-	// Read until a response that matches the query (transaction ID + question)
-	// arrives or the deadline fires, discarding unsolicited or mismatched datagrams
-	// so a forged or stray packet cannot be accepted as the answer. A bounded number
-	// of mismatches is tolerated so a flood of spoofed datagrams cannot spin the CPU
-	// for the entire deadline window.
 	const maxMismatchedResponses = 8
 	for mismatches := 0; ; mismatches++ {
 		msg, err := connection.ReadMsg()
@@ -183,6 +226,7 @@ func (ns *NameServer) createClientForProtocol(protocol string) *client {
 	c := &client{
 		dialFunc:     nil,
 		socks5Client: nil,
+		pool:         newConnPool(),
 		Client: &dns.Client{
 			Net:     protocol,
 			UDPSize: 4096, // Enable EDNS0 for larger UDP responses
