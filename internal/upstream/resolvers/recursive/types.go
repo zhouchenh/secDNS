@@ -599,7 +599,7 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 		if len(nsNames) == 0 {
 			continue
 		}
-		glueIPs := r.resolveGlue(nsNames, resp, ecsOpt)
+		glueIPs := r.resolveGlue(nsNames, resp, depth-1, ecsOpt)
 		if len(glueIPs) == 0 {
 			continue
 		}
@@ -831,11 +831,28 @@ type glueCacheEntry struct {
 	expires time.Time
 }
 
-func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, ecsOpt *dns.EDNS0_SUBNET) []net.IP {
+// maxGlueNamesChased bounds how many distinct NS names a single glueless referral will
+// trigger out-of-band glue resolution for, limiting the fan-out per referral.
+const maxGlueNamesChased = 6
+
+// resolveGlue resolves nameserver addresses for a referral. depth is the caller's
+// remaining recursion budget: out-of-band glue lookups are charged against it (NOT a
+// fresh MaxDepth reset, which let a chain of glueless referrals recurse without bound),
+// and the number of NS names chased is capped, so a single client query cannot fan out
+// into runaway upstream traffic.
+func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET) []net.IP {
 	ips := r.extractGlue(resp)
 	now := time.Now()
+	// Dedup the NS names while consulting the glue cache for each.
+	seen := make(map[string]struct{}, len(nsNames))
+	unique := make([]string, 0, len(nsNames))
 	for _, name := range nsNames {
 		key := strings.ToLower(name)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, name)
 		r.glueCacheMutex.Lock()
 		if entry, ok := r.glueCache[key]; ok && entry.expires.After(now) {
 			ips = append(ips, entry.ips...)
@@ -845,14 +862,21 @@ func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, ecsOpt *dns.EDN
 	if len(ips) > 0 {
 		return dedupIPs(ips, r.PreferIPv6)
 	}
-	// Fallback: resolve A/AAAA for NS names using roots again (simple path)
-	for _, name := range nsNames {
+	// No in-band glue or cached glue: chase it ourselves, but only with remaining budget
+	// and only for a bounded number of names.
+	if depth <= 0 {
+		return nil
+	}
+	if len(unique) > maxGlueNamesChased {
+		unique = unique[:maxGlueNamesChased]
+	}
+	for _, name := range unique {
 		aMsg := new(dns.Msg)
 		aMsg.SetQuestion(dns.Fqdn(name), dns.TypeA)
-		aResp, _ := r.resolveIterative(aMsg, r.MaxDepth-1, ecsOpt)
+		aResp, _ := r.resolveIterative(aMsg, depth-1, ecsOpt)
 		aaaaMsg := new(dns.Msg)
 		aaaaMsg.SetQuestion(dns.Fqdn(name), dns.TypeAAAA)
-		aaaaResp, _ := r.resolveIterative(aaaaMsg, r.MaxDepth-1, ecsOpt)
+		aaaaResp, _ := r.resolveIterative(aaaaMsg, depth-1, ecsOpt)
 		collected := collectAandAAAA(aResp, aaaaResp)
 		if len(collected) > 0 {
 			r.scoreboard.register(collected)
