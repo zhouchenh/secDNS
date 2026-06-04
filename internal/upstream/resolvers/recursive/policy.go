@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/miekg/dns"
+	"github.com/zhouchenh/secDNS/internal/logger"
 )
 
 // DNSSEC validation policies. The shipped default is permissive; documentation
@@ -135,6 +136,16 @@ func (r *Recursive) classifyTerminal(msg *dns.Msg, q dns.Question) (secStatus, b
 		if errors.Is(err, errDNSSECMissingSig) {
 			return statusInsecure, false
 		}
+		// A broken chain or failed signature is genuine Bogus. Under strict this
+		// becomes SERVFAIL (applyPolicy) with no other operator-visible cause, so
+		// surface the discarded reason at Debug — gated behind --log-level debug, it
+		// does not flood the default (warning) level but makes the SERVFAIL
+		// diagnosable when an operator goes looking.
+		logger.Debug().
+			Str("qname", q.Name).
+			Str("qtype", dns.TypeToString[q.Qtype]).
+			Str("reason", err.Error()).
+			Msg("dnssec: answer classified bogus")
 		return statusBogus, false
 	case validated:
 		return statusSecure, true
