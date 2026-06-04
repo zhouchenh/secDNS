@@ -1,5 +1,41 @@
 # Version History
 
+## v1.4.1 - 2026.06.04
+
+DNSSEC Denial-of-Existence and Resolver Availability Hardening
+
+This release completes the denial-of-existence rework promised in v1.4.0 and fixes a
+critical defect that made `strict` validation reject every signed negative answer. It
+also closes a chain-of-trust downgrade and removes a startup stall on hosts with a broken
+address family. Configuration is backward-compatible and the shipped default policy
+remains `permissive`.
+
+* recursive: **fix a critical defect where `strict` validation SERVFAILed every signed
+  NXDOMAIN/NODATA answer.** The RRSIG covering the SOA (always present in a negative
+  authority section for negative caching) was collected as a denial proof record, leaving
+  an orphan signature that failed strict verification. Only NSEC/NSEC3-covering RRSIGs are
+  now treated as proof records; the SOA's own signature is still validated separately.
+* recursive: require an authenticated DS-absence proof from a secure parent before
+  treating a child delegation as insecure (RFC 4035 section 5.2, RFC 6840). A missing DS
+  RRset is now backed by the parent's signed NSEC (NS set, DS/SOA clear) or NSEC3 (matching
+  or opt-out span, RFC 5155 section 6) proof; otherwise the answer is Bogus, closing an
+  on-path DS-stripping downgrade of a secure zone to unsigned.
+* recursive: derive the NSEC NXDOMAIN closest encloser from the NSEC that actually covers
+  the name and compare names in DNSSEC canonical order (RFC 4035 section 5.4 / RFC 4034
+  section 6.1), so a single covering NSEC plus an apex-wildcard NSEC can no longer forge
+  NXDOMAIN for a wildcard-answerable name.
+* recursive: enforce the NSEC3 NXDOMAIN next-closer constraint (RFC 5155 section 8.3) —
+  require a matching closest encloser, a covering NSEC3 for the next closer name, and a
+  covering NSEC3 for the wildcard — instead of accepting any NSEC3 that covers the queried
+  name.
+* recursive: do not stall on a broken address family. The best-effort root probe ran
+  synchronously on the first query and blocked on dead servers (e.g. unreachable IPv6) for
+  the full timeout budget; it now runs in the background and probes roots concurrently.
+  Server selection prefers the configured family (IPv4 by default) on a cold scoreboard,
+  always keeps at least one server of each available family in the candidate set, and
+  scores round-trip times in consistent units so a proven-fast server outranks an untried
+  one.
+
 ## v1.4.0 - 2026.06.02
 
 DNSSEC Validation Hardening
