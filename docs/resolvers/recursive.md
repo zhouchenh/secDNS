@@ -4,7 +4,7 @@ _Available in secDNS v1.3.0 and later._
 
 * Type: `recursive`
 
-The `recursive` resolver performs full iterative resolution from the IANA root hints with DNSSEC validation. It supports ECS policy controls (passthrough/add/override/strip), qname minimization, UDP-first with TCP fallback, singleflight deduplication keyed by question + ECS, and optional SOCKS5/bind connectivity. Authoritative NODATA (SOA/no-referral) replies are short-circuited. DNSSEC gating checks RRSIG times, DS->DNSKEY chains, and NSEC/NSEC3 proof coverage; AD is set only when the chain validates. See [EDNS Client Subnet](../edns_client_subnet.md) for ECS usage.
+The `recursive` resolver performs full iterative resolution from the IANA root hints with DNSSEC validation. It supports ECS policy controls (passthrough/add/override/strip), qname minimization, UDP-first with TCP fallback, singleflight deduplication keyed by question + ECS, and optional SOCKS5/bind connectivity. Authoritative NODATA (SOA/no-referral) replies are short-circuited. DNSSEC gating checks RRSIG times, DS->DNSKEY chains, and NSEC/NSEC3 proof coverage; AD is set only when the chain validates. Clients may set the CD bit to bypass strict SERVFAIL (see `honorClientCD`), and the accepted NSEC3 iteration count is bounded (see `nsec3MaxIterations`). See [EDNS Client Subnet](../edns_client_subnet.md) for ECS usage.
 
 ## Minimal Example
 
@@ -27,6 +27,8 @@ Define a recursive resolver inline (for example under `resolvers.recursive.<name
   "type": "recursive",
   "config": {
     "validateDNSSEC": "permissive",
+    "honorClientCD": true,
+    "nsec3MaxIterations": 100,
     "qnameMinimize": true,
     "ednsSize": 1232,
     "timeout": 1.5,
@@ -57,6 +59,18 @@ Define a recursive resolver inline (for example under `resolvers.recursive.<name
 DNSSEC policy. `"strict"` fails on any validation error; `"permissive"` serves the response without AD when validation fails; `"off"` skips validation and never sets AD.
 
 Default: `"permissive"`
+
+> `honorClientCD`: Boolean _(Optional)_
+
+Whether to honor the client's DNSSEC Checking Disabled (CD) bit (RFC 4035 section 3.2.2). When `true`, a query that sets CD bypasses the SERVFAIL-on-bogus behavior of `"strict"` validation and the answer is returned without the AD bit, so a client can opt out of validation. When `false`, the CD bit is ignored and the configured `validateDNSSEC` policy always applies.
+
+Default: `true`
+
+> `nsec3MaxIterations`: Number | String _(Optional)_
+
+Maximum NSEC3 hash iteration count accepted when validating denial-of-existence proofs. Proofs whose iteration count exceeds this bound are not processed, capping the per-query hashing work an attacker can force (a DoS guard). Range: 0-2500. Accepts numbers or numeric strings.
+
+Default: `100`
 
 > `qnameMinimize`: Boolean _(Optional)_
 

@@ -19,8 +19,11 @@ import (
 	"sync"
 )
 
-// Recursive is a placeholder for a full recursive, DNSSEC-validating resolver.
-// It is scaffolded now to wire descriptors, defaults, and root hints; recursion and validation will be implemented in follow-up steps.
+// Recursive is a full recursive, DNSSEC-validating resolver. It performs iterative
+// resolution from the IANA root hints with qname minimization, UDP-first/TCP-fallback
+// exchange, an RTT/health scoreboard for server selection, singleflight deduplication,
+// optional SOCKS5/bind connectivity, and tri-state (Secure/Insecure/Bogus) DNSSEC
+// validation gated by the configured policy.
 type Recursive struct {
 	RootServers        []RootServer
 	ValidateDNSSEC     string
