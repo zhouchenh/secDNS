@@ -700,29 +700,23 @@ func verifyNSEC3Coverage(qname string, qtype uint16, rcode int, nsec3s []*dns.NS
 	}
 	params := nsec3s[0]
 	if rcode == dns.RcodeNameError {
-		// Proof 1: qname does not exist (a covering NSEC3).
-		var hasNameProof bool
-		for _, n := range nsec3s {
-			if n.Cover(qname) {
-				hasNameProof = true
-				break
-			}
-		}
-		if !hasNameProof {
+		// RFC 5155 section 8.3: prove (a) the closest encloser exists — a matching
+		// NSEC3; (b) the next closer name (one label below the closest encloser toward
+		// qname) does not exist — a covering NSEC3; and (c) no wildcard at the closest
+		// encloser exists — a covering NSEC3 for *.<closest encloser>. Requiring the
+		// next closer name specifically, rather than any NSEC3 that merely covers qname,
+		// stops a covering NSEC3 for a deep qname from standing in for the missing
+		// closest-encloser / next-closer proof.
+		ce := closestEncloserNSEC3(qname, nsec3s, params)
+		if ce == "" || ce == qname {
 			return false
 		}
-		// Proof 2: the wildcard at the closest encloser does not exist.
-		closest := closestEncloserNSEC3(qname, nsec3s, params)
-		if closest == "" {
+		nextCloser := nextCloserName(qname, ce)
+		if nextCloser == "" || !nsec3SetCovers(nsec3s, nextCloser) {
 			return false
 		}
-		wildcard := normalizeName("*." + closest)
-		for _, n := range nsec3s {
-			if n.Cover(wildcard) {
-				return true
-			}
-		}
-		return false
+		wildcard := normalizeName("*." + ce)
+		return nsec3SetCovers(nsec3s, wildcard)
 	}
 	// NODATA: an NSEC3 that MATCHES qname (exact owner-hash) with the qtype and CNAME
 	// bits clear. A covering (non-matching) record proves non-existence, not NODATA, so
@@ -818,6 +812,17 @@ func nsecClosestEncloser(qname string, nsecs []*dns.NSEC) (string, bool) {
 		return a, true
 	}
 	return "", false
+}
+
+// nsec3SetCovers reports whether any NSEC3 in the set covers name (its hash falls
+// strictly within the record's [owner, next) span).
+func nsec3SetCovers(nsec3s []*dns.NSEC3, name string) bool {
+	for _, n := range nsec3s {
+		if n.Cover(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func closestEncloserNSEC3(qname string, nsec3s []*dns.NSEC3, params *dns.NSEC3) string {
