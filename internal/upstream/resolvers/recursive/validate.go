@@ -599,12 +599,22 @@ func extractRRSet(msg *dns.Msg, rrType uint16, name string) ([]dns.RR, []*dns.RR
 	return rrs, sigs
 }
 
+// collectProofRecords returns the NSEC/NSEC3 records from an authority section and
+// only the RRSIGs that cover them. The RRSIG over the SOA (always present in an
+// NXDOMAIN/NODATA authority for negative caching) must be excluded: it has no covered
+// record in this set, so feeding it to validateSection would leave an orphan signature
+// that fails strict verification and SERVFAILs every signed negative answer. The SOA's
+// own signature is validated separately against the full authority section.
 func collectProofRecords(nsecSection []dns.RR) []dns.RR {
 	var out []dns.RR
 	for _, rr := range nsecSection {
-		switch rr.(type) {
-		case *dns.NSEC, *dns.NSEC3, *dns.RRSIG:
+		switch v := rr.(type) {
+		case *dns.NSEC, *dns.NSEC3:
 			out = append(out, rr)
+		case *dns.RRSIG:
+			if v.TypeCovered == dns.TypeNSEC || v.TypeCovered == dns.TypeNSEC3 {
+				out = append(out, rr)
+			}
 		}
 	}
 	return out
