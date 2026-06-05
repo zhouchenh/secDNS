@@ -37,6 +37,8 @@ type Recursive struct {
 	MaxDepth           int
 	MaxCNAME           int
 	MaxReferrals       int
+	MaxQueries         int
+	MaxResolutionTime  time.Duration
 	Socks5Proxy        string
 	Socks5Username     string
 	Socks5Password     string
@@ -66,24 +68,26 @@ var (
 	typeOfRecursive            = descriptor.TypeOfNew(new(*Recursive))
 	ErrRecursiveNotImplemented = errors.New("recursive resolver: not implemented yet")
 	defaultRecursiveConfig     = &Recursive{
-		RootServers:     defaultRootHints(),
-		ValidateDNSSEC:  "permissive",
-		QNameMinimize:   true,
-		EDNSSize:        1232,
-		Timeout:         1500 * time.Millisecond,
-		Retries:         2,
-		ProbeTopN:       5,
-		ProbeInterval:   time.Hour,
-		PreferIPv6:      false,
-		MaxDepth:        32,
-		MaxCNAME:        8,
-		MaxReferrals:    16,
-		Socks5Proxy:     "",
-		Socks5Username:  "",
-		Socks5Password:  "",
-		SendThrough:     nil,
-		EcsMode:         string(ecs.ModePassthrough),
-		EcsClientSubnet: "",
+		RootServers:       defaultRootHints(),
+		ValidateDNSSEC:    "permissive",
+		QNameMinimize:     true,
+		EDNSSize:          1232,
+		Timeout:           1500 * time.Millisecond,
+		Retries:           2,
+		ProbeTopN:         5,
+		ProbeInterval:     time.Hour,
+		PreferIPv6:        false,
+		MaxDepth:          32,
+		MaxCNAME:          8,
+		MaxReferrals:      16,
+		MaxQueries:        defaultMaxQueries,
+		MaxResolutionTime: defaultMaxResolutionTime,
+		Socks5Proxy:       "",
+		Socks5Username:    "",
+		Socks5Password:    "",
+		SendThrough:       nil,
+		EcsMode:           string(ecs.ModePassthrough),
+		EcsClientSubnet:   "",
 	}
 )
 
@@ -125,7 +129,7 @@ func (r *Recursive) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	// in-flight result; the AD/SERVFAIL stamp below is per-waiter regardless.
 	key := singleflightKey(queryCopy, clientCD, clientDO)
 	result, err, _ := r.reqGroup.Do(key, func() (interface{}, error) {
-		resp, e := r.resolveIterative(queryCopy, depth, baseECS)
+		resp, e := r.resolveIterative(queryCopy, depth, baseECS, r.newBudget())
 		if e != nil {
 			return nil, e
 		}
@@ -283,6 +287,8 @@ func init() {
 			intFiller("MaxDepth", "maxDepth", 1, 128, defaultRecursiveConfig.MaxDepth),
 			intFiller("MaxCNAME", "maxCNAME", 1, 32, defaultRecursiveConfig.MaxCNAME),
 			intFiller("MaxReferrals", "maxReferrals", 1, 64, defaultRecursiveConfig.MaxReferrals),
+			intFiller("MaxQueries", "maxQueries", 16, 1000000, defaultRecursiveConfig.MaxQueries),
+			durationFillerAllowZero("MaxResolutionTime", "maxResolutionTime", defaultRecursiveConfig.MaxResolutionTime),
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"Socks5Proxy"},
 				ValueSource: descriptor.ValueSources{
@@ -392,6 +398,11 @@ func init() {
 func (r *Recursive) initialize() {
 	if len(r.RootServers) == 0 {
 		r.RootServers = defaultRootHints()
+	}
+	if r.MaxQueries <= 0 {
+		// A directly-constructed resolver (not built through the descriptor, e.g. in
+		// tests) gets the same per-query work cap as a configured one.
+		r.MaxQueries = defaultMaxQueries
 	}
 	if r.log == nil {
 		r.log = func(msg string) { common.ErrOutput(msg) }
@@ -512,15 +523,15 @@ func (r *Recursive) prepareDialers() {
 	}
 }
 
-func (r *Recursive) resolveIterative(query *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET) (*dns.Msg, error) {
-	return r.resolveIterativeValidated(query, depth, true, ecsOpt)
+func (r *Recursive) resolveIterative(query *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET, b *queryBudget) (*dns.Msg, error) {
+	return r.resolveIterativeValidated(query, depth, true, ecsOpt, b)
 }
 
-func (r *Recursive) resolveIterativeNoValidate(query *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET) (*dns.Msg, error) {
-	return r.resolveIterativeValidated(query, depth, false, ecsOpt)
+func (r *Recursive) resolveIterativeNoValidate(query *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET, b *queryBudget) (*dns.Msg, error) {
+	return r.resolveIterativeValidated(query, depth, false, ecsOpt, b)
 }
 
-func (r *Recursive) resolveIterativeValidated(query *dns.Msg, depth int, validate bool, ecsOpt *dns.EDNS0_SUBNET) (*dns.Msg, error) {
+func (r *Recursive) resolveIterativeValidated(query *dns.Msg, depth int, validate bool, ecsOpt *dns.EDNS0_SUBNET, b *queryBudget) (*dns.Msg, error) {
 	if depth <= 0 {
 		return nil, resolver.ErrLoopDetected
 	}
@@ -528,10 +539,10 @@ func (r *Recursive) resolveIterativeValidated(query *dns.Msg, depth int, validat
 		return nil, err
 	}
 	servers := r.scoreboard.pickRoots(r.PreferIPv6)
-	return r.resolveWithServers(query, servers, depth, 0, validate, ecsOpt)
+	return r.resolveWithServers(query, servers, depth, 0, validate, ecsOpt, b)
 }
 
-func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth int, referrals int, validate bool, ecsOpt *dns.EDNS0_SUBNET) (*dns.Msg, error) {
+func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth int, referrals int, validate bool, ecsOpt *dns.EDNS0_SUBNET, b *queryBudget) (*dns.Msg, error) {
 	if len(servers) == 0 {
 		return nil, errors.New("recursive resolver: no servers available")
 	}
@@ -547,6 +558,12 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 	// trying the remaining servers, and only surface it if every server fails.
 	var lastFailure *dns.Msg
 	for _, ip := range servers {
+		// Every upstream exchange across this query's whole tree — including the glue
+		// chases and CNAME restarts reached below — draws from one shared budget; when
+		// it is spent the resolution stops instead of fanning out further.
+		if err := b.charge(); err != nil {
+			return nil, err
+		}
 		resp, rtt, err := exchange(query, ip)
 		if err != nil {
 			if r.log != nil {
@@ -569,7 +586,7 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 						return final, nil
 					}
 				} else if follow != nil && depth > 0 {
-					next, err := r.resolveIterativeValidated(follow, depth-1, validate, ecsOpt)
+					next, err := r.resolveIterativeValidated(follow, depth-1, validate, ecsOpt, b)
 					if err != nil {
 						return nil, err
 					}
@@ -599,14 +616,19 @@ func (r *Recursive) resolveWithServers(query *dns.Msg, servers []net.IP, depth i
 		if len(nsNames) == 0 {
 			continue
 		}
-		glueIPs := r.resolveGlue(nsNames, resp, depth-1, ecsOpt)
+		glueIPs := r.resolveGlue(nsNames, resp, depth-1, ecsOpt, b)
 		if len(glueIPs) == 0 {
 			continue
 		}
 		ordered := r.scoreboard.pickFrom(glueIPs, r.PreferIPv6, r.ProbeTopN)
-		next, err := r.resolveWithServers(query, ordered, depth-1, referrals+1, validate, ecsOpt)
+		next, err := r.resolveWithServers(query, ordered, depth-1, referrals+1, validate, ecsOpt, b)
 		if err == nil {
 			return next, nil
+		}
+		// The budget is global to this query; once it is spent, stop descending into
+		// sibling servers rather than re-failing on each.
+		if errors.Is(err, ErrResolutionBudgetExceeded) {
+			return nil, err
 		}
 	}
 	// Every server either errored or returned SERVFAIL/FORMERR. Prefer surfacing a real
@@ -862,7 +884,7 @@ const maxGlueNamesChased = 6
 // fresh MaxDepth reset, which let a chain of glueless referrals recurse without bound),
 // and the number of NS names chased is capped, so a single client query cannot fan out
 // into runaway upstream traffic.
-func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET) []net.IP {
+func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsOpt *dns.EDNS0_SUBNET, b *queryBudget) []net.IP {
 	ips := r.extractGlue(resp)
 	now := time.Now()
 	// Dedup the NS names while consulting the glue cache for each.
@@ -895,10 +917,10 @@ func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsO
 	for _, name := range unique {
 		aMsg := new(dns.Msg)
 		aMsg.SetQuestion(dns.Fqdn(name), dns.TypeA)
-		aResp, _ := r.resolveIterative(aMsg, depth-1, ecsOpt)
+		aResp, _ := r.resolveIterative(aMsg, depth-1, ecsOpt, b)
 		aaaaMsg := new(dns.Msg)
 		aaaaMsg.SetQuestion(dns.Fqdn(name), dns.TypeAAAA)
-		aaaaResp, _ := r.resolveIterative(aaaaMsg, depth-1, ecsOpt)
+		aaaaResp, _ := r.resolveIterative(aaaaMsg, depth-1, ecsOpt, b)
 		collected := collectAandAAAA(aResp, aaaaResp)
 		if len(collected) > 0 {
 			r.scoreboard.register(collected)
@@ -918,17 +940,19 @@ func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsO
 }
 
 // fetchDNSKEY uses the recursive resolver itself (without revalidation) to fetch DNSKEY for a zone.
+// Each validation fetch carries its own fresh budget — it is bounded independently of
+// the client query's main resolution tree (and of the other per-zone fetches).
 func (r *Recursive) fetchDNSKEY(name string) (*dns.Msg, error) {
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(name), dns.TypeDNSKEY)
-	return r.resolveIterativeValidated(msg, r.MaxDepth-1, false, nil)
+	return r.resolveIterativeValidated(msg, r.MaxDepth-1, false, nil, r.newBudget())
 }
 
 // fetchDS uses the recursive resolver to fetch DS for the zone (without revalidation).
 func (r *Recursive) fetchDS(name string) (*dns.Msg, error) {
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(name), dns.TypeDS)
-	return r.resolveIterativeValidated(msg, r.MaxDepth-1, false, nil)
+	return r.resolveIterativeValidated(msg, r.MaxDepth-1, false, nil, r.newBudget())
 }
 
 func parentZone(name string) string {
@@ -1260,6 +1284,43 @@ func durationFiller(field, jsonKey string, def time.Duration) descriptor.ObjectF
 						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
 							seconds, err := strconv.ParseFloat(strings.TrimSpace(original.(string)), 64)
 							if err != nil || seconds <= 0 {
+								return nil, false
+							}
+							return time.Duration(seconds * float64(time.Second)), true
+						},
+					},
+				},
+			},
+			descriptor.DefaultValue{Value: def},
+		},
+	}
+}
+
+// durationFillerAllowZero is durationFiller but accepts 0 (and rejects negatives), so a
+// config value of 0 can disable an optional time budget rather than falling back to the
+// default.
+func durationFillerAllowZero(field, jsonKey string, def time.Duration) descriptor.ObjectFiller {
+	return descriptor.ObjectFiller{
+		ObjectPath: descriptor.Path{field},
+		ValueSource: descriptor.ValueSources{
+			descriptor.ObjectAtPath{
+				ObjectPath: descriptor.Path{jsonKey},
+				AssignableKind: descriptor.AssignableKinds{
+					descriptor.ConvertibleKind{
+						Kind: descriptor.KindFloat64,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							seconds, ok := original.(float64)
+							if !ok || seconds < 0 {
+								return nil, false
+							}
+							return time.Duration(seconds * float64(time.Second)), true
+						},
+					},
+					descriptor.ConvertibleKind{
+						Kind: descriptor.KindString,
+						ConvertFunction: func(original interface{}) (converted interface{}, ok bool) {
+							seconds, err := strconv.ParseFloat(strings.TrimSpace(original.(string)), 64)
+							if err != nil || seconds < 0 {
 								return nil, false
 							}
 							return time.Duration(seconds * float64(time.Second)), true

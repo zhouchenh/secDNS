@@ -44,6 +44,8 @@ Define a recursive resolver inline (for example under `resolvers.recursive.<name
     "maxDepth": 32,
     "maxCNAME": 8,
     "maxReferrals": 16,
+    "maxQueries": 256,
+    "maxResolutionTime": 30,
     "socks5Proxy": "",
     "socks5Username": "",
     "socks5Password": "",
@@ -131,6 +133,27 @@ Default: `8`
 Maximum referral depth before returning `ErrLoopDetected`. Range: 1-64.
 
 Default: `16`
+
+> `maxQueries`: Number _(Optional)_
+
+Maximum number of upstream exchanges a single client query may trigger across its whole
+iterative resolution tree — referrals, CNAME restarts, and out-of-band glue chasing all
+draw from this one budget. `maxDepth` and `maxReferrals` bound how *deep* resolution
+recurses; this bounds the *total work*, so a maliciously glueless or deeply nested
+delegation cannot fan one query out into unbounded upstream traffic. When the budget is
+spent the query is answered `SERVFAIL`. Each DNSSEC DNSKEY/DS validation fetch is bounded
+independently of the main query's budget. Range: 16-1000000.
+
+Default: `256`
+
+> `maxResolutionTime`: Number | String _(Optional)_
+
+Wall-clock backstop, in seconds (floats allowed), for a single client query. `timeout`
+bounds one exchange; this bounds the whole tree, so a chain of slow or timing-out servers
+cannot keep a resolution alive far longer than any client would wait. Set to `0` to
+disable the time budget and rely on `maxQueries` plus the per-exchange `timeout` alone.
+
+Default: `30`
 
 > `socks5Proxy`: String _(Optional)_
 
