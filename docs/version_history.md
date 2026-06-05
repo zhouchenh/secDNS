@@ -1,5 +1,33 @@
 # Version History
 
+## v1.5.0 - 2026.06.05
+
+Authoritative Resolver and Admin API
+
+This release adds the ability to answer DNS authoritatively from a process-local record
+store, populated dynamically over a bearer-authenticated HTTP admin API — for serving
+records such as ACME DNS-01 `_acme-challenge` TXTs without running a second daemon.
+Configuration is backward-compatible: the new behavior is inactive unless an
+`authoritative` resolver or `httpAdminServer` listener is configured.
+
+* resolvers: add an `authoritative` resolver. It answers from a shared, in-memory,
+  TTL-aware record store instead of forwarding upstream — returning the store's record for
+  a name, a stored `CNAME` for a query of any other type, `NODATA` (NOERROR) when the name
+  exists for another type, and `NXDOMAIN` otherwise, each negative answer carrying a
+  synthesized `SOA` (configurable `negativeTTL`) for downstream negative caching. Supported
+  types are `TXT`, `A`, `AAAA`, and `CNAME`; answers are unsigned. Stores are shared by
+  name (`store`, default `default`), so a resolver and an admin listener that name the same
+  store operate on one record set.
+* listeners: add an `httpAdminServer` listener — a bearer-authenticated HTTP admin API
+  (`POST`/`DELETE`/`GET {path}/records`) that populates the record store the `authoritative`
+  resolver answers from. It binds loopback by default and fails closed, refusing to serve
+  without a configured `token`; the token is compared in constant time, a missing or
+  malformed `Authorization` header is `401` and a wrong token `403`. Record writes accept a
+  DNS TTL (`ttl_seconds`) and an optional store lifetime (`expires_in_seconds`) after which
+  the record is auto-removed. Names, record types, and IP values are validated.
+* docs: add `docs/resolvers/authoritative.md`, `docs/listeners/http_admin_server.md`, and
+  an end-to-end ACME DNS-01 example (`examples/acme-dns01-config.json`).
+
 ## v1.4.6 - 2026.06.05
 
 Concurrent Glue Resolution
