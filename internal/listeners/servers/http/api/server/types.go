@@ -77,6 +77,16 @@ type queryRequest struct {
 }
 
 func (h *HTTPAPIServer) handleResolve(w http.ResponseWriter, r *http.Request, handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error)) {
+	// A reply from an arbitrary resolver chain may be malformed (e.g. a typed-nil RR
+	// in a section); building the JSON for it must not crash the request with a stack
+	// trace. Recover and surface a clean 502 instead. The response object is fully
+	// constructed before any bytes are written, so the headers are still unwritten here.
+	defer func() {
+		if rec := recover(); rec != nil {
+			handleIfError(fmt.Errorf("%w: %v", errResponsePanic, rec), errorHandler)
+			writeError(w, http.StatusBadGateway, errResponsePanic)
+		}
+	}()
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	req, err := h.parseRequest(r)
 	if err != nil {
@@ -205,6 +215,13 @@ func validateRequest(req queryRequest) (queryRequest, error) {
 	if len(req.Name) > 255 {
 		return queryRequest{}, ErrNameTooLong
 	}
+	// Reject names that cannot be represented as a DNS name (empty interior labels,
+	// labels over 63 octets, illegal structure) before they reach packing or rule
+	// matching. Type and class are intentionally left lenient (unknown values default
+	// to A / IN), preserving the documented query-shorthand behavior.
+	if _, ok := dns.IsDomainName(req.Name); !ok {
+		return queryRequest{}, ErrInvalidName
+	}
 	return req, nil
 }
 
@@ -254,31 +271,38 @@ func toHTTPResponse(msg *dns.Msg, includeRaw bool) messageJSON {
 	res := messageJSON{
 		ID:        msg.Id,
 		RCode:     dns.RcodeToString[msg.Rcode],
-		Question:  make([]questionJSON, len(msg.Question)),
-		Answer:    make([]recordJSON, len(msg.Answer)),
-		Authority: make([]recordJSON, len(msg.Ns)),
-		Extra:     make([]recordJSON, len(msg.Extra)),
+		Question:  make([]questionJSON, 0, len(msg.Question)),
+		Answer:    recordsOf(msg.Answer, includeRaw),
+		Authority: recordsOf(msg.Ns, includeRaw),
+		Extra:     recordsOf(msg.Extra, includeRaw),
 	}
-	for i, q := range msg.Question {
-		res.Question[i] = questionJSON{
+	for _, q := range msg.Question {
+		res.Question = append(res.Question, questionJSON{
 			Name:  q.Name,
 			Type:  dns.TypeToString[q.Qtype],
 			Class: dns.ClassToString[q.Qclass],
-		}
-	}
-	for i, rr := range msg.Answer {
-		res.Answer[i] = toRecord(rr, includeRaw)
-	}
-	for i, rr := range msg.Ns {
-		res.Authority[i] = toRecord(rr, includeRaw)
-	}
-	for i, rr := range msg.Extra {
-		res.Extra[i] = toRecord(rr, includeRaw)
+		})
 	}
 	return res
 }
 
+// recordsOf converts a resource-record section to JSON, skipping nil entries so a
+// malformed reply from the resolver chain cannot panic the handler.
+func recordsOf(rrs []dns.RR, includeRaw bool) []recordJSON {
+	out := make([]recordJSON, 0, len(rrs))
+	for _, rr := range rrs {
+		if rr == nil {
+			continue
+		}
+		out = append(out, toRecord(rr, includeRaw))
+	}
+	return out
+}
+
 func toRecord(rr dns.RR, includeRaw bool) recordJSON {
+	if rr == nil {
+		return recordJSON{}
+	}
 	rec := recordJSON{
 		Name:  rr.Header().Name,
 		Type:  dns.TypeToString[rr.Header().Rrtype],
@@ -335,6 +359,9 @@ func toSimpleResponse(msg *dns.Msg) []string {
 	}
 	out := make([]string, 0, len(msg.Answer))
 	for _, rr := range msg.Answer {
+		if rr == nil {
+			continue
+		}
 		if qtype != 0 && rr.Header().Rrtype != qtype {
 			continue
 		}

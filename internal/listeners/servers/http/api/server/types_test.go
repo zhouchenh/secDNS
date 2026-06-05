@@ -348,3 +348,82 @@ func TestValidateRequestNameLength(t *testing.T) {
 		t.Fatalf("expected ErrMissingName for a blank name, got %v", err)
 	}
 }
+
+func TestValidateRequestInvalidName(t *testing.T) {
+	// A 64-octet label exceeds the 63-octet limit: under the length cap (255) but not a
+	// representable DNS name.
+	bad := strings.Repeat("a", 64) + ".example.com"
+	if _, err := validateRequest(queryRequest{Name: bad}); err != ErrInvalidName {
+		t.Fatalf("expected ErrInvalidName for an over-long label, got %v", err)
+	}
+
+	server := &HTTPAPIServer{}
+	rec := httptest.NewRecorder()
+	req := httptestRequest(http.MethodGet, "", url.Values{"name": {bad}})
+	server.handleResolve(rec, req, func(*dns.Msg) *dns.Msg {
+		t.Fatalf("handler must not run for an invalid name")
+		return nil
+	}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid-name status = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleResolveSkipsNilRR(t *testing.T) {
+	server := &HTTPAPIServer{}
+	rec := httptest.NewRecorder()
+	req := httptestRequest(http.MethodGet, "", url.Values{"name": {"example.com"}})
+
+	server.handleResolve(rec, req, func(q *dns.Msg) *dns.Msg {
+		resp := new(dns.Msg)
+		resp.SetQuestion(q.Question[0].Name, q.Question[0].Qtype)
+		resp.Answer = []dns.RR{
+			nil, // an interface-nil entry must be skipped, not panic
+			&dns.A{
+				Hdr: dns.RR_Header{Name: q.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
+				A:   net.IP{1, 2, 3, 4},
+			},
+		}
+		return resp
+	}, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var payload messageJSON
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(payload.Answer) != 1 || payload.Answer[0].Type != "A" {
+		t.Fatalf("nil RR not skipped cleanly: %+v", payload.Answer)
+	}
+}
+
+func TestHandleResolveRecoversFromMalformedRR(t *testing.T) {
+	server := &HTTPAPIServer{}
+	rec := httptest.NewRecorder()
+	req := httptestRequest(http.MethodGet, "", url.Values{"name": {"example.com"}})
+
+	var typedNil *dns.A // a non-nil dns.RR interface wrapping a nil pointer: dereferences on Header()
+	var handlerErr error
+	server.handleResolve(rec, req, func(q *dns.Msg) *dns.Msg {
+		resp := new(dns.Msg)
+		resp.SetQuestion(q.Question[0].Name, q.Question[0].Qtype)
+		resp.Answer = []dns.RR{typedNil}
+		return resp
+	}, func(err error) { handlerErr = err })
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if payload["error"] != errResponsePanic.Error() {
+		t.Fatalf("unexpected error payload: %v", payload)
+	}
+	if !errors.Is(handlerErr, errResponsePanic) {
+		t.Fatalf("error handler should receive the wrapped panic, got %v", handlerErr)
+	}
+}

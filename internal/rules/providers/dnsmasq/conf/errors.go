@@ -1,5 +1,7 @@
 package conf
 
+import "strconv"
+
 type InvalidDomainNameError string
 
 func (e InvalidDomainNameError) Error() string {
@@ -22,6 +24,16 @@ type ReadFileError struct {
 
 func (e ReadFileError) Error() string {
 	return "rules/providers/dnsmasq/conf: An error occurred while reading dnsmasq conf file \"" + e.filePath + "\" " + e.err.Error()
+}
+
+type TruncatedError struct {
+	filePath string
+	limit    int
+}
+
+func (e TruncatedError) Error() string {
+	return "rules/providers/dnsmasq/conf: dnsmasq conf file \"" + e.filePath +
+		"\" exceeded the " + strconv.Itoa(e.limit) + "-entry limit; remaining entries were ignored"
 }
 
 type NilResolverError string

@@ -120,6 +120,59 @@ func TestDnsmasqConfReset(t *testing.T) {
 	}
 }
 
+func TestProvideToleratesLongLine(t *testing.T) {
+	// A >64 KiB line (here a long comment) exceeds the default bufio.Scanner token
+	// limit. With the default buffer the scan aborts at this line and drops the valid
+	// entry after it; with the raised buffer parsing continues.
+	longComment := "#" + strings.Repeat("x", 100<<10)
+	path := writeTempConf(t, longComment+"\nserver=/example.com/8.8.8.8\n")
+	conf := &DnsmasqConf{FilePath: path, Resolver: noopResolver{}}
+
+	var domains []string
+	for conf.Provide(func(name string, r resolver.Resolver) {
+		domains = append(domains, name)
+	}, func(err error) {
+		t.Fatalf("unexpected error: %v", err)
+	}) {
+	}
+
+	if len(domains) != 1 || domains[0] != "example.com." {
+		t.Fatalf("a long line aborted the scan; got %v", domains)
+	}
+}
+
+func TestProvideTruncatesAtEntryCap(t *testing.T) {
+	defer func(prev int) { maxEntries = prev }(maxEntries)
+	maxEntries = 3
+
+	var lines []string
+	for _, d := range []string{"a", "b", "c", "d", "e"} {
+		lines = append(lines, "server=/"+d+".example.com/8.8.8.8")
+	}
+	path := writeTempConf(t, strings.Join(lines, "\n")+"\n")
+	conf := &DnsmasqConf{FilePath: path, Resolver: noopResolver{}}
+
+	var domains []string
+	var truncErr error
+	for conf.Provide(func(name string, r resolver.Resolver) {
+		domains = append(domains, name)
+	}, func(err error) {
+		truncErr = err
+	}) {
+	}
+
+	if len(domains) != 3 {
+		t.Fatalf("entry cap not enforced: got %d entries, want 3", len(domains))
+	}
+	var te TruncatedError
+	if !errors.As(truncErr, &te) {
+		t.Fatalf("want TruncatedError when the cap is hit, got %v", truncErr)
+	}
+	if !strings.Contains(te.Error(), "3-entry limit") {
+		t.Fatalf("TruncatedError should name the limit, got %q", te.Error())
+	}
+}
+
 func writeTempConf(t *testing.T, contents string) string {
 	t.Helper()
 	dir := t.TempDir()
