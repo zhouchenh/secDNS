@@ -1,5 +1,22 @@
 # Version History
 
+## v1.5.1 - 2026.06.05
+
+Config-Load Isolation Fix
+
+This release fixes a latent bug in configuration loading. Configuration is
+backward-compatible.
+
+* config: clear the pending named-resolver list between loads. A string resolver
+  reference (a `defaultResolver` or rule `"name"`) is appended to a process-global pending
+  list while a config is described, and resolved at the end of the load. That list was
+  cleared only when the load succeeded; a not-found reference returned early and left its
+  entry behind, so a subsequent load in the same process re-processed — and re-failed on —
+  a name from the earlier failed config. The list is now cleared on every exit of the
+  resolve step and at the start of each load. secDNS loads one config per process in normal
+  operation, so this changes no runtime behavior; it makes repeated loads correct (and the
+  test suite order-independent).
+
 ## v1.5.0 - 2026.06.05
 
 Authoritative Resolver and Admin API
