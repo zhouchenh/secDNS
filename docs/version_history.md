@@ -1,5 +1,61 @@
 # Version History
 
+## v1.4.4 - 2026.06.05
+
+Resource Bounding, Diagnostics, and Operability
+
+This release bounds two previously unbounded resolver caches, adds a fast path to the
+core dispatcher, makes a strict-mode DNSSEC SERVFAIL diagnosable, gives malformed
+configurations a locatable error, fixes the process exit code on a failed startup, and
+hardens the HTTP API and dnsmasq-conf provider against malformed input. Configuration is
+backward-compatible.
+
+* recursive: bound the glue and trusted-key caches. The out-of-band glue cache and the
+  DNSSEC trusted-key cache grew without limit, so a long-running resolver chasing many
+  distinct delegations could accumulate entries indefinitely. Both now carry a maximum
+  size and prune expired (then oldest) entries on insert once full. Dead writes of unused
+  `dnskey:`/`ds:` cache keys — written but never read — were removed.
+* core: fast-path `instance.Resolve` when no named resolvers are configured. The
+  dispatcher canonicalized the query name, split it into labels, and walked the domain
+  hierarchy under a per-level read lock on every query — even for the common config that
+  has only a default resolver and no rules. An atomic flag, set when the first named
+  resolver is registered, now skips all of that and calls the default resolver directly;
+  the hierarchy walk (when named resolvers do exist) slices the canonicalized name at
+  label offsets instead of re-joining the label slice per level, removing the per-level
+  allocation.
+* recursive: surface the reason a strict-mode answer is classified bogus. A failed DNSSEC
+  validation was mapped to the `Bogus` state but the explanatory error was discarded, so a
+  strict-mode `SERVFAIL` had no operator-visible cause. The reason — query name, type, and
+  error — is now logged at debug (gated behind `--log-level debug`, so the default level is
+  not flooded). The missing-signature (insecure) case, which is served rather than
+  SERVFAILed, stays silent.
+* config: locate the offending entry on a rejected configuration. A malformed config
+  produced a single opaque `Bad config` error. A diagnostic pass — run only when the
+  loader rejects the file — now reports the first locatable cause: a non-object root, a
+  section that should be an array but is not, or a `listeners`/`defaultResolver` entry that
+  is missing its `type`, declares an unknown type, or carries an invalid config block,
+  named by section and array index (for example, `config: listeners index 1: unknown type
+  "bogusListener"`). The pass mirrors the loader's own accept/reject decisions, so it never
+  reports a problem the loader would tolerate, and falls back to the original error when it
+  cannot pin down a cause.
+* cli: exit non-zero when startup fails. Starting with no config file and no discoverable
+  `config.json` printed the usage text and exited 0, which a process supervisor reads as a
+  clean exit — so a server that never started looked like one that ran and finished. A
+  missing config is now a usage error (exit 2) and a named-but-unopenable or invalid config
+  is a startup failure (exit 1); the missing-config message names the ways to point secDNS
+  at a config.
+* http-api: guard the `/resolve` endpoint against malformed replies. A reply from the
+  resolver chain carrying a nil resource record in a section panicked the handler while
+  building its JSON; nil records are now skipped, and a recover surfaces a clean `502`
+  rather than crashing the request. Query names that are not representable as a DNS name
+  (empty interior labels, labels over 63 octets) are rejected up front with `400`, in
+  addition to the existing 255-octet length cap.
+* dnsmasq: bound the configuration scanner. The line scanner used the default 64 KiB token
+  limit, at which a longer line aborts the whole scan and silently drops every remaining
+  entry; the line buffer is raised to 1 MiB. A runaway entry-count backstop — far above any
+  real adblock list — reports a truncation error rather than truncating silently if the
+  configured path points at the wrong file.
+
 ## v1.4.3 - 2026.06.04
 
 Concurrency Correctness and Recursive-Resolver Stability
