@@ -1,0 +1,32 @@
+{
+  "listeners": [
+    { "type": "dnsServer", "config": { "listen": "0.0.0.0", "port": 53, "protocol": "udp" } },
+    { "type": "dnsServer", "config": { "listen": "0.0.0.0", "port": 53, "protocol": "tcp" } },
+    {
+      "type": "httpAdminServer",
+      "config": {
+        "listen": "127.0.0.1",
+        "port": 9053,
+        "store": "acme",
+        "token": "replace-with-a-long-random-secret"
+      }
+    }
+  ],
+  "resolvers": {
+    "authoritative": {
+      "acmeAuth": { "store": "acme", "negativeTTL": 30 }
+    },
+    "recursive": {
+      "rec": {}
+    }
+  },
+  "rules": [
+    {
+      "type": "collection",
+      "config": [
+        { "name": "acme-validation.example.com", "resolver": "acmeAuth" }
+      ]
+    }
+  ],
+  "defaultResolver": "rec"
+}

@@ -4,6 +4,7 @@ secDNS supports the following resolvers.
 
 * [address](resolvers/address.md) - Reply with fixed IPv4/IPv6 addresses.
 * [alias](resolvers/alias.md) - Reply with a CNAME (and optionally chase the target).
+* [authoritative](resolvers/authoritative.md) - (secDNS v1.5.0+) Answer from a process-local record store (NXDOMAIN/NODATA with a synthesized SOA otherwise), populated by the admin API.
 * [cache](resolvers/cache.md) - (secDNS v1.2.0+) Cache upstream responses with LRU eviction, TTL management, negative caching, prefetch, and stale serving.
 * [concurrentNameServerList](resolvers/concurrent_name_server_list.md) - Forward queries to multiple resolvers concurrently and return the first answer.
 * [dns64](resolvers/dns64.md) - (secDNS v1.1.0+) Synthesize AAAA records from A responses.
