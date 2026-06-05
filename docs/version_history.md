@@ -1,5 +1,22 @@
 # Version History
 
+## v1.4.6 - 2026.06.05
+
+Concurrent Glue Resolution
+
+This release resolves the IPv4 and IPv6 addresses of a nameserver concurrently when
+chasing a glueless referral, cutting glue-resolution latency. Configuration is
+backward-compatible.
+
+* recursive: resolve A and AAAA glue addresses concurrently. Chasing a glueless referral
+  previously resolved each nameserver's A address and then its AAAA address in series, so
+  the slower of two independent sub-resolutions was paid twice over per name. The two are
+  now resolved in parallel and joined, roughly halving the latency of a glue chase. The
+  per-query resolution budget the two share is now an atomic counter claimed with a single
+  decrement, so exactly the configured number of upstream exchanges still succeeds under
+  the fan-out, and the live goroutine count stays bounded by the remaining budget (every
+  spawned exchange charges the budget before running).
+
 ## v1.4.5 - 2026.06.05
 
 Per-Query Resolution Budget
