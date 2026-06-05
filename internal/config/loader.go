@@ -23,10 +23,16 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	rawConfig, s, f := Descriptor().Describe(data)
 	ok := s > 0 && f < 1
 	if !ok {
+		if diag := diagnoseConfig(data); diag != nil {
+			return nil, diag
+		}
 		return nil, ErrBadConfig
 	}
 	config, ok := rawConfig.(*Config)
 	if !ok || config == nil || config.Resolvers == nil {
+		if diag := diagnoseConfig(data); diag != nil {
+			return nil, diag
+		}
 		return nil, ErrBadConfig
 	}
 	if len(config.Listeners) < 1 {
