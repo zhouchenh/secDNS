@@ -121,6 +121,32 @@ func TestLoadConfigAuthoritativeAndAdmin(t *testing.T) {
 	}
 }
 
+func TestLoadConfigDoesNotLeakFailedNamedResolvers(t *testing.T) {
+	// A first load fails because its default resolver names one that does not exist.
+	failing := `{
+  "listeners": [{"type": "dnsServer", "config": {"listen": "127.0.0.1", "port": 5353, "protocol": "udp"}}],
+  "resolvers": {"noAnswer": {"present": {}}},
+  "rules": [],
+  "defaultResolver": "missing-resolver"
+}`
+	if _, err := LoadConfig(strings.NewReader(failing)); err == nil {
+		t.Fatalf("expected the first load to fail on the missing resolver")
+	}
+
+	// A second, independent load that references a resolver it DOES declare must succeed:
+	// the failed load must not have left "missing-resolver" in the process-global pending
+	// list to be re-processed (and re-failed on) here.
+	valid := `{
+  "listeners": [{"type": "dnsServer", "config": {"listen": "127.0.0.1", "port": 5353, "protocol": "udp"}}],
+  "resolvers": {"noAnswer": {"only": {}}},
+  "rules": [],
+  "defaultResolver": "only"
+}`
+	if _, err := LoadConfig(strings.NewReader(valid)); err != nil {
+		t.Fatalf("second load inherited the first load's failure: %v", err)
+	}
+}
+
 func TestLoadConfigReportsKnownResolversOnNotFound(t *testing.T) {
 	json := `{
   "listeners": [

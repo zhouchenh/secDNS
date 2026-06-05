@@ -118,7 +118,18 @@ func reportNamedResolver(namedResolver *NamedResolver) {
 	knownNamedResolvers = append(knownNamedResolvers, namedResolver)
 }
 
+// ResetKnownNamedResolvers clears the pending list of string-referenced resolvers. A
+// LoadConfig calls it before describing so a previous load — including one that failed
+// before InitKnownNamedResolvers ran — cannot leave stale entries that poison this one.
+func ResetKnownNamedResolvers() {
+	knownNamedResolvers = nil
+}
+
 func InitKnownNamedResolvers() error {
+	// Clear the list on every exit, not only on success: a not-found reference used to
+	// return early and leave its NamedResolver behind, so the next LoadConfig re-processed
+	// (and re-failed on) a name from the previous config.
+	defer ResetKnownNamedResolvers()
 	for _, namedResolver := range knownNamedResolvers {
 		if namedResolver.resolver != nil {
 			continue
@@ -128,6 +139,5 @@ func InitKnownNamedResolvers() error {
 			return NotFoundError(namedResolver.Name)
 		}
 	}
-	knownNamedResolvers = nil
 	return nil
 }
