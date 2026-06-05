@@ -96,6 +96,31 @@ func TestLoadConfigEcsDefaultsAreStrings(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAuthoritativeAndAdmin(t *testing.T) {
+	// The authoritative resolver and the admin listener share a store by name; this
+	// asserts the whole config pipeline accepts both new types. The default resolver is
+	// declared inline (no named resolver) to avoid mutating the process-global resolver
+	// name registry this package's other tests rely on.
+	json := `{
+  "listeners": [
+    {"type": "dnsServer", "config": {"listen": "127.0.0.1", "port": 5353, "protocol": "udp"}},
+    {"type": "httpAdminServer", "config": {"listen": "127.0.0.1", "port": 9053, "token": "secret", "store": "acme"}}
+  ],
+  "rules": [],
+  "defaultResolver": {"type": "authoritative", "config": {"store": "acme", "negativeTTL": 30}}
+}`
+	instance, err := LoadConfig(strings.NewReader(json))
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	if instance == nil {
+		t.Fatalf("expected an instance")
+	}
+	if _, ok := instance.GetResolver(); !ok {
+		t.Fatalf("expected default resolver to be configured")
+	}
+}
+
 func TestLoadConfigReportsKnownResolversOnNotFound(t *testing.T) {
 	json := `{
   "listeners": [
