@@ -10,6 +10,18 @@ import (
 	"strings"
 )
 
+// maxLineBytes bounds a single config line. The default bufio.Scanner token limit is
+// 64 KiB, at which a longer line aborts the entire scan (ErrTooLong) and silently
+// drops every remaining entry; raise it so a long-but-valid line is tolerated, while
+// still bounding per-line memory.
+const maxLineBytes = 1 << 20 // 1 MiB
+
+// maxEntries is a runaway backstop set far above any real adblock/dnsmasq list (the
+// largest aggregated lists run ~1–2M entries). It bounds memory if the configured
+// path points at the wrong (e.g. multi-gigabyte) file. Reaching it is reported via
+// TruncatedError, not silent. It is a var only so a test can lower it.
+var maxEntries = 1 << 22 // 4,194,304
+
 type DnsmasqConf struct {
 	FilePath string
 	Resolver resolver.Resolver
@@ -71,7 +83,9 @@ func (d *DnsmasqConf) ensureEntries(canReceiveError bool, receiveError func(err 
 	defer func() { _ = file.Close() }()
 
 	var entries []string
+	truncated := false
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if idx := strings.IndexByte(line, '#'); idx >= 0 {
@@ -100,8 +114,16 @@ func (d *DnsmasqConf) ensureEntries(canReceiveError bool, receiveError func(err 
 			continue
 		}
 		entries = append(entries, canonical)
+		if len(entries) >= maxEntries {
+			truncated = true
+			break
+		}
 	}
-	if err := scanner.Err(); err != nil {
+	if truncated {
+		if canReceiveError {
+			receiveError(TruncatedError{filePath: d.FilePath, limit: maxEntries})
+		}
+	} else if err := scanner.Err(); err != nil {
 		if canReceiveError {
 			receiveError(ReadFileError{
 				filePath: d.FilePath,
