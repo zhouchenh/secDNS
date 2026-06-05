@@ -20,6 +20,10 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Start from a clean slate: describing the config below appends every string-referenced
+	// resolver to a process-global pending list, and a previous LoadConfig that failed
+	// before resolving that list would otherwise leave stale names behind.
+	named.ResetKnownNamedResolvers()
 	rawConfig, s, f := Descriptor().Describe(data)
 	ok := s > 0 && f < 1
 	if !ok {
