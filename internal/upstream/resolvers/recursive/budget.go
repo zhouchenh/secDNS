@@ -2,6 +2,7 @@ package recursive
 
 import (
 	"errors"
+	"sync/atomic"
 	"time"
 )
 
@@ -30,11 +31,11 @@ var ErrResolutionBudgetExceeded = errors.New("recursive resolver: per-query reso
 // queryBudget is the per-client-query work-and-time budget, shared across the whole
 // iterative resolution tree: referrals, CNAME chases, and out-of-band glue chasing all
 // draw from the same counter. It is created once per Resolve call and threaded through
-// the resolution functions. A single query's resolution runs in one goroutine
-// (resolveWithServers, resolveGlue, and followCNAME are all sequential — the recursive
-// resolver never fans out into goroutines), so the counter needs no synchronization.
+// the resolution functions. Glue chasing resolves the A and AAAA addresses of each
+// nameserver concurrently, so the counter is atomic; the deadline and clock are set once
+// at construction and only read thereafter.
 type queryBudget struct {
-	remaining int              // upstream exchanges left before the budget is spent
+	remaining atomic.Int64     // upstream exchanges left before the budget is spent
 	deadline  time.Time        // wall-clock cap; the zero time means no time limit
 	now       func() time.Time // injectable clock (tests)
 }
@@ -42,7 +43,9 @@ type queryBudget struct {
 // charge accounts for one upstream exchange. It returns ErrResolutionBudgetExceeded
 // when the deadline has passed or the exchange allowance is spent, and otherwise
 // consumes one unit. A nil budget is treated as unbudgeted (defensive — the resolution
-// paths always pass a real one).
+// paths always pass a real one). It is safe to call from multiple goroutines: the
+// allowance is claimed with a single atomic decrement, so exactly the configured number
+// of charges succeed even under the concurrent glue fan-out.
 func (b *queryBudget) charge() error {
 	if b == nil {
 		return nil
@@ -50,10 +53,9 @@ func (b *queryBudget) charge() error {
 	if !b.deadline.IsZero() && b.now().After(b.deadline) {
 		return ErrResolutionBudgetExceeded
 	}
-	if b.remaining <= 0 {
+	if b.remaining.Add(-1) < 0 {
 		return ErrResolutionBudgetExceeded
 	}
-	b.remaining--
 	return nil
 }
 
@@ -65,7 +67,8 @@ func (r *Recursive) newBudget() *queryBudget {
 	if max <= 0 {
 		max = defaultMaxQueries
 	}
-	b := &queryBudget{remaining: max, now: time.Now}
+	b := &queryBudget{now: time.Now}
+	b.remaining.Store(int64(max))
 	if r.MaxResolutionTime > 0 {
 		b.deadline = b.now().Add(r.MaxResolutionTime)
 	}

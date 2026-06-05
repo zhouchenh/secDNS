@@ -4,14 +4,24 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 )
 
+// budgetWith builds a queryBudget with a given allowance and clock (the atomic counter
+// cannot be set in a struct literal).
+func budgetWith(remaining int64, deadline time.Time, now func() time.Time) *queryBudget {
+	b := &queryBudget{deadline: deadline, now: now}
+	b.remaining.Store(remaining)
+	return b
+}
+
 func TestQueryBudgetChargeCount(t *testing.T) {
-	b := &queryBudget{remaining: 3, now: time.Now}
+	b := budgetWith(3, time.Time{}, time.Now)
 	for i := 0; i < 3; i++ {
 		if err := b.charge(); err != nil {
 			t.Fatalf("charge %d should succeed, got %v", i, err)
@@ -24,16 +34,42 @@ func TestQueryBudgetChargeCount(t *testing.T) {
 
 func TestQueryBudgetDeadline(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
+	clock := func() time.Time { return now }
 	// Plenty of exchange allowance, but the deadline has already passed.
-	b := &queryBudget{remaining: 1000, deadline: now.Add(-time.Second), now: func() time.Time { return now }}
+	b := budgetWith(1000, now.Add(-time.Second), clock)
 	if err := b.charge(); !errors.Is(err, ErrResolutionBudgetExceeded) {
 		t.Fatalf("an expired deadline should fail the charge, got %v", err)
 	}
 
 	// A zero deadline means no time limit.
-	b2 := &queryBudget{remaining: 1, now: func() time.Time { return now }}
+	b2 := budgetWith(1, time.Time{}, clock)
 	if err := b2.charge(); err != nil {
 		t.Fatalf("a zero deadline must not bound time, got %v", err)
+	}
+}
+
+// TestQueryBudgetConcurrentChargeExact asserts that, even when many goroutines charge
+// the same budget at once (the concurrent glue fan-out), exactly the allowance succeeds.
+func TestQueryBudgetConcurrentChargeExact(t *testing.T) {
+	const allowance = 50
+	const goroutines = 200
+	b := budgetWith(allowance, time.Time{}, time.Now)
+
+	var ok atomic.Int64
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			if b.charge() == nil {
+				ok.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := ok.Load(); got != allowance {
+		t.Fatalf("concurrent charges succeeded %d times, want exactly %d", got, allowance)
 	}
 }
 
@@ -48,8 +84,8 @@ func TestNewBudgetRespectsConfig(t *testing.T) {
 	// MaxResolutionTime 0 -> no deadline; MaxQueries carried through.
 	r := &Recursive{MaxQueries: 42, MaxResolutionTime: 0}
 	b := r.newBudget()
-	if b.remaining != 42 {
-		t.Fatalf("remaining = %d, want 42", b.remaining)
+	if got := b.remaining.Load(); got != 42 {
+		t.Fatalf("remaining = %d, want 42", got)
 	}
 	if !b.deadline.IsZero() {
 		t.Fatalf("MaxResolutionTime 0 must leave the deadline unset")
@@ -64,7 +100,7 @@ func TestNewBudgetRespectsConfig(t *testing.T) {
 
 	// MaxQueries 0 -> falls back to the default (matches a directly-constructed resolver).
 	r3 := &Recursive{}
-	if got := r3.newBudget().remaining; got != defaultMaxQueries {
+	if got := r3.newBudget().remaining.Load(); got != int64(defaultMaxQueries) {
 		t.Fatalf("unset MaxQueries should default to %d, got %d", defaultMaxQueries, got)
 	}
 }

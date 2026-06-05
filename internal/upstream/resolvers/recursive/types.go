@@ -915,12 +915,28 @@ func (r *Recursive) resolveGlue(nsNames []string, resp *dns.Msg, depth int, ecsO
 		unique = unique[:maxGlueNamesChased]
 	}
 	for _, name := range unique {
-		aMsg := new(dns.Msg)
-		aMsg.SetQuestion(dns.Fqdn(name), dns.TypeA)
-		aResp, _ := r.resolveIterative(aMsg, depth-1, ecsOpt, b)
-		aaaaMsg := new(dns.Msg)
-		aaaaMsg.SetQuestion(dns.Fqdn(name), dns.TypeAAAA)
-		aaaaResp, _ := r.resolveIterative(aaaaMsg, depth-1, ecsOpt, b)
+		// Resolve the A and AAAA glue addresses concurrently: they are independent, each
+		// is a full (and slow) sub-resolution, and waiting on them in series doubles the
+		// latency of chasing a glueless referral. Both draw from the shared atomic query
+		// budget, so the fan-out stays globally capped. Each goroutine has its own query
+		// message and writes a distinct result; ecsOpt is only read (cloned) downstream.
+		fqdn := dns.Fqdn(name)
+		var aResp, aaaaResp *dns.Msg
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			aMsg := new(dns.Msg)
+			aMsg.SetQuestion(fqdn, dns.TypeA)
+			aResp, _ = r.resolveIterative(aMsg, depth-1, ecsOpt, b)
+		}()
+		go func() {
+			defer wg.Done()
+			aaaaMsg := new(dns.Msg)
+			aaaaMsg.SetQuestion(fqdn, dns.TypeAAAA)
+			aaaaResp, _ = r.resolveIterative(aaaaMsg, depth-1, ecsOpt, b)
+		}()
+		wg.Wait()
 		collected := collectAandAAAA(aResp, aaaaResp)
 		if len(collected) > 0 {
 			r.scoreboard.register(collected)
