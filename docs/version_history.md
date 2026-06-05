@@ -1,5 +1,28 @@
 # Version History
 
+## v1.4.5 - 2026.06.05
+
+Per-Query Resolution Budget
+
+This release adds a global per-query work-and-time budget to the recursive resolver,
+bounding the total upstream traffic a single client query can trigger. Configuration is
+backward-compatible.
+
+* recursive: cap per-query work with a global resolution budget. `maxDepth` and
+  `maxReferrals` bound how *deep* iterative resolution recurses, but not how *wide* — a
+  referral can branch into an out-of-band glue chase per nameserver, and each chase is
+  itself a full resolution from the roots, so a maliciously glueless or deeply nested
+  delegation could fan a single client query out into exponentially many upstream
+  exchanges. A per-query budget, shared across the whole iterative tree (referrals, CNAME
+  restarts, and glue chasing all draw from one counter), is now charged at the single
+  upstream-exchange chokepoint; when it is spent the query is answered SERVFAIL. Two new
+  options configure it: `maxQueries` (default 256, the total upstream exchanges allowed
+  per query — generous for any legitimate resolution but finite) and `maxResolutionTime`
+  (default 30 seconds, a wall-clock backstop for the whole query that complements the
+  per-exchange `timeout`; set 0 to disable). Background scoreboard probes are not on this
+  path and are unaffected, and each DNSSEC DNSKEY/DS validation fetch is bounded
+  independently of the main query's budget.
+
 ## v1.4.4 - 2026.06.05
 
 Resource Bounding, Diagnostics, and Operability
