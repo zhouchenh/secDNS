@@ -49,7 +49,7 @@ func TestResolveGlueBoundsFanout(t *testing.T) {
 
 	// Many glueless NS names, ample depth: only a bounded number are chased.
 	r, queried, mu := newR()
-	ips := r.resolveGlue(nsNames, new(dns.Msg), 10, nil)
+	ips := r.resolveGlue(nsNames, new(dns.Msg), 10, nil, r.newBudget())
 	mu.Lock()
 	n := len(*queried)
 	mu.Unlock()
@@ -62,7 +62,7 @@ func TestResolveGlueBoundsFanout(t *testing.T) {
 
 	// No remaining depth budget: glue is not chased at all.
 	r, queried, mu = newR()
-	_ = r.resolveGlue(nsNames, new(dns.Msg), 0, nil)
+	_ = r.resolveGlue(nsNames, new(dns.Msg), 0, nil, r.newBudget())
 	mu.Lock()
 	n = len(*queried)
 	mu.Unlock()

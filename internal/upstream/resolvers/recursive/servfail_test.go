@@ -43,7 +43,7 @@ func TestResolveWithServersSkipsServfailSibling(t *testing.T) {
 		})
 		return resp, time.Millisecond, nil
 	}
-	out, err := r.resolveWithServers(query, []net.IP{serverA, serverB}, 10, 0, false, nil)
+	out, err := r.resolveWithServers(query, []net.IP{serverA, serverB}, 10, 0, false, nil, r.newBudget())
 	if err != nil {
 		t.Fatalf("resolveWithServers error: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestResolveWithServersSkipsServfailSibling(t *testing.T) {
 		resp.Rcode = dns.RcodeServerFailure
 		return resp, time.Millisecond, nil
 	}
-	out, err = r.resolveWithServers(query, []net.IP{serverA, serverB}, 10, 0, false, nil)
+	out, err = r.resolveWithServers(query, []net.IP{serverA, serverB}, 10, 0, false, nil, r.newBudget())
 	if err != nil || out == nil || out.Rcode != dns.RcodeServerFailure {
 		t.Fatalf("all-SERVFAIL should surface a SERVFAIL response: out=%v err=%v", out, err)
 	}
