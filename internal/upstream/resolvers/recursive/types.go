@@ -425,7 +425,7 @@ func (r *Recursive) initialize() {
 	validator.resolveDNSKEY = r.fetchDNSKEY
 	validator.resolveDS = r.fetchDS
 	validator.logger = func(msg string) {
-		common.ErrOutput(fmt.Errorf(msg))
+		common.ErrOutput(errors.New(msg))
 	}
 	if r.Nsec3MaxIterations > 0 {
 		validator.nsec3MaxIter = uint16(r.Nsec3MaxIterations)
