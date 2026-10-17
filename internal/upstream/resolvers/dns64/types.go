@@ -197,3 +197,5 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *DNS64) ResolverDependencies() []resolver.Resolver { return []resolver.Resolver{r.Resolver} }

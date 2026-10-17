@@ -6,7 +6,10 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
+	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/policy"
+	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
+	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"io"
 	"sort"
 	"sync"
@@ -97,6 +100,10 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	if config.DefaultResolver == nil {
 		return nil, ErrMissingDefaultResolverConfig
 	}
+	selected, err := bindListeners(data, config)
+	if err != nil {
+		return nil, err
+	}
 	instance := core.NewInstance()
 	instance.AddListener(config.Listeners...)
 	instance.AddListener()
@@ -105,7 +112,8 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 		instance.AcceptProvider(p, func(err error) {
 			if !strict {
 				common.ErrOutputErrorHandler(err)
-			} else if providerError == nil && err != nil {
+			}
+			if providerError == nil && err != nil {
 				// Keep only the first error: a malformed large list must not create
 				// an unbounded collection of validation diagnostics.
 				providerError = fmt.Errorf("config: loaded rule provider index %d: %w", index, err)
@@ -133,8 +141,26 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 		}
 		return nil, err
 	}
-	if providerError != nil {
+	roots := []resolver.Resolver{instanceResolver}
+	for _, name := range config.Resolvers.Names() {
+		r, _ := config.Resolvers.Lookup(name)
+		if _, ok := r.(*policy.Policy); ok {
+			roots = append(roots, r)
+		}
+	}
+	selected = selected || containsPolicyGraph(roots)
+	if providerError != nil && (strict || selected) {
 		return nil, providerError
+	}
+	if selected {
+		for _, listener := range config.Listeners {
+			if binding, ok := listener.(*server.Binding); ok {
+				roots = append(roots, binding.Resolver)
+			}
+		}
+		if err := validateResolverGraph(roots); err != nil {
+			return nil, err
+		}
 	}
 	return instance, nil
 }

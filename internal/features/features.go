@@ -30,6 +30,7 @@ import (
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/nameserver"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/no/answer/resolver"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/not/exist/resolver"
+	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/policy"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/recursive"
 	_ "github.com/zhouchenh/secDNS/internal/upstream/resolvers/sequence"
 

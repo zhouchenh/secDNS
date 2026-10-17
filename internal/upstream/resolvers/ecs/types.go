@@ -125,3 +125,5 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *Resolver) ResolverDependencies() []resolver.Resolver { return []resolver.Resolver{r.Resolver} }

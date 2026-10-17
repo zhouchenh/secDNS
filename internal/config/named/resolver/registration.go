@@ -34,3 +34,9 @@ func (nr *NameRegistry) Names() []string {
 	}
 	return names
 }
+
+// Lookup returns the constructed named resolver without resolving references.
+func (nr *NameRegistry) Lookup(name string) (resolver.Resolver, bool) {
+	r, ok := nr.registry[name]
+	return r, ok
+}
