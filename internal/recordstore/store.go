@@ -53,6 +53,7 @@ func canonicalName(name string) string {
 // Set inserts or replaces the record for its {name, type}. The name is canonicalized.
 func (s *Store) Set(rec Record) {
 	rec.Name = canonicalName(rec.Name)
+	rec.Values = append([]string(nil), rec.Values...)
 	s.mu.Lock()
 	s.records[key{rec.Name, rec.Type}] = rec
 	s.mu.Unlock()
@@ -63,6 +64,7 @@ func (s *Store) Get(name string, rrtype uint16) (Record, bool) {
 	k := key{canonicalName(name), rrtype}
 	s.mu.RLock()
 	rec, ok := s.records[k]
+	rec.Values = append([]string(nil), rec.Values...)
 	s.mu.RUnlock()
 	if !ok || rec.expired(s.now()) {
 		return Record{}, false
@@ -88,6 +90,7 @@ func (s *Store) List() []Record {
 	out := make([]Record, 0, len(s.records))
 	for _, rec := range s.records {
 		if !rec.expired(now) {
+			rec.Values = append([]string(nil), rec.Values...)
 			out = append(out, rec)
 		}
 	}
@@ -122,4 +125,21 @@ func (s *Store) sweep() {
 		}
 	}
 	s.mu.Unlock()
+}
+
+// RecordsForName returns an isolated, per-owner snapshot of live RRsets. It does
+// not promise a transaction spanning different names or multiple calls.
+func (s *Store) RecordsForName(name string) map[uint16]Record {
+	cn := canonicalName(name)
+	now := s.now()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[uint16]Record)
+	for k, rec := range s.records {
+		if k.name == cn && !rec.expired(now) {
+			rec.Values = append([]string(nil), rec.Values...)
+			out[k.rrtype] = rec
+		}
+	}
+	return out
 }

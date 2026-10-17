@@ -220,3 +220,13 @@ When `-config` is omitted, secDNS loads the first config it finds, in this order
 3. `config.json` in the current working directory.
 
 When `-config` is `-`, the configuration is read from standard input. When `-config` names a file that cannot be opened, secDNS reports the error and exits. On a successful load, secDNS logs the config source at info level.
+
+### Optional local CNAME completion
+
+An `authoritative` resolver may set `"completeCNAME": true` (default `false`). For A and AAAA queries, it follows CNAME targets only within its named record store and returns the chain plus any matching terminal address RRset. Each record retains its own TTL. Direct CNAME queries and other query types retain their existing behavior. This option makes no upstream queries.
+
+Traversal follows at most 16 aliases and also consumes one unit of the resolver depth budget per alias. Case-insensitive cycles, exhausted budgets, malformed targets, conflicting CNAME data, and invalid terminal address records produce SERVFAIL with no partial answers. The resolver returns this as a DNS response, so core does not fall through to its default upstream. CNAME owners must have one valid target and no other live RRsets.
+
+If a target is absent or has no requested address family, the existing chain is returned with NOERROR and no invented negative SOA. The store has no zone boundary model; this option does not infer that an absent target is authoritatively nonexistent. Direct negative lookups retain existing authority behavior. The default remains CNAME-only responses.
+
+Record values are copied on store input and output. Traversal reads a consistent snapshot for each owner, but concurrent changes across different owners are not one atomic zone snapshot. This feature adds neither persistence nor zone configuration, regex matching, DNSSEC signing, or a GUI.
