@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 )
 
 var ErrInvalidRecord = errors.New("invalid persistent record")
@@ -25,10 +26,10 @@ func validateRecord(r Record) error {
 	if r.Name == "" || r.Name != canonicalName(r.Name) || len(r.Values) == 0 {
 		return ErrInvalidRecord
 	}
-	if _, ok := dns.IsDomainName(r.Name); !ok {
+	if !ValidName(r.Name) {
 		return ErrInvalidRecord
 	}
-	if !r.ExpiresAt.IsZero() && (r.ExpiresAt.Year() < 1 || r.ExpiresAt.Year() > 9999) {
+	if !r.ExpiresAt.IsZero() && (r.ExpiresAt.UTC().Year() < 1 || r.ExpiresAt.UTC().Year() > 9999) {
 		return ErrInvalidRecord
 	}
 	switch r.Type {
@@ -43,7 +44,7 @@ func validateRecord(r Record) error {
 		if len(r.Values) != 1 || r.Values[0] == "" || strings.TrimSpace(r.Values[0]) != r.Values[0] {
 			return ErrInvalidRecord
 		}
-		if _, ok := dns.IsDomainName(r.Values[0]); !ok {
+		if !ValidName(r.Values[0]) {
 			return ErrInvalidRecord
 		}
 	case dns.TypeTXT:
@@ -251,4 +252,39 @@ func (s *Store) persistDelete(k key) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ValidName accepts DNS presentation names (including underscore labels), but
+// rejects literal whitespace/control characters and malformed label structure.
+func ValidName(name string) bool {
+	if name == "" || len(name) > 255 || strings.IndexFunc(name, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return false
+	}
+	_, ok := dns.IsDomainName(name)
+	return ok
+}
+
+// normalizeValidated operates on an owned Values slice; callers validate and
+// publish the resulting representation under the mutation lock.
+func normalizeValidated(r Record) (Record, error) {
+	switch r.Type {
+	case dns.TypeA, dns.TypeAAAA:
+		for i, v := range r.Values {
+			ip := net.ParseIP(strings.TrimSpace(v))
+			if ip == nil || (r.Type == dns.TypeA) != (ip.To4() != nil) {
+				return r, ErrInvalidRecord
+			}
+			r.Values[i] = ip.String()
+		}
+	case dns.TypeCNAME:
+		if len(r.Values) != 1 {
+			return r, ErrInvalidRecord
+		}
+		target := strings.TrimSpace(r.Values[0])
+		if target == "" {
+			return r, ErrInvalidRecord
+		}
+		r.Values[0] = canonicalName(target)
+	}
+	return r, nil
 }

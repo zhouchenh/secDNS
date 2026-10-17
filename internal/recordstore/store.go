@@ -57,7 +57,20 @@ func canonicalName(name string) string {
 }
 
 // Set inserts or replaces the record for its {name, type}. The name is canonicalized.
-func (s *Store) Set(rec Record) error {
+func (s *Store) Set(rec Record) error { return s.set(rec, false) }
+
+// SetValidated is the admin mutation path for both backends. Validation, expiry
+// and CNAME conflict checks share the same lock as durable commit and publication.
+// Direct Set retains permissive in-memory behavior for existing internal callers.
+func (s *Store) SetValidated(rec Record) error { return s.set(rec, true) }
+
+var ErrRecordConflict = errors.New("record conflicts with a live CNAME or other RRset")
+var ErrExpiredRecord = errors.New("record expiry must be in the future")
+
+func (s *Store) set(rec Record, validated bool) error {
+	if validated {
+		rec.Name = strings.TrimSpace(rec.Name)
+	}
 	invalidName := rec.Name == ""
 	rec.Name = canonicalName(rec.Name)
 	rec.Values = append([]string(nil), rec.Values...)
@@ -66,18 +79,35 @@ func (s *Store) Set(rec Record) error {
 	if s.closed {
 		return ErrClosed
 	}
-	if s.db != nil {
+	if validated {
+		var err error
+		rec, err = normalizeValidated(rec)
+		if err != nil {
+			return err
+		}
+	}
+	if validated || s.db != nil {
 		if invalidName {
 			return ErrInvalidRecord
 		}
 		if err := validateRecord(rec); err != nil {
 			return err
 		}
-		for k := range s.records {
-			if k.name == rec.Name && k.rrtype != rec.Type && (k.rrtype == 5 || rec.Type == 5) && !s.records[k].expired(s.now()) {
-				return ErrInvalidRecord
+		now := s.now()
+		if validated && !rec.ExpiresAt.IsZero() && !rec.ExpiresAt.After(now) {
+			return ErrExpiredRecord
+		}
+		// Already expired direct writes cannot conflict with live data. Admin writes
+		// must instead pass the future-expiry check above.
+		if !rec.expired(now) {
+			for k, other := range s.records {
+				if k.name == rec.Name && k.rrtype != rec.Type && (k.rrtype == 5 || rec.Type == 5) && !other.expired(now) {
+					return ErrRecordConflict
+				}
 			}
 		}
+	}
+	if s.db != nil {
 		if err := s.persistSet(rec); err != nil {
 			return err
 		}
