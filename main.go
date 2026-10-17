@@ -126,16 +126,20 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		common.ErrOutput(common.Concatenate("config: invalid record stores: ", err))
 		return exitStartup
 	}
+	if testOnly {
+		if err := config.ValidateConfig(bytes.NewReader(raw)); err != nil {
+			common.ErrOutput(common.Concatenate("config: Validation failed: ", err))
+			return exitStartup
+		}
+		common.Output("config: Startup checks passed; rule providers reported no errors")
+		return exitOK
+	}
 	instance, err := config.LoadConfig(bytes.NewReader(raw))
 	if err != nil {
 		common.ErrOutput(common.Concatenate("config: Failed to load config: ", err))
 		return exitStartup
 	}
 	logger.Info().Str("source", configSource).Msg("config loaded")
-	if testOnly {
-		common.Output("config: Syntax is OK")
-		return exitOK
-	}
 	if len(stores) > 0 {
 		cleanup, err := recordstore.Prepare(stores)
 		if err != nil {

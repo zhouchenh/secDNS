@@ -2,6 +2,25 @@
 
 secDNS uses JSON-based configurations. The top level structure of the configuration is shown below.
 
+Before replacing a configuration, run `secDNS -test -config path/to/config.json`.
+This runs the startup configuration checks and reads external rule files. Missing
+files, invalid domains reported by a rule provider, and other provider-reported
+errors return a nonzero exit status, even when some rules could be loaded. The first
+provider error identifies its index among loaded providers (which may differ from
+the JSON array index if the descriptor ignored an entry). The top-level `rules` array and each
+entry's provider type are checked, including rejection of unknown provider types.
+Other permissive descriptor behavior remains unchanged: this does not reject every
+ignored field or malformed nested entry. This is a one-shot preflight, not
+exhaustive schema validation.
+Validation does not bind listeners or send DNS queries, and does not modify
+the configuration. Success does not prove that a port is available, TLS credentials
+can be loaded at runtime, or an upstream server is reachable. Files can also change
+after validation, so this is not an atomic configuration update or reload.
+
+Normal startup retains its existing behavior of logging rule-provider errors and
+continuing with the rules that could be loaded. Use `-test` as a strict preflight
+when partial rule loading is unacceptable.
+
 ```json
 {
   "listeners": [],
@@ -181,7 +200,7 @@ Path to the config file to load. Pass `-` to read the configuration from standar
 
 > `-test`: Boolean _(Optional)_
 
-Load and validate the configuration, print `config: Syntax is OK`, and exit without serving. Use this to check a config before deploying.
+Load and validate the configuration, print `config: Startup checks passed; rule providers reported no errors`, and exit without serving. Use this to check a config before deploying.
 
 > `-version`: Boolean _(Optional)_
 
