@@ -34,4 +34,38 @@ assert.equal(S.recordsValid([{...record,values:[]}]),false);
 const huge=new S.Model();huge.accept(snapshot());
 for(let i=0;i<270;i++)huge.draft.push({...record,name:`r${i}.invalid.`,values:Array(64).fill('x'.repeat(255))});
 assert.throws(()=>huge.freeze('large','local'),/snapshot_too_large/);
+// A display union distinguishes local and observed-server changes without adopting either.
+const rr = (name, fields={}) => ({name,type:'TXT',values:['original'],ttl_seconds:60,...fields});
+const base = [rr('unchanged.invalid.'),rr('local-remove.invalid.'),rr('server-remove.invalid.'),rr('ttl-expiry.invalid.'),rr('values.invalid.'),rr('local-change.invalid.'),rr('server-change.invalid.'),rr('same-change.invalid.')];
+const draft = [base[0],base[2],rr('ttl-expiry.invalid.',{ttl_seconds:0}),rr('values.invalid.',{values:['','same','same']}),rr('local-add.invalid.'),rr('local-change.invalid.',{values:['  '+ 'x'.repeat(200)+'  ']}),base[6],rr('same-change.invalid.',{values:['identical']})];
+const current = [base[0],base[1],rr('ttl-expiry.invalid.',{expires_at:'2030-01-01T00:00:00.123456789+00:00'}),rr('values.invalid.',{values:['same','','same']}),rr('server-add.invalid.'),base[5],rr('server-change.invalid.',{values:['remote']}),rr('same-change.invalid.',{values:['identical']})];
+const before = JSON.stringify({base,draft,current}), compared = S.comparisonRows(base,draft,current);
+const row = name => compared.find(r=>r.key===S.key(rr(name)));
+assert.deepEqual(compared.map(r=>r.key),compared.map(r=>r.key).sort());
+assert.deepEqual([row('local-add.invalid.').localChange,row('local-add.invalid.').serverChange],['added','unchanged']);
+assert.deepEqual([row('server-add.invalid.').localChange,row('server-add.invalid.').serverChange],['unchanged','added']);
+assert.deepEqual([row('local-remove.invalid.').localChange,row('local-remove.invalid.').serverChange],['removed','unchanged']);
+assert.deepEqual([row('server-remove.invalid.').localChange,row('server-remove.invalid.').serverChange],['unchanged','removed']);
+assert.deepEqual([row('local-change.invalid.').localChange,row('local-change.invalid.').serverChange],['changed','unchanged']);
+assert.deepEqual([row('server-change.invalid.').localChange,row('server-change.invalid.').serverChange],['unchanged','changed']);
+assert.deepEqual([row('same-change.invalid.').localChange,row('same-change.invalid.').serverChange],['changed','changed']);assert.deepEqual(row('same-change.invalid.').draft,row('same-change.invalid.').current);
+assert.equal(row('local-change.invalid.').draft.values[0],'  '+'x'.repeat(200)+'  ');
+assert.equal(row('ttl-expiry.invalid.').draft.ttl_seconds,0);assert.equal(row('ttl-expiry.invalid.').base.ttl_seconds,60);
+assert.equal(Object.hasOwn(row('ttl-expiry.invalid.').draft,'expires_at'),false);assert.equal(row('ttl-expiry.invalid.').current.expires_at,'2030-01-01T00:00:00.123456789+00:00');
+assert.deepEqual(row('values.invalid.').draft.values,['','same','same']);assert.deepEqual(row('values.invalid.').current.values,['same','','same']);
+assert.equal(row('unchanged.invalid.').changed,false);
+for(const [scope,records] of [['local',draft],['server',current]]){
+  const counts = {added:0,changed:0,removed:0};for(const r of compared)if(Object.hasOwn(counts,r[scope+'Change']))counts[r[scope+'Change']]++;
+  assert.deepEqual(counts,S.changes(base,records));
+}
+assert.ok(S.comparisonRows(base,draft).every(r=>r.serverChange==='unavailable'&&r.current===null));
+assert.ok(S.comparisonRows(base,base,null).every(r=>!r.changed));
+assert.ok(S.comparisonRows(base,base,[]).every(r=>r.serverChange==='removed'&&r.changed));
+assert.equal(S.comparisonRows([rr('Case.invalid.')],[rr('case.invalid')],[]).length,1,'existing canonical key semantics');
+row('values.invalid.').draft.values.reverse();row('ttl-expiry.invalid.').current.expires_at='display-only';
+assert.equal(JSON.stringify({base,draft,current}),before,'display copies never alias snapshots');
+// Rendering/filtering copies must leave exact retry identity, receipt, edit counter and dirty form untouched.
+const protectedState = JSON.stringify(m);
+S.comparisonRows(m.base.records,m.draft,m.current.records).filter(r=>r.changed).reverse().forEach(r=>{if(r.draft)r.draft.values.push('display-only');});
+assert.equal(JSON.stringify(m),protectedState);
 console.log('Versioned editor state tests passed.');
