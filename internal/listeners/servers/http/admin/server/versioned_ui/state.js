@@ -34,6 +34,17 @@
     for (const k of a.keys()) if (!b.has(k)) removed++;
     return {added, changed, removed};
   }
+  // Display-only copies; null current means unavailable, never an empty snapshot.
+  function comparisonRows(base, draft, current = null) {
+    const a = new Map(base.map(r => [key(r), r])), b = new Map(draft.map(r => [key(r), r]));
+    const c = current === null ? null : new Map(current.map(r => [key(r), r]));
+    const kind = (before, after) => !before ? (after ? "added" : "unchanged") : !after ? "removed" : JSON.stringify(before) === JSON.stringify(after) ? "unchanged" : "changed";
+    return [...new Set([...a.keys(), ...b.keys(), ...(c?.keys() || [])])].sort().map(k => {
+      const before = a.get(k), local = b.get(k), observed = c?.get(k), localChange = kind(before, local), serverChange = c === null ? "unavailable" : kind(before, observed);
+      return {key:k, base:before ? clone(before) : null, draft:local ? clone(local) : null, current:observed ? clone(observed) : null, localChange, serverChange,
+        changed:localChange !== "unchanged" || serverChange !== "unavailable" && serverChange !== "unchanged"};
+    });
+  }
   class Model {
     constructor() { this.clear(); }
     clear() { this.base = this.current = this.pending = this.receipt = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
@@ -81,6 +92,6 @@
     }
     uncertain() { if (this.pending && this.pending.status !== "acknowledged") this.pending.status = "uncertain"; this.fresh = false; }
   }
-  const api = {Model, compare, revision, increment, recordsValid, envelope, changes, key, clone, bytes, LIMIT};
+  const api = {Model, compare, revision, increment, recordsValid, envelope, changes, comparisonRows, key, clone, bytes, LIMIT};
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.SnapshotEditor = api;
 })(globalThis);

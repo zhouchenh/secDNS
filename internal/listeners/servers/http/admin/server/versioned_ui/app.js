@@ -7,6 +7,38 @@
   let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null;
   const requests = new Set();
   function status(text, kind = "") { $("status").textContent = text; $("status").className = kind; }
+  function comparisonVersion(title, record, unavailable = false) {
+    const section = document.createElement("section"), heading = document.createElement("h4");
+    section.className = "comparison-version"; heading.textContent = title; section.append(heading);
+    if (!record) {
+      const absent = document.createElement("p"); absent.className = "comparison-absent";
+      absent.textContent = unavailable ? "Snapshot not loaded" : "Not present in this snapshot"; section.append(absent); return section;
+    }
+    const fields = document.createElement("dl");
+    for (const [label, value] of [["Name",record.name],["Type",record.type],["TTL (seconds)",String(record.ttl_seconds)],["Expiration",record.expires_at === undefined ? "Permanent (no expiration)" : record.expires_at]]) {
+      const term = document.createElement("dt"), detail = document.createElement("dd"); term.textContent = label; detail.textContent = value; fields.append(term,detail);
+    }
+    const label = document.createElement("p"), values = document.createElement("ol"); label.className = "comparison-value-label"; label.textContent = "Ordered values / TXT chunks"; values.className = "comparison-values";
+    for (const value of record.values) { const item = document.createElement("li"), text = document.createElement("code"); text.textContent = JSON.stringify(value); item.append(text); values.append(item); }
+    section.append(fields,label,values); return section;
+  }
+  function renderComparison() {
+    $("comparison-revisions").textContent = "Base revision " + (model.base?.revision || "—") + " · Observed server revision " + (model.current?.revision || "not loaded");
+    let note = model.identityBlocked ? "Identity mismatch. Showing the last accepted snapshots; writing remains blocked." : !model.current ? "The server comparison has not been loaded." : !connected ? "Disconnected. Showing the last observed server snapshot." : !model.fresh ? "The last observed snapshot is retained. Fetch current state to reconcile." : "Showing the last accepted server snapshot. The server may change again.";
+    note += " Unstaged form fields are not included below.";
+    if (model.pending?.status === "uncertain") note += " The pending operation is still uncertain; this comparison does not resolve it.";
+    $("comparison-note").textContent = note;
+    const rows = S.comparisonRows(model.base?.records || [],model.draft,model.current ? model.current.records : null), shown = rows.filter(row => $("show-unchanged").checked || row.changed);
+    $("comparison-rows").replaceChildren();
+    for (const row of shown) {
+      const record = row.draft || row.base || row.current, card = document.createElement("article"), heading = document.createElement("h3"), labels = document.createElement("p"), versions = document.createElement("div");
+      card.className = "comparison-record"; card.dataset.recordKey = row.key; heading.textContent = record.name + " · " + record.type; labels.className = "comparison-labels";
+      for (const [scope, change] of [["Local",row.localChange],["Observed server",row.serverChange]]) { const badge = document.createElement("span"); badge.className = "change-badge change-" + change; badge.textContent = scope + ": " + change; labels.append(badge); }
+      versions.className = "comparison-versions"; versions.append(comparisonVersion("Base",row.base),comparisonVersion("Local draft",row.draft),comparisonVersion("Observed server",row.current,row.serverChange === "unavailable")); card.append(heading,labels,versions); $("comparison-rows").append(card);
+    }
+    $("comparison-empty").hidden = shown.length > 0;
+    $("comparison-empty").textContent = rows.length ? "No changed rows. Show unchanged rows to inspect the retained snapshots." : "No records to compare.";
+  }
   const messages = {
     invalid_snapshot_request:"The proposal is invalid. Your draft is preserved; correct it after reconciliation.",
     snapshot_too_large:"The complete proposal exceeds the size limit. Your draft is preserved.",
@@ -79,7 +111,7 @@
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
     $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No draft records match this filter.":"The draft is empty.";
-    $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);controls();
+    $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
   async function request(method, body) {
     const captured=epoch, controller=new AbortController();requests.add(controller);const timeout=setTimeout(()=>controller.abort(),30000);
@@ -145,5 +177,6 @@
     finally{if(captured===epoch){busy=false;render();}}
   }
   $("review-confirm").addEventListener("click",()=>void send(false));$("retry").addEventListener("click",()=>void send(true));
+  $("show-unchanged").addEventListener("change",renderComparison);
   edit(null,true);render();
 })();
