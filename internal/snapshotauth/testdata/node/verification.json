@@ -1,0 +1,17 @@
+{
+  "status": "PASS",
+  "deterministicRegeneration": true,
+  "uniqueVectorIDs": 64,
+  "acceptSignaturesValid": 8,
+  "compactHashesValid": 64,
+  "files": {
+    "vectors.json": "0426518d090e07d46fa9b897118510142a16b15e253b3e5abf38cce1656ab966",
+    "provenance.json": "616b90782d7f2251b6733b44f2fd4761879adb0fa3af6737f1377f7b9fee95dd",
+    "valid-high-revision.jws": "b7612338319fda7823d683f267cccaefca82c66fa65ae4d58730f602b406d217",
+    "valid-high-revision.header.json": "5010e765e472e634ea6d7d91826dd8434199d0dff87131a839771526c87b5d89",
+    "valid-high-revision.payload.json": "2ec7adc6f4e7b6750a8696a0a0cd057c97913bda84d1b85c54a59ff130dcd3c9",
+    "valid-high-revision.signing-input.txt": "911edbdf4410a27a2fc0147c9ceb256fbce57d47bba6eb7e246615b6afc312fe",
+    "canonical-snapshot.json": "870722abb68881f53b5b53d974cee29a36a7ecddbea27573ca0b64c77d08d533"
+  },
+  "oracleSHA256": "61e974c2e75bc4fde8ce011640ef3794d1f32546b7202b8081aa35ff8603e928"
+}
