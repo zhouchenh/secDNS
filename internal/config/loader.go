@@ -9,8 +9,16 @@ import (
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
 	"io"
 	"sort"
+	"sync"
 )
 
+// Descriptor construction uses a shared named-resolver assignment callback and
+// pending list. Keep the entire build, including diagnostics and initialization,
+// in one transaction so independent loads cannot bind each other's resolvers.
+var loadMu sync.Mutex
+
+// LoadConfig constructs an instance without starting listeners. Concurrent calls
+// to LoadConfig and ValidateConfig are serialized during configuration building.
 func LoadConfig(r io.Reader) (core.Instance, error) {
 	return loadConfig(r, false)
 }
@@ -19,7 +27,7 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 // making DNS queries, and additionally rejects errors reported by rule providers.
 // Existing permissive descriptor parsing is unchanged; this is not strict schema
 // validation of every configuration field or rule entry.
-// Like LoadConfig, it must not run concurrently with another config load.
+// It may run concurrently with LoadConfig or another ValidateConfig call.
 func ValidateConfig(r io.Reader) error {
 	_, err := loadConfig(r, true)
 	return err
@@ -58,6 +66,12 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 			}
 		}
 	}
+	loadMu.Lock()
+	defer func() {
+		named.SetNameRegistryAssignmentFunction(nil)
+		named.ResetKnownNamedResolvers()
+		loadMu.Unlock()
+	}()
 	// Start from a clean slate: describing the config below appends every string-referenced
 	// resolver to a process-global pending list, and a previous LoadConfig that failed
 	// before resolving that list would otherwise leave stale names behind.

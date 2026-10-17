@@ -21,6 +21,14 @@ Normal startup retains its existing behavior of logging rule-provider errors and
 continuing with the rules that could be loaded. Use `-test` as a strict preflight
 when partial rule loading is unacceptable.
 
+Programmatic calls to `LoadConfig` and `ValidateConfig` serialize configuration
+construction, including external rule loading, so concurrent calls cannot share
+named-resolver bindings or inherit another call's validation errors. JSON reading
+and decoding occur before that serialization. Do not change process environment
+variables or register descriptor extensions concurrently with configuration work.
+This isolation does not add runtime reload or make the CLI's process-wide setup
+suitable for concurrent invocation within one process.
+
 ```json
 {
   "listeners": [],
