@@ -126,6 +126,11 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		common.ErrOutput(common.Concatenate("config: invalid record stores: ", err))
 		return exitStartup
 	}
+	versionedStores, err := config.ParseVersionedRecordStores(raw, stores)
+	if err != nil {
+		common.ErrOutput("config: invalid versioned record stores")
+		return exitStartup
+	}
 	instance, err := config.LoadConfig(bytes.NewReader(raw))
 	if err != nil {
 		common.ErrOutput(common.Concatenate("config: Failed to load config: ", err))
@@ -136,8 +141,8 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		common.Output("config: Syntax is OK")
 		return exitOK
 	}
-	if len(stores) > 0 {
-		cleanup, err := recordstore.Prepare(stores)
+	if len(stores) > 0 || len(versionedStores) > 0 {
+		cleanup, err := recordstore.PrepareBindings(stores, versionedStores)
 		if err != nil {
 			common.ErrOutput(common.Concatenate("record stores: startup failed: ", err))
 			return exitStartup
