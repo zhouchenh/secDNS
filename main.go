@@ -110,6 +110,16 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 	}
 	_ = os.Setenv(envConfigDirPath, filepath.Dir(file.Name()))
 	configSource := file.Name()
+	if testOnly {
+		err := config.ValidateConfig(file)
+		_ = file.Close()
+		if err != nil {
+			common.ErrOutput(common.Concatenate("config: Validation failed: ", err))
+			return exitStartup
+		}
+		common.Output("config: Startup checks passed; rule providers reported no errors")
+		return exitOK
+	}
 	instance, err := config.LoadConfig(file)
 	_ = file.Close()
 	if err != nil {
@@ -117,10 +127,6 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		return exitStartup
 	}
 	logger.Info().Str("source", configSource).Msg("config loaded")
-	if testOnly {
-		common.Output("config: Syntax is OK")
-		return exitOK
-	}
 	runtime.GC()
 	instance.Listen(common.ClientErrorMessageHandler, common.ServerErrorMessageHandler, common.ErrOutputErrorHandler)
 	return exitOK

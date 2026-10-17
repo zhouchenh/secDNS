@@ -6,11 +6,26 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
+	"github.com/zhouchenh/secDNS/pkg/rules/provider"
 	"io"
 	"sort"
 )
 
 func LoadConfig(r io.Reader) (core.Instance, error) {
+	return loadConfig(r, false)
+}
+
+// ValidateConfig runs startup configuration checks without starting listeners or
+// making DNS queries, and additionally rejects errors reported by rule providers.
+// Existing permissive descriptor parsing is unchanged; this is not strict schema
+// validation of every configuration field or rule entry.
+// Like LoadConfig, it must not run concurrently with another config load.
+func ValidateConfig(r io.Reader) error {
+	_, err := loadConfig(r, true)
+	return err
+}
+
+func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	rawData, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
@@ -19,6 +34,29 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	err = json.Unmarshal(rawData, &data)
 	if err != nil {
 		return nil, err
+	}
+	if strict {
+		if root, ok := data.(map[string]interface{}); ok {
+			if rawRules, present := root["rules"]; present {
+				rules, ok := rawRules.([]interface{})
+				if !ok {
+					return nil, fmt.Errorf("config: rules must be an array")
+				}
+				for index, raw := range rules {
+					rule, ok := raw.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("config: rules index %d: must be an object", index)
+					}
+					kind, ok := rule["type"].(string)
+					if !ok || kind == "" {
+						return nil, fmt.Errorf("config: rules index %d: type must be a non-empty string", index)
+					}
+					if _, known := provider.GetProviderDescriptorByTypeName(kind); !known {
+						return nil, fmt.Errorf("config: rules index %d: unknown provider type %q", index, kind)
+					}
+				}
+			}
+		}
 	}
 	// Start from a clean slate: describing the config below appends every string-referenced
 	// resolver to a process-global pending list, and a previous LoadConfig that failed
@@ -48,8 +86,17 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	instance := core.NewInstance()
 	instance.AddListener(config.Listeners...)
 	instance.AddListener()
-	for _, p := range config.Rules {
-		instance.AcceptProvider(p, common.ErrOutputErrorHandler)
+	var providerError error
+	for index, p := range config.Rules {
+		instance.AcceptProvider(p, func(err error) {
+			if !strict {
+				common.ErrOutputErrorHandler(err)
+			} else if providerError == nil && err != nil {
+				// Keep only the first error: a malformed large list must not create
+				// an unbounded collection of validation diagnostics.
+				providerError = fmt.Errorf("config: loaded rule provider index %d: %w", index, err)
+			}
+		})
 	}
 	instance.SetDefaultResolver(config.DefaultResolver)
 	instance.SetResolutionDepth(config.ResolutionDepth)
@@ -71,6 +118,9 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 			}
 		}
 		return nil, err
+	}
+	if providerError != nil {
+		return nil, providerError
 	}
 	return instance, nil
 }

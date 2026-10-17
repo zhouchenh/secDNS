@@ -1,12 +1,38 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	_ "github.com/zhouchenh/secDNS/internal/features"
 )
+
+func TestValidationRejectsProviderErrorWithoutChangingStartup(t *testing.T) {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(minimalConfig), &data); err != nil {
+		t.Fatal(err)
+	}
+	data["rules"] = []any{map[string]any{"type": "dnsmasqConf", "config": map[string]any{
+		"filePath": filepath.Join(t.TempDir(), "missing.conf"),
+		"resolver": map[string]any{"type": "noAnswer", "config": map[string]any{}},
+	}}}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(strings.NewReader(string(raw))); err != nil {
+		t.Fatalf("startup compatibility changed: %v", err)
+	}
+	if err := ValidateConfig(strings.NewReader(string(raw))); err == nil || !strings.Contains(err.Error(), "loaded rule provider index 0") {
+		t.Fatalf("strict validation should locate provider failure, got %v", err)
+	}
+	if err := ValidateConfig(strings.NewReader(minimalConfig)); err != nil {
+		t.Fatalf("valid config after failed validation: %v", err)
+	}
+}
 
 const minimalConfig = `{
   "listeners": [
