@@ -54,12 +54,12 @@ Default: `""` (the `default` store)
 
 > `token`: String _(Required)_
 
-Bearer token required on every request. The listener refuses to serve if this is empty.
+Bearer token required on every API request. The listener refuses to serve if this is empty.
 Use a long, random value and transport it over loopback or TLS-terminating infrastructure.
 
 ## Authentication
 
-Every endpoint requires `Authorization: Bearer <token>`. The token is compared in constant
+Every API endpoint requires `Authorization: Bearer <token>`. The token is compared in constant
 time. A missing or malformed header returns **401**; a present but incorrect token returns
 **403**.
 
@@ -144,3 +144,35 @@ Malformed/invalid records or expiry return **400**; a conflict with another live
    type: "TXT", values: [T], ttl_seconds: 60, expires_in_seconds: 1800}`.
 5. The CA resolves the challenge name, follows the `CNAME` to secDNS, and reads the `TXT`.
 6. On success the client `DELETE`s the record.
+
+## Optional records editor
+
+Set `"ui": true` in this listener configuration to enable the embedded editor at
+`{path}/ui/` (normally `/admin/ui/`). It is disabled by default. The HTML, JavaScript
+and CSS are public static assets without tokens or records; all record requests still
+require bearer authentication. The listener still refuses to start without a token.
+No external assets, telemetry or frontend package installation are used.
+
+Enter your admin token and select **Connect**. The page connects only to its own server;
+it does not connect automatically. The token is kept in page memory, sent only in the
+Authorization header, and cleared on Disconnect or page exit. Browser extensions and
+password managers remain outside the editor's control. Use a trusted browser over
+loopback or an appropriately protected HTTPS management connection.
+
+The editor supports local filtering, creating, editing and confirmed deletion. Owner
+and type are fixed during an edit; renaming requires a separate create and delete.
+Each value has its own field, including an empty TXT string. TTL is in seconds; zero
+uses the API default of 60 seconds. Expiration is separate from DNS TTL. **Keep existing
+expiration** sends the original timestamp unchanged, including nanoseconds. Choose
+**Permanent** explicitly to remove expiration, or set a new RFC3339 timestamp or relative
+number of seconds. Expired timestamps are rejected and drafts remain editable.
+
+Validation, conflict, authentication and storage errors are displayed without discarding
+the draft. A successful write followed by a failed refresh is reported separately;
+refresh before another mutation. If a connection fails after sending a mutation, inspect
+the refreshed list before retrying because the server may have completed it.
+
+This editor is intended for one operator at a time. There is no revision check or
+compare-and-swap protection: another writer can replace a record while it is being edited.
+**Saved** means the API accepted the write; restart persistence depends on the configured
+record store, not the editor. It does not provide import, zone management or deployment.

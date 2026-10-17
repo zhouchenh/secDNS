@@ -40,6 +40,7 @@ type HTTPAdminServer struct {
 	Path   string
 	Store  string // shared store name; empty joins recordstore.DefaultName
 	Token  string // bearer token; required (the listener fails closed without it)
+	UI     bool   // optional embedded records editor; disabled by default
 
 	store *recordstore.Store
 }
@@ -82,6 +83,9 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 	mux.HandleFunc("GET "+base+"/records", h.auth(h.handleList))
 	mux.HandleFunc("POST "+base+"/records", h.auth(h.handleSet))
 	mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", h.auth(h.handleDelete))
+	if h.UI {
+		h.editorRoutes(mux, base)
+	}
 	return mux
 }
 
@@ -276,6 +280,7 @@ func validName(name string) bool {
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -366,6 +371,13 @@ func init() {
 						AssignableKind: descriptor.KindString,
 					},
 					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"UI"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"ui"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
 				},
 			},
 			descriptor.ObjectFiller{
