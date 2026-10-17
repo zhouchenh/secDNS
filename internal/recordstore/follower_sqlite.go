@@ -29,6 +29,9 @@ func OpenFollowerSQLite(path string, e FollowerEnrollment) (*FollowerStore, erro
 	return openFollower(path, e, false)
 }
 func followerConnection(path string, create bool) (*sql.DB, error) {
+	if !sqlitePlatformSupported {
+		return nil, ErrSQLiteUnsupported
+	}
 	if ValidatePaths(map[string]string{DefaultName: path}) != nil {
 		return nil, ErrFollowerInput
 	}

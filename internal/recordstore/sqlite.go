@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/miekg/dns"
-	_ "modernc.org/sqlite"
 	"net"
 	"net/url"
 	"os"
@@ -252,6 +251,9 @@ func normalizeValidated(r Record) (Record, error) {
 // settings. The caller acquires the exclusive lock with its first transaction;
 // the connection retains that lock after commit until it closes.
 func openExclusiveDatabase(path string) (_ *sql.DB, err error) {
+	if !sqlitePlatformSupported {
+		return nil, ErrSQLiteUnsupported
+	}
 	if err = ValidatePaths(map[string]string{DefaultName: path}); err != nil {
 		return nil, err
 	}
