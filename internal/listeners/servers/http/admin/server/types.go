@@ -8,6 +8,7 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -144,7 +145,10 @@ func (h *HTTPAdminServer) handleSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	h.store.Set(rec)
+	if err := h.store.Set(rec); err != nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("record mutation failed"))
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -159,7 +163,12 @@ func (h *HTTPAdminServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errBadName)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"deleted": h.store.Delete(name, rrtype)})
+	deleted, err := h.store.Delete(name, rrtype)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("record mutation failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": deleted})
 }
 
 type recordJSON struct {
@@ -215,7 +224,7 @@ func (req setRequest) toRecord(now time.Time) (recordstore.Record, error) {
 	}
 	rec := recordstore.Record{Name: name, Type: rrtype, Values: req.Values, TTL: ttl}
 	if req.ExpiresInSeconds != nil {
-		if *req.ExpiresInSeconds < 0 {
+		if *req.ExpiresInSeconds < 0 || *req.ExpiresInSeconds > int64((1<<63-1)/time.Second) {
 			return recordstore.Record{}, errBadExpiry
 		}
 		if *req.ExpiresInSeconds > 0 {

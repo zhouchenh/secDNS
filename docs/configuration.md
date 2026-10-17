@@ -230,3 +230,7 @@ Traversal follows at most 16 aliases and also consumes one unit of the resolver 
 If a target is absent or has no requested address family, the existing chain is returned with NOERROR and no invented negative SOA. The store has no zone boundary model; this option does not infer that an absent target is authoritatively nonexistent. Direct negative lookups retain existing authority behavior. The default remains CNAME-only responses.
 
 Record values are copied on store input and output. Traversal reads a consistent snapshot for each owner, but concurrent changes across different owners are not one atomic zone snapshot. This feature adds neither persistence nor zone configuration, regex matching, DNSSEC signing, or a GUI.
+
+### Persistent record stores
+
+The optional top-level `recordStores` mapping binds named authority/admin stores to local SQLite files. The default remains in memory. See [record store configuration, startup and durability limits](record-stores.md).
