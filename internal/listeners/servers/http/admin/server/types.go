@@ -90,6 +90,9 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		mux.HandleFunc("GET "+base+"/records", blocked)
 		mux.HandleFunc("POST "+base+"/records", blocked)
 		mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", blocked)
+		if h.UI {
+			h.editorRoutes(mux, base)
+		}
 		return mux
 	}
 

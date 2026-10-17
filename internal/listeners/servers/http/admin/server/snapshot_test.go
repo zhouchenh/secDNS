@@ -26,7 +26,7 @@ func TestSnapshotAPIBothBackends(t *testing.T) {
 				t.Fatal(e)
 			}
 			t.Cleanup(func() { _ = v.Close() })
-			h := &HTTPAdminServer{Token: testToken, versioned: v, UI: true}
+			h := &HTTPAdminServer{Token: testToken, versioned: v, UI: false}
 			body := `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"1"},"operation_id":"op","records":[{"name":"x.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":0,"expires_at":"2000-01-01T00:00:00.123456789Z"}]}`
 			if r := do(h, "GET", "/admin/snapshot", "", ""); r.Code != 401 {
 				t.Fatal(r.Code)
