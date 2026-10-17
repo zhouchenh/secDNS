@@ -42,7 +42,8 @@ type HTTPAdminServer struct {
 	Token  string // bearer token; required (the listener fails closed without it)
 	UI     bool   // optional embedded records editor; disabled by default
 
-	store *recordstore.Store
+	store     *recordstore.Store
+	versioned *recordstore.VersionedStore
 }
 
 var typeOfHTTPAdminServer = descriptor.TypeOfNew(new(*HTTPAdminServer))
@@ -62,7 +63,7 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 		handleIfError(ErrMissingToken, errorHandler)
 		return
 	}
-	h.store = recordstore.GetOrCreate(h.Store)
+	h.store, h.versioned = recordstore.Binding(h.Store)
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(h.Listen.String(), strconv.Itoa(int(h.Port))),
 		Handler:           h.routes(),
@@ -80,6 +81,21 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
+	if h.versioned != nil {
+		mux.HandleFunc("GET "+base+"/snapshot", h.auth(h.handleSnapshot))
+		mux.HandleFunc("POST "+base+"/snapshot", h.auth(h.handleReplace))
+		blocked := h.auth(func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "versioned_batch_required"})
+		})
+		mux.HandleFunc("GET "+base+"/records", blocked)
+		mux.HandleFunc("POST "+base+"/records", blocked)
+		mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", blocked)
+		if h.UI {
+			h.editorRoutes(mux, base)
+		}
+		return mux
+	}
+
 	mux.HandleFunc("GET "+base+"/records", h.auth(h.handleList))
 	mux.HandleFunc("POST "+base+"/records", h.auth(h.handleSet))
 	mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", h.auth(h.handleDelete))

@@ -15,20 +15,25 @@ const DefaultName = "default"
 var gcInterval = 10 * time.Second
 
 var (
-	registryMu sync.Mutex
-	registry   = map[string]*Store{}
+	registryMu        sync.Mutex
+	registry          = map[string]*Store{}
+	versionedRegistry = map[string]*VersionedStore{}
 )
 
 // GetOrCreate returns the shared store for name, creating it (and starting its
 // background GC sweep) on first use. An empty name maps to DefaultName, so a resolver
 // and an admin listener that both omit the store name share one store regardless of
-// which is configured first.
+// which is configured first. It returns nil for explicitly versioned names;
+// production callers use Binding to distinguish modes without a fallback.
 func GetOrCreate(name string) *Store {
 	if name == "" {
 		name = DefaultName
 	}
 	registryMu.Lock()
 	defer registryMu.Unlock()
+	if _, reserved := versionedRegistry[name]; reserved {
+		return nil
+	}
 	if s, ok := registry[name]; ok {
 		return s
 	}
@@ -60,4 +65,24 @@ func (s *Store) startGC() {
 	}
 	s.stop, s.done = make(chan struct{}), make(chan struct{})
 	go s.gcLoop()
+}
+
+// Binding resolves a logical name atomically. Closed versioned handles remain
+// reserved for process lifetime, so shutdown cannot recreate a legacy store.
+func Binding(name string) (*Store, *VersionedStore) {
+	if name == "" {
+		name = DefaultName
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if v, ok := versionedRegistry[name]; ok {
+		return nil, v
+	}
+	if s := registry[name]; s != nil {
+		return s, nil
+	}
+	s := New()
+	registry[name] = s
+	s.startGC()
+	return s, nil
 }

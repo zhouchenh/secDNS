@@ -86,37 +86,9 @@ func Parse(raw []byte) (*Snapshot, error) {
 	if len(digest) != 64 || strings.ToLower(digest) != digest {
 		return nil, ErrDigest
 	}
-	var entries []json.RawMessage
-	if json.Unmarshal(f["records"], &entries) != nil {
-		return nil, ErrInvalid
-	}
-	if len(entries) > MaxRecords {
-		return nil, ErrLimit
-	}
-	records := make([]Record, 0, len(entries))
-	for _, rawRecord := range entries {
-		fields, e := object(rawRecord, []string{"name", "type", "values", "ttl_seconds"}, []string{"expires_at"})
-		if e != nil {
-			return nil, e
-		}
-		var values []json.RawMessage
-		if json.Unmarshal(fields["values"], &values) != nil {
-			return nil, ErrInvalid
-		}
-		if len(values) > MaxValues {
-			return nil, ErrLimit
-		}
-		for _, v := range values {
-			var text string
-			if bytes.Equal(bytes.TrimSpace(v), []byte("null")) || json.Unmarshal(v, &text) != nil {
-				return nil, ErrInvalid
-			}
-		}
-		var r Record
-		if json.Unmarshal(rawRecord, &r) != nil {
-			return nil, ErrInvalid
-		}
-		records = append(records, r)
+	records, e := parseRecords(f["records"])
+	if e != nil {
+		return nil, e
 	}
 	s, e := New(ruleset, lineage, rev, records)
 	if e != nil {
@@ -187,4 +159,41 @@ func validUnicodeEscapes(raw []byte) bool {
 		}
 	}
 	return true
+}
+
+func parseRecords(raw []byte) ([]Record, error) {
+	var entries []json.RawMessage
+	if json.Unmarshal(raw, &entries) != nil {
+		return nil, ErrInvalid
+	}
+	if len(entries) > MaxRecords {
+		return nil, ErrLimit
+	}
+	records := make([]Record, 0, len(entries))
+	for _, rawRecord := range entries {
+		fields, e := object(rawRecord, []string{"name", "type", "values", "ttl_seconds"}, []string{"expires_at"})
+		if e != nil {
+			return nil, e
+		}
+		var values []json.RawMessage
+		if json.Unmarshal(fields["values"], &values) != nil {
+			return nil, ErrInvalid
+		}
+		if len(values) > MaxValues {
+			return nil, ErrLimit
+		}
+		for _, v := range values {
+			var text string
+			if bytes.Equal(bytes.TrimSpace(v), []byte("null")) || json.Unmarshal(v, &text) != nil {
+				return nil, ErrInvalid
+			}
+		}
+		var r Record
+		if json.Unmarshal(rawRecord, &r) != nil {
+			return nil, ErrInvalid
+		}
+		records = append(records, r)
+	}
+
+	return records, nil
 }

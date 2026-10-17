@@ -9,7 +9,7 @@ const maxCNAMEHops = 16
 
 // resolveChain never consults another resolver. Malformed chains fail with a DNS
 // response, not a Go error: core must not fall through to an upstream on failure.
-func (a *Authoritative) resolveChain(query *dns.Msg, depth int) *dns.Msg {
+func (a *Authoritative) resolveChain(query *dns.Msg, depth int, reader recordReader) *dns.Msg {
 	q := query.Question[0]
 	resp := new(dns.Msg)
 	resp.SetReply(query)
@@ -30,7 +30,7 @@ func (a *Authoritative) resolveChain(query *dns.Msg, depth int) *dns.Msg {
 			return fail()
 		}
 		visited[canonical] = true
-		records := a.store.RecordsForName(name)
+		records := reader.RecordsForName(name)
 		cn, alias := records[dns.TypeCNAME]
 		if alias {
 			// A CNAME must have exactly one valid target and no coexisting RRsets.

@@ -62,51 +62,10 @@ func validateRecord(r Record) error {
 // OpenSQLite opens one exclusively owned local database. The existing parent
 // directory must be private on Unix; Windows ACLs remain the operator's responsibility.
 func OpenSQLite(path string) (_ *Store, err error) {
-	if err = ValidatePaths(map[string]string{DefaultName: path}); err != nil {
-		return nil, err
-	}
-	parent, err := os.Lstat(filepath.Dir(path))
-	if err != nil || !parent.IsDir() {
-		return nil, errors.New("database parent must be an existing directory")
-	}
-	if runtime.GOOS != "windows" && parent.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("database parent must be private")
-	}
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		var f *os.File
-		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-		if err != nil {
-			return nil, err
-		}
-		if err = f.Close(); err != nil {
-			return nil, err
-		}
-		info, err = os.Lstat(path)
-	}
+	db, err := openExclusiveDatabase(path)
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
-		return nil, errors.New("database must be a private regular file")
-	}
-	uriPath := filepath.ToSlash(path)
-	if runtime.GOOS == "windows" {
-		uriPath = "/" + uriPath
-	}
-	u := url.URL{Scheme: "file", Path: uriPath}
-	q := url.Values{}
-	q.Set("_txlock", "exclusive")
-	q.Add("_pragma", "busy_timeout(1000)")
-	q.Add("_pragma", "synchronous(FULL)")
-	q.Add("_pragma", "locking_mode(EXCLUSIVE)")
-	u.RawQuery = q.Encode()
-	db, err := sql.Open("sqlite", u.String())
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
 	defer func() {
 		if err != nil {
 			_ = db.Close()
@@ -287,4 +246,56 @@ func normalizeValidated(r Record) (Record, error) {
 		r.Values[0] = canonicalName(target)
 	}
 	return r, nil
+}
+
+// openExclusiveDatabase shares private-file checks and connection ownership
+// settings. The caller acquires the exclusive lock with its first transaction;
+// the connection retains that lock after commit until it closes.
+func openExclusiveDatabase(path string) (_ *sql.DB, err error) {
+	if err = ValidatePaths(map[string]string{DefaultName: path}); err != nil {
+		return nil, err
+	}
+	parent, err := os.Lstat(filepath.Dir(path))
+	if err != nil || !parent.IsDir() {
+		return nil, errors.New("database parent must be an existing directory")
+	}
+	if runtime.GOOS != "windows" && parent.Mode().Perm()&0077 != 0 {
+		return nil, errors.New("database parent must be private")
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		var f *os.File
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, err
+		}
+		if err = f.Close(); err != nil {
+			return nil, err
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0077 != 0) {
+		return nil, errors.New("database must be a private regular file")
+	}
+	uriPath := filepath.ToSlash(path)
+	if runtime.GOOS == "windows" {
+		uriPath = "/" + uriPath
+	}
+	u := url.URL{Scheme: "file", Path: uriPath}
+	q := url.Values{}
+	q.Set("_txlock", "exclusive")
+	q.Add("_pragma", "busy_timeout(1000)")
+	q.Add("_pragma", "synchronous(FULL)")
+	q.Add("_pragma", "locking_mode(EXCLUSIVE)")
+	u.RawQuery = q.Encode()
+	db, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	return db, nil
 }
