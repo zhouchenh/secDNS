@@ -1,5 +1,63 @@
 # Version History
 
+## v1.6.0 - 2026.10.18
+
+Persistent Records and Listener Resolution Policies
+
+This release adds optional persistent record stores, versioned batch editing, and
+per-listener resolver selection. Existing configurations keep their default in-memory
+record stores and global resolver selection. New storage modes and editors require
+explicit configuration.
+
+* listeners: select a named or inline resolver for each DNS or HTTP query listener. The
+  new policy resolver combines rules with a default resolver, with dependency and cycle
+  validation before listeners start. UDP response sizing now applies consistently to
+  `udp`, `udp4`, and `udp6` listeners.
+* authoritative: optionally complete A/AAAA CNAME chains within the same record store,
+  preserving record TTLs and bounded chain handling. The default remains disabled.
+* records: optionally persist named legacy stores in SQLite, with strict startup
+  validation, exclusive database ownership, and absolute expiration retained across
+  restarts. Admin mutations validate record data and CNAME conflicts atomically.
+* records: add explicitly configured versioned stores for complete A, AAAA, CNAME, and
+  TXT snapshots. Authenticated batch replacement checks the expected revision and retains
+  operation receipts for exact retries. A query reads one immutable generation across its
+  same-store CNAME chain. Versioned records preserve TTL zero, ordered TXT chunks, and
+  exact absolute expiration values.
+* admin: add optional embedded editors for legacy records and versioned snapshots. The
+  versioned editor stages local changes, reviews the complete replacement, preserves dirty
+  drafts on refresh, and retains the identical request for explicit retry after an
+  uncertain result. Editors are disabled by default; administration still requires a
+  bearer token and a protected management transport.
+* config: make configuration test mode reject reported rule-input failures. Repeated or
+  concurrent configuration loads are isolated, and test mode validates storage settings
+  without creating databases.
+* tools: add a source-tree RouterOS DNS-static preview command,
+  `go run ./cmd/routeros-dns-preview`. It reads a restricted literal export from standard
+  input, retains unsupported-policy diagnostics, and never applies records or contacts a
+  router. It is not a separate release binary.
+* internal: add enrolled follower snapshot persistence and strict reopen/failure handling
+  for later integration. This internal component has no runtime configuration or
+  synchronization transport in this release.
+
+The release continues to publish all 46 existing platform binary names. SQLite
+persistence is available on macOS amd64/arm64; FreeBSD amd64/arm64; Linux 386, amd64, arm,
+arm64, loong64, ppc64le, riscv64, and s390x; and Windows 386, amd64, and arm64. Other
+published targets retain in-memory operation and report SQLite persistence as unavailable.
+A configured database is never silently replaced by memory.
+
+Memory stores remain volatile. Versioned enrollment is explicit, and normal startup does
+not convert a legacy database. Editor drafts and pending retries live only in page memory;
+clearing local work cannot undo an already dispatched server write. Listener selection
+does not configure host addresses, routes, or translation. Cluster synchronization,
+source-address policies, routing/network management, and a routing GUI are outside this
+release.
+
+Source documentation: [listener resolution policies](listener-resolution-policies.md),
+[authoritative resolver](resolvers/authoritative.md), [record stores](record-stores.md),
+[versioned authority API](versioned-authority-api.md),
+[RouterOS import preview](routeros-import-preview.md), and
+[follower snapshot store](follower-snapshot-store.md).
+
 ## v1.5.1 - 2026.06.05
 
 Config-Load Isolation Fix
