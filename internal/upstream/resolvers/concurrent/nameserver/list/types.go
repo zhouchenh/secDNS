@@ -111,3 +111,7 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *ConcurrentNameServerList) ResolverDependencies() []resolver.Resolver {
+	return append([]resolver.Resolver(nil), (*r)...)
+}

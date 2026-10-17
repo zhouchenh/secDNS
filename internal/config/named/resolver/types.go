@@ -12,6 +12,10 @@ type NamedResolver struct {
 	resolver     resolver.Resolver
 }
 
+func (nr *NamedResolver) ResolverDependencies() []resolver.Resolver {
+	return []resolver.Resolver{nr.resolver}
+}
+
 func (nr *NamedResolver) Init() {
 	if nr == nil {
 		return

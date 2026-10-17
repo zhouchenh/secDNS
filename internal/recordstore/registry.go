@@ -34,14 +34,30 @@ func GetOrCreate(name string) *Store {
 	}
 	s := New()
 	registry[name] = s
-	go s.gcLoop()
+	s.startGC()
 	return s
 }
 
 func (s *Store) gcLoop() {
 	t := time.NewTicker(gcInterval)
 	defer t.Stop()
-	for range t.C {
-		s.sweep()
+	defer close(s.done)
+	for {
+		select {
+		case <-t.C:
+			s.sweep()
+		case <-s.stop:
+			return
+		}
 	}
+}
+
+func (s *Store) startGC() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.stop != nil {
+		return
+	}
+	s.stop, s.done = make(chan struct{}), make(chan struct{})
+	go s.gcLoop()
 }

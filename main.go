@@ -1,15 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/config"
 	"github.com/zhouchenh/secDNS/internal/core"
 	_ "github.com/zhouchenh/secDNS/internal/features"
 	"github.com/zhouchenh/secDNS/internal/logger"
+	"github.com/zhouchenh/secDNS/internal/recordstore"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
+	"syscall"
 )
 
 var (
@@ -110,15 +115,56 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 	}
 	_ = os.Setenv(envConfigDirPath, filepath.Dir(file.Name()))
 	configSource := file.Name()
-	instance, err := config.LoadConfig(file)
+	raw, err := io.ReadAll(file)
 	_ = file.Close()
+	if err != nil {
+		common.ErrOutput("config: failed to read config")
+		return exitStartup
+	}
+	stores, err := config.ParseRecordStores(raw)
+	if err != nil {
+		common.ErrOutput(common.Concatenate("config: invalid record stores: ", err))
+		return exitStartup
+	}
+	if testOnly {
+		if err := config.ValidateConfig(bytes.NewReader(raw)); err != nil {
+			common.ErrOutput(common.Concatenate("config: Validation failed: ", err))
+			return exitStartup
+		}
+		common.Output("config: Startup checks passed; rule providers reported no errors")
+		return exitOK
+	}
+	instance, err := config.LoadConfig(bytes.NewReader(raw))
 	if err != nil {
 		common.ErrOutput(common.Concatenate("config: Failed to load config: ", err))
 		return exitStartup
 	}
 	logger.Info().Str("source", configSource).Msg("config loaded")
-	if testOnly {
-		common.Output("config: Syntax is OK")
+	if len(stores) > 0 {
+		cleanup, err := recordstore.Prepare(stores)
+		if err != nil {
+			common.ErrOutput(common.Concatenate("record stores: startup failed: ", err))
+			return exitStartup
+		}
+		defer func() {
+			if err := cleanup(); err != nil {
+				common.ErrOutput("record stores: close failed")
+			}
+		}()
+		// Existing listeners have no drain API. A signal ends this process-owned run;
+		// Close serializes with mutations, and main then exits the process.
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(signals)
+		done := make(chan struct{})
+		go func() {
+			instance.Listen(common.ClientErrorMessageHandler, common.ServerErrorMessageHandler, common.ErrOutputErrorHandler)
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-signals:
+		}
 		return exitOK
 	}
 	runtime.GC()

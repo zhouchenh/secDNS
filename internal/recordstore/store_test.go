@@ -32,13 +32,13 @@ func TestStoreSetGetReplaceDelete(t *testing.T) {
 		t.Fatalf("unexpected A record")
 	}
 
-	if !s.Delete("FOO.example.com.", dns.TypeTXT) {
+	if deleted, err := s.Delete("FOO.example.com.", dns.TypeTXT); err != nil || !deleted {
 		t.Fatalf("Delete should report the record was present")
 	}
 	if _, ok := s.Get("foo.example.com", dns.TypeTXT); ok {
 		t.Fatalf("record still present after Delete")
 	}
-	if s.Delete("foo.example.com", dns.TypeTXT) {
+	if deleted, err := s.Delete("foo.example.com", dns.TypeTXT); err != nil || deleted {
 		t.Fatalf("Delete of an absent record should report false")
 	}
 }

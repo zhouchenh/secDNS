@@ -6,11 +6,37 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
+	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/policy"
+	"github.com/zhouchenh/secDNS/pkg/listeners/server"
+	"github.com/zhouchenh/secDNS/pkg/rules/provider"
+	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"io"
 	"sort"
+	"sync"
 )
 
+// Descriptor construction uses a shared named-resolver assignment callback and
+// pending list. Keep the entire build, including diagnostics and initialization,
+// in one transaction so independent loads cannot bind each other's resolvers.
+var loadMu sync.Mutex
+
+// LoadConfig constructs an instance without starting listeners. Concurrent calls
+// to LoadConfig and ValidateConfig are serialized during configuration building.
 func LoadConfig(r io.Reader) (core.Instance, error) {
+	return loadConfig(r, false)
+}
+
+// ValidateConfig runs startup configuration checks without starting listeners or
+// making DNS queries, and additionally rejects errors reported by rule providers.
+// Existing permissive descriptor parsing is unchanged; this is not strict schema
+// validation of every configuration field or rule entry.
+// It may run concurrently with LoadConfig or another ValidateConfig call.
+func ValidateConfig(r io.Reader) error {
+	_, err := loadConfig(r, true)
+	return err
+}
+
+func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	rawData, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
@@ -20,6 +46,35 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	if strict {
+		if root, ok := data.(map[string]interface{}); ok {
+			if rawRules, present := root["rules"]; present {
+				rules, ok := rawRules.([]interface{})
+				if !ok {
+					return nil, fmt.Errorf("config: rules must be an array")
+				}
+				for index, raw := range rules {
+					rule, ok := raw.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("config: rules index %d: must be an object", index)
+					}
+					kind, ok := rule["type"].(string)
+					if !ok || kind == "" {
+						return nil, fmt.Errorf("config: rules index %d: type must be a non-empty string", index)
+					}
+					if _, known := provider.GetProviderDescriptorByTypeName(kind); !known {
+						return nil, fmt.Errorf("config: rules index %d: unknown provider type %q", index, kind)
+					}
+				}
+			}
+		}
+	}
+	loadMu.Lock()
+	defer func() {
+		named.SetNameRegistryAssignmentFunction(nil)
+		named.ResetKnownNamedResolvers()
+		loadMu.Unlock()
+	}()
 	// Start from a clean slate: describing the config below appends every string-referenced
 	// resolver to a process-global pending list, and a previous LoadConfig that failed
 	// before resolving that list would otherwise leave stale names behind.
@@ -45,11 +100,25 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 	if config.DefaultResolver == nil {
 		return nil, ErrMissingDefaultResolverConfig
 	}
+	selected, err := bindListeners(data, config)
+	if err != nil {
+		return nil, err
+	}
 	instance := core.NewInstance()
 	instance.AddListener(config.Listeners...)
 	instance.AddListener()
-	for _, p := range config.Rules {
-		instance.AcceptProvider(p, common.ErrOutputErrorHandler)
+	var providerError error
+	for index, p := range config.Rules {
+		instance.AcceptProvider(p, func(err error) {
+			if !strict {
+				common.ErrOutputErrorHandler(err)
+			}
+			if providerError == nil && err != nil {
+				// Keep only the first error: a malformed large list must not create
+				// an unbounded collection of validation diagnostics.
+				providerError = fmt.Errorf("config: loaded rule provider index %d: %w", index, err)
+			}
+		})
 	}
 	instance.SetDefaultResolver(config.DefaultResolver)
 	instance.SetResolutionDepth(config.ResolutionDepth)
@@ -71,6 +140,27 @@ func LoadConfig(r io.Reader) (core.Instance, error) {
 			}
 		}
 		return nil, err
+	}
+	roots := []resolver.Resolver{instanceResolver}
+	for _, name := range config.Resolvers.Names() {
+		r, _ := config.Resolvers.Lookup(name)
+		if _, ok := r.(*policy.Policy); ok {
+			roots = append(roots, r)
+		}
+	}
+	selected = selected || containsPolicyGraph(roots)
+	if providerError != nil && (strict || selected) {
+		return nil, providerError
+	}
+	if selected {
+		for _, listener := range config.Listeners {
+			if binding, ok := listener.(*server.Binding); ok {
+				roots = append(roots, binding.Resolver)
+			}
+		}
+		if err := validateResolverGraph(roots); err != nil {
+			return nil, err
+		}
 	}
 	return instance, nil
 }

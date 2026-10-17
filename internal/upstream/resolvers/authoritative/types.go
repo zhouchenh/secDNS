@@ -23,8 +23,9 @@ import (
 // Authoritative answers from a shared record store. DNSSEC signing, zone transfer, and
 // dynamic DNS updates are out of scope; answers are unsigned (Insecure).
 type Authoritative struct {
-	Store       string // shared store name; empty joins recordstore.DefaultName
-	NegativeTTL uint32 // SOA TTL / MINTTL for NXDOMAIN and NODATA answers
+	Store         string // shared store name; empty joins recordstore.DefaultName
+	CompleteCNAME bool   // opt-in same-store A/AAAA chain completion
+	NegativeTTL   uint32 // SOA TTL / MINTTL for NXDOMAIN and NODATA answers
 
 	initOnce sync.Once
 	store    *recordstore.Store
@@ -49,6 +50,12 @@ func (a *Authoritative) init() {
 
 func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
+		if a.CompleteCNAME && query != nil && len(query.Question) > 0 && (query.Question[0].Qtype == dns.TypeA || query.Question[0].Qtype == dns.TypeAAAA) {
+			resp := new(dns.Msg)
+			resp.SetReply(query)
+			resp.Rcode = dns.RcodeServerFailure
+			return resp, nil
+		}
 		return nil, resolver.ErrLoopDetected
 	}
 	if query == nil {
@@ -63,6 +70,10 @@ func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	resp := new(dns.Msg)
 	resp.SetReply(query)
 	resp.Authoritative = true
+
+	if a.CompleteCNAME && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
+		return a.resolveChain(query, depth), nil
+	}
 
 	// Exact {name, type} hit.
 	if rec, ok := a.store.Get(q.Name, q.Qtype); ok {
@@ -138,6 +149,13 @@ func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfAuthoritative,
 		Filler: descriptor.Fillers{
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"CompleteCNAME"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"completeCNAME"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
+				},
+			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"Store"},
 				ValueSource: descriptor.ValueSources{

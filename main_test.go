@@ -1,12 +1,77 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/zhouchenh/secDNS/internal/core"
 )
+
+func TestStrictRuleValidation(t *testing.T) {
+	// An occupied port proves validation does not try to activate a listener.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+	for _, tc := range []struct {
+		name    string
+		content string
+		missing bool
+		want    int
+	}{
+		{"missing", "", true, exitStartup},
+		{"malformed", "server=/bad name/1.1.1.1\n", false, exitStartup},
+		{"partial", "server=/example.com/1.1.1.1\nserver=/bad name/1.1.1.1\n", false, exitStartup},
+		{"valid", "server=/example.com/1.1.1.1\n", false, exitOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if !tc.missing {
+				if err := os.WriteFile(filepath.Join(dir, "rules.conf"), []byte(tc.content), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			data := map[string]any{
+				"listeners":       []any{map[string]any{"type": "dnsServer", "config": map[string]any{"listen": "127.0.0.1", "port": port, "protocol": "tcp"}}},
+				"rules":           []any{map[string]any{"type": "dnsmasqConf", "config": map[string]any{"filePath": "rules.conf", "resolver": map[string]any{"type": "noAnswer", "config": map[string]any{}}}}},
+				"defaultResolver": map[string]any{"type": "noAnswer", "config": map[string]any{}},
+			}
+			encoded, err := json.Marshal(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "config.json")
+			if err := os.WriteFile(path, encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(core.EnvKey("config", "dir", "path"), dir)
+			if got := run(path, false, true, ""); got != tc.want {
+				t.Fatalf("validation exit = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestStrictValidationRejectsUnknownProvider(t *testing.T) {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(validConfigJSON), &data); err != nil {
+		t.Fatal(err)
+	}
+	data["rules"] = []any{map[string]any{"type": "unknownProvider", "config": map[string]any{}}}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeTemp(t, "unknown-provider.json", string(raw))
+	if code := run(path, false, true, ""); code != exitStartup {
+		t.Fatalf("unknown provider validation exit = %d, want %d", code, exitStartup)
+	}
+}
 
 const validConfigJSON = `{
   "listeners": [{"type": "dnsServer", "config": {"listen": "127.0.0.1", "port": 5353, "protocol": "udp"}}],

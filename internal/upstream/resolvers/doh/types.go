@@ -641,3 +641,10 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *DoH) ResolverDependencies() []resolver.Resolver {
+	if r.Resolver == nil {
+		return nil
+	}
+	return []resolver.Resolver{r.Resolver}
+}

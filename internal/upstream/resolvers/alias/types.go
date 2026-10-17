@@ -90,3 +90,5 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *Alias) ResolverDependencies() []resolver.Resolver { return []resolver.Resolver{r.Resolver} }

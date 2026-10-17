@@ -8,6 +8,8 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -38,6 +40,7 @@ type HTTPAdminServer struct {
 	Path   string
 	Store  string // shared store name; empty joins recordstore.DefaultName
 	Token  string // bearer token; required (the listener fails closed without it)
+	UI     bool   // optional embedded records editor; disabled by default
 
 	store *recordstore.Store
 }
@@ -80,6 +83,9 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 	mux.HandleFunc("GET "+base+"/records", h.auth(h.handleList))
 	mux.HandleFunc("POST "+base+"/records", h.auth(h.handleSet))
 	mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", h.auth(h.handleDelete))
+	if h.UI {
+		h.editorRoutes(mux, base)
+	}
 	return mux
 }
 
@@ -130,13 +136,21 @@ type setRequest struct {
 	Values           []string `json:"values"`
 	TTLSeconds       uint32   `json:"ttl_seconds"`
 	ExpiresInSeconds *int64   `json:"expires_in_seconds,omitempty"`
+	ExpiresAt        *string  `json:"expires_at,omitempty"`
+	absolutePresent  bool
+	relativePresent  bool
 }
 
 func (h *HTTPAdminServer) handleSet(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	var req setRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, err)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("invalid record request"))
+		return
+	}
+	if err := decoder.Decode(new(interface{})); err != io.EOF {
+		writeError(w, http.StatusBadRequest, errors.New("request must contain one JSON object"))
 		return
 	}
 	rec, err := req.toRecord(time.Now())
@@ -144,7 +158,17 @@ func (h *HTTPAdminServer) handleSet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	h.store.Set(rec)
+	if err := h.store.SetValidated(rec); err != nil {
+		switch {
+		case errors.Is(err, recordstore.ErrInvalidRecord), errors.Is(err, recordstore.ErrExpiredRecord):
+			writeError(w, http.StatusBadRequest, err)
+		case errors.Is(err, recordstore.ErrRecordConflict):
+			writeError(w, http.StatusConflict, err)
+		default:
+			writeError(w, http.StatusServiceUnavailable, errors.New("record mutation failed"))
+		}
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -159,7 +183,12 @@ func (h *HTTPAdminServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errBadName)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"deleted": h.store.Delete(name, rrtype)})
+	deleted, err := h.store.Delete(name, rrtype)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("record mutation failed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": deleted})
 }
 
 type recordJSON struct {
@@ -181,7 +210,7 @@ func (h *HTTPAdminServer) handleList(w http.ResponseWriter, _ *http.Request) {
 			TTLSeconds: rec.TTL,
 		}
 		if !rec.ExpiresAt.IsZero() {
-			rj.ExpiresAt = rec.ExpiresAt.UTC().Format(time.RFC3339)
+			rj.ExpiresAt = rec.ExpiresAt.UTC().Format(time.RFC3339Nano)
 		}
 		out = append(out, rj)
 	}
@@ -190,6 +219,9 @@ func (h *HTTPAdminServer) handleList(w http.ResponseWriter, _ *http.Request) {
 
 // toRecord validates the request and converts it to a store record relative to now.
 func (req setRequest) toRecord(now time.Time) (recordstore.Record, error) {
+	if (req.absolutePresent || req.ExpiresAt != nil) && (req.relativePresent || req.ExpiresInSeconds != nil) {
+		return recordstore.Record{}, errBadExpiry
+	}
 	name := strings.TrimSpace(req.Name)
 	if !validName(name) {
 		return recordstore.Record{}, errBadName
@@ -213,9 +245,22 @@ func (req setRequest) toRecord(now time.Time) (recordstore.Record, error) {
 	if ttl == 0 {
 		ttl = 60
 	}
-	rec := recordstore.Record{Name: name, Type: rrtype, Values: req.Values, TTL: ttl}
+	values := append([]string(nil), req.Values...)
+	if rrtype == dns.TypeA || rrtype == dns.TypeAAAA {
+		for i := range values {
+			values[i] = strings.TrimSpace(values[i])
+		}
+	}
+	rec := recordstore.Record{Name: name, Type: rrtype, Values: values, TTL: ttl}
+	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
+		expiry, err := time.Parse(time.RFC3339Nano, *req.ExpiresAt)
+		if err != nil || !expiry.After(now) || expiry.UTC().Year() < 1 || expiry.UTC().Year() > 9999 {
+			return recordstore.Record{}, errBadExpiry
+		}
+		rec.ExpiresAt = expiry.UTC()
+	}
 	if req.ExpiresInSeconds != nil {
-		if *req.ExpiresInSeconds < 0 {
+		if *req.ExpiresInSeconds < 0 || *req.ExpiresInSeconds > int64((1<<63-1)/time.Second) {
 			return recordstore.Record{}, errBadExpiry
 		}
 		if *req.ExpiresInSeconds > 0 {
@@ -230,12 +275,12 @@ func validName(name string) bool {
 	if name == "" || len(name) > 255 {
 		return false
 	}
-	_, ok := dns.IsDomainName(name)
-	return ok
+	return recordstore.ValidName(name)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -326,6 +371,13 @@ func init() {
 						AssignableKind: descriptor.KindString,
 					},
 					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"UI"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"ui"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
 				},
 			},
 			descriptor.ObjectFiller{

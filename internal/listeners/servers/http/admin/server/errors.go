@@ -13,5 +13,5 @@ var (
 	errBadName       = errors.New("name is not a valid DNS name")
 	errEmptyValues   = errors.New("values must be a non-empty array")
 	errBadIP         = errors.New("values must be valid IP addresses for an A/AAAA record")
-	errBadExpiry     = errors.New("expires_in_seconds must not be negative")
+	errBadExpiry     = errors.New("invalid or conflicting expiry; use one bounded nonnegative duration or future RFC3339Nano timestamp")
 )
