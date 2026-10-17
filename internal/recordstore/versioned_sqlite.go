@@ -261,6 +261,13 @@ func readLegacyExact(tx *sql.Tx) ([]recordset.Record, error) {
 	}
 	defer rows.Close()
 	records := make([]recordset.Record, 0, count)
+	type migrationRecord struct {
+		Name       string          `json:"name"`
+		Type       string          `json:"type"`
+		Values     json.RawMessage `json:"values"`
+		TTLSeconds uint32          `json:"ttl_seconds"`
+		ExpiresAt  string          `json:"expires_at"`
+	}
 	for rows.Next() {
 		var r recordset.Record
 		var typ, ttl int64
@@ -297,9 +304,20 @@ func readLegacyExact(tx *sql.Tx) ([]recordset.Record, error) {
 		if e != nil {
 			return nil, ErrMigrationIncompatible
 		}
-		quote := func(v string) string { b, _ := json.Marshal(v); return string(b) }
-		rawWire := fmt.Sprintf(`{"schema":%s,"ruleset_id":"migration","lineage_id":"validation","revision":"1","content_sha256":%s,"records":[{"name":%s,"type":%s,"values":%s,"ttl_seconds":%d,"expires_at":%s}]}`, quote(recordset.Schema), quote(single.Metadata().ContentSHA256), quote(r.Name), quote(r.Type), values, r.TTLSeconds, quote(r.ExpiresAt))
-		if _, e = recordset.Parse([]byte(rawWire)); e != nil {
+		rawWire, e := json.Marshal(struct {
+			recordset.Metadata
+			Records []migrationRecord `json:"records"`
+		}{
+			Metadata: single.Metadata(),
+			Records: []migrationRecord{{
+				Name: r.Name, Type: r.Type, Values: json.RawMessage(values),
+				TTLSeconds: r.TTLSeconds, ExpiresAt: r.ExpiresAt,
+			}},
+		})
+		if e != nil {
+			return nil, ErrMigrationIncompatible
+		}
+		if _, e = recordset.Parse(rawWire); e != nil {
 			return nil, ErrMigrationIncompatible
 		}
 		records = append(records, r)

@@ -9,6 +9,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/recordset"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,61 @@ func TestVersionedMigrationPreservesExpiredTTLAndTXT(t *testing.T) {
 		t.Fatal("migration restarted differently")
 	}
 }
+
+func TestVersionedMigrationPreservesJSONLookingTXT(t *testing.T) {
+	p := dbPath(t)
+	rawValues := `["\"}],\"records\":[{\"name\":\"injected.invalid.\"}],\"x\":\"","\"quoted\"","\\ud800","\ud83d\ude00","\ufffd","<>&","","repeat","repeat"]`
+	values := []string{`"}],"records":[{"name":"injected.invalid."}],"x":"`, `"quoted"`, `\ud800`, "😀", "\ufffd", "<>&", "", "repeat", "repeat"}
+	legacyFixture(t, p, []legacyRow{{"Quoted.TXT.Invalid.", int64(dns.TypeTXT), 0, rawValues, ""}})
+	s, err := OpenVersionedSQLite(p, migrationEnrollment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	v, err := s.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []recordset.Record{{Name: "quoted.txt.invalid.", Type: "TXT", Values: values, TTLSeconds: 0}}
+	if !reflect.DeepEqual(v.Records(), want) || v.Metadata().Revision != 1 {
+		t.Fatal("migration changed literal TXT content or injected another record")
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = openVersionedTest(t, p)
+	defer s.Close()
+	reopened, err := s.Acquire()
+	if err != nil || reopened.Metadata() != v.Metadata() || !reflect.DeepEqual(reopened.Records(), want) {
+		t.Fatal("literal TXT content changed after reopen", err)
+	}
+}
+
+func TestVersionedMigrationRejectsOriginalMalformedValueBytes(t *testing.T) {
+	for name, values := range map[string]string{
+		"invalid-utf8":    string([]byte{'[', '"', 0xff, '"', ']'}),
+		"low-surrogate":   `["\udfff"]`,
+		"reversed-pair":   `["\udfff\ud800"]`,
+		"trailing-object": `["valid"] {"records":[]}`,
+		"mixed-null":      `["valid",null]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := dbPath(t)
+			legacyFixture(t, p, []legacyRow{{"text.invalid.", int64(dns.TypeTXT), 0, values, ""}})
+			before := fileDigest(t, p)
+			if s, err := OpenVersionedSQLite(p, migrationEnrollment()); !errors.Is(err, ErrMigrationIncompatible) {
+				if s != nil {
+					s.Close()
+				}
+				t.Fatal("malformed original bytes were repaired or accepted", err)
+			}
+			if fileDigest(t, p) != before {
+				t.Fatal("rejected migration changed the original database")
+			}
+		})
+	}
+}
+
 func TestVersionedMigrationRefusalAndSQLRollback(t *testing.T) {
 	cases := [][]legacyRow{
 		{{"dup.invalid.", int64(dns.TypeA), 30, `["192.0.2.1","192.0.2.1"]`, ""}},
