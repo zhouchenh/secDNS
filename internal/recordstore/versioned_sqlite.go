@@ -30,6 +30,9 @@ func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHook
 	}
 	db, err := openExclusiveDatabase(path)
 	if err != nil {
+		if errors.Is(err, ErrSQLiteUnsupported) {
+			return nil, ErrSQLiteUnsupported
+		}
 		return nil, ErrVersionedStorage
 	}
 	defer func() {
