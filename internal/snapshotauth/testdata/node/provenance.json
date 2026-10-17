@@ -1,0 +1,36 @@
+{
+  "node": "v26.1.0",
+  "openssl": "3.5.6",
+  "contractSHA256": "e5125bbcdc7dba1b63b8e8ae1f782f7823526dc1327472661938768de53b2f07",
+  "generatorSHA256": "abd8fe10ceb7d21b9f1a8a843e0006f172243396775ac05ca467e751db12e6aa",
+  "vectorsSHA256": "0426518d090e07d46fa9b897118510142a16b15e253b3e5abf38cce1656ab966",
+  "keySource": "https://www.rfc-editor.org/rfc/rfc8032.html#section-7.1",
+  "framingSource": "https://www.rfc-editor.org/rfc/rfc7515.html#section-3.1",
+  "rfcEmptyMessageSelfCheck": "PASS",
+  "public_key_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "canonicalContentSHA256": "e73af1c6d0f1171cf7d8289f7e29a4f921e905aaa271c2bb000f898ec50923a1",
+  "vectorCount": 64,
+  "acceptCount": 8,
+  "byteFiles": [
+    {
+      "file": "valid-high-revision.jws",
+      "sha256": "b7612338319fda7823d683f267cccaefca82c66fa65ae4d58730f602b406d217"
+    },
+    {
+      "file": "valid-high-revision.header.json",
+      "sha256": "5010e765e472e634ea6d7d91826dd8434199d0dff87131a839771526c87b5d89"
+    },
+    {
+      "file": "valid-high-revision.payload.json",
+      "sha256": "2ec7adc6f4e7b6750a8696a0a0cd057c97913bda84d1b85c54a59ff130dcd3c9"
+    },
+    {
+      "file": "valid-high-revision.signing-input.txt",
+      "sha256": "911edbdf4410a27a2fc0147c9ceb256fbce57d47bba6eb7e246615b6afc312fe"
+    },
+    {
+      "file": "canonical-snapshot.json",
+      "sha256": "870722abb68881f53b5b53d974cee29a36a7ecddbea27573ca0b64c77d08d533"
+    }
+  ]
+}
