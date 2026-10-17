@@ -1,5 +1,22 @@
 # Version History
 
+## v1.6.1 - 2026.10.18
+
+Readable Versioned Record Comparison
+
+* admin: show readable base, local draft and observed server records side by side,
+  with separate local/server change labels, exact values, TTL and expiration.
+  Show changed rows by default, with an unchanged-row toggle, raw JSON disclosure
+  and a layout that stacks on mobile screens.
+* internal: add an inactive, bounded signed-snapshot verifier and interoperability
+  tests for later integration. It requires caller-supplied trusted keys and clock;
+  this release adds no synchronization transport or durable trust store.
+
+Comparison controls do not change drafts or submit requests. Existing revision
+checks, exact retries and explicit discard/reload behavior remain unchanged.
+The optional editor remains disabled by default. See the
+[versioned records editor](versioned-authority-api.md#optional-snapshot-editor).
+
 ## v1.6.0 - 2026.10.18
 
 Persistent Records and Listener Resolution Policies
