@@ -1744,3 +1744,5 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *Cache) ResolverDependencies() []resolver.Resolver { return []resolver.Resolver{r.Resolver} }

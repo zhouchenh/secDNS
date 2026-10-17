@@ -23,11 +23,13 @@ import (
 // Authoritative answers from a shared record store. DNSSEC signing, zone transfer, and
 // dynamic DNS updates are out of scope; answers are unsigned (Insecure).
 type Authoritative struct {
-	Store       string // shared store name; empty joins recordstore.DefaultName
-	NegativeTTL uint32 // SOA TTL / MINTTL for NXDOMAIN and NODATA answers
+	Store         string // shared store name; empty joins recordstore.DefaultName
+	CompleteCNAME bool   // opt-in same-store A/AAAA chain completion
+	NegativeTTL   uint32 // SOA TTL / MINTTL for NXDOMAIN and NODATA answers
 
-	initOnce sync.Once
-	store    *recordstore.Store
+	initOnce  sync.Once
+	store     *recordstore.Store
+	versioned *recordstore.VersionedStore
 }
 
 var typeOfAuthoritative = descriptor.TypeOfNew(new(*Authoritative))
@@ -41,7 +43,7 @@ func (a *Authoritative) TypeName() string {
 }
 
 func (a *Authoritative) init() {
-	a.store = recordstore.GetOrCreate(a.Store)
+	a.store, a.versioned = recordstore.Binding(a.Store)
 	if a.NegativeTTL == 0 {
 		a.NegativeTTL = 60
 	}
@@ -49,6 +51,12 @@ func (a *Authoritative) init() {
 
 func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
+		if a.CompleteCNAME && query != nil && len(query.Question) > 0 && (query.Question[0].Qtype == dns.TypeA || query.Question[0].Qtype == dns.TypeAAAA) {
+			resp := new(dns.Msg)
+			resp.SetReply(query)
+			resp.Rcode = dns.RcodeServerFailure
+			return resp, nil
+		}
 		return nil, resolver.ErrLoopDetected
 	}
 	if query == nil {
@@ -59,25 +67,40 @@ func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	}
 	a.initOnce.Do(a.init)
 
+	var reader recordReader = a.store
+	if a.versioned != nil {
+		view, err := a.versioned.Acquire()
+		if err != nil {
+			resp := new(dns.Msg)
+			resp.SetReply(query)
+			resp.Rcode = dns.RcodeServerFailure
+			return resp, nil
+		}
+		reader = viewReader{view}
+	}
 	q := query.Question[0]
 	resp := new(dns.Msg)
 	resp.SetReply(query)
 	resp.Authoritative = true
 
+	if a.CompleteCNAME && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
+		return a.resolveChain(query, depth, reader), nil
+	}
+
 	// Exact {name, type} hit.
-	if rec, ok := a.store.Get(q.Name, q.Qtype); ok {
+	if rec, ok := reader.Get(q.Name, q.Qtype); ok {
 		resp.Answer = append(resp.Answer, recordToRRs(rec, q.Name, q.Qclass)...)
 		return resp, nil
 	}
 	// A CNAME at the name answers any other type (the requester re-queries the target).
 	if q.Qtype != dns.TypeCNAME {
-		if cn, ok := a.store.Get(q.Name, dns.TypeCNAME); ok {
+		if cn, ok := reader.Get(q.Name, dns.TypeCNAME); ok {
 			resp.Answer = append(resp.Answer, recordToRRs(cn, q.Name, q.Qclass)...)
 			return resp, nil
 		}
 	}
 	// No matching record: NODATA when the name exists for another type, else NXDOMAIN.
-	if a.store.HasName(q.Name) {
+	if reader.HasName(q.Name) {
 		resp.Rcode = dns.RcodeSuccess
 	} else {
 		resp.Rcode = dns.RcodeNameError
@@ -138,6 +161,13 @@ func init() {
 	if err := resolver.RegisterResolver(&descriptor.Descriptor{
 		Type: typeOfAuthoritative,
 		Filler: descriptor.Fillers{
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"CompleteCNAME"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"completeCNAME"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
+				},
+			},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"Store"},
 				ValueSource: descriptor.ValueSources{

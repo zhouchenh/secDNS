@@ -79,3 +79,7 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *Sequence) ResolverDependencies() []resolver.Resolver {
+	return append([]resolver.Resolver(nil), (*r)...)
+}

@@ -17,7 +17,7 @@ block for serving dynamic records such as ACME DNS-01 `_acme-challenge` TXT reco
 running a second daemon.
 
 Supported record types: `TXT`, `A`, `AAAA`, `CNAME`. A `CNAME` stored for a name is
-returned for a query of any other type (the requester re-queries the target). Answers are
+returned for a query of any other type by default (the requester re-queries the target). Answers are
 unsigned; DNSSEC signing, zone transfer (AXFR/IXFR), and dynamic DNS updates (RFC 2136) are
 out of scope.
 
@@ -44,6 +44,15 @@ downstream resolvers negatively cache an `NXDOMAIN`/`NODATA` answer. Accepts a n
 numeric string.
 
 Default: `60`
+
+> `completeCNAME`: Boolean _(Optional)_
+
+Default: `false`. When enabled, A/AAAA queries complete CNAME chains only within the same
+record store, preserving each record's TTL. Direct CNAME and other query types are unchanged.
+Traversal is limited to 16 aliases and the available resolver depth. Cycles, exhausted
+budgets and malformed or conflicting data return SERVFAIL without upstream fallback.
+Missing targets or target families return the chain alone, without inventing negative
+zone authority. See [the full behavior and concurrency limits](../configuration.md#optional-local-cname-completion).
 
 ## Notes
 

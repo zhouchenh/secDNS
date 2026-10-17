@@ -2,6 +2,33 @@
 
 secDNS uses JSON-based configurations. The top level structure of the configuration is shown below.
 
+Before replacing a configuration, run `secDNS -test -config path/to/config.json`.
+This runs the startup configuration checks and reads external rule files. Missing
+files, invalid domains reported by a rule provider, and other provider-reported
+errors return a nonzero exit status, even when some rules could be loaded. The first
+provider error identifies its index among loaded providers (which may differ from
+the JSON array index if the descriptor ignored an entry). The top-level `rules` array and each
+entry's provider type are checked, including rejection of unknown provider types.
+Other permissive descriptor behavior remains unchanged: this does not reject every
+ignored field or malformed nested entry. This is a one-shot preflight, not
+exhaustive schema validation.
+Validation does not bind listeners or send DNS queries, and does not modify
+the configuration. Success does not prove that a port is available, TLS credentials
+can be loaded at runtime, or an upstream server is reachable. Files can also change
+after validation, so this is not an atomic configuration update or reload.
+
+Normal startup retains its existing behavior of logging rule-provider errors and
+continuing with the rules that could be loaded. Use `-test` as a strict preflight
+when partial rule loading is unacceptable.
+
+Programmatic calls to `LoadConfig` and `ValidateConfig` serialize configuration
+construction, including external rule loading, so concurrent calls cannot share
+named-resolver bindings or inherit another call's validation errors. JSON reading
+and decoding occur before that serialization. Do not change process environment
+variables or register descriptor extensions concurrently with configuration work.
+This isolation does not add runtime reload or make the CLI's process-wide setup
+suitable for concurrent invocation within one process.
+
 ```json
 {
   "listeners": [],
@@ -181,7 +208,7 @@ Path to the config file to load. Pass `-` to read the configuration from standar
 
 > `-test`: Boolean _(Optional)_
 
-Load and validate the configuration, print `config: Syntax is OK`, and exit without serving. Use this to check a config before deploying.
+Load and validate the configuration, print `config: Startup checks passed; rule providers reported no errors`, and exit without serving. Use this to check a config before deploying.
 
 > `-version`: Boolean _(Optional)_
 
@@ -220,3 +247,17 @@ When `-config` is omitted, secDNS loads the first config it finds, in this order
 3. `config.json` in the current working directory.
 
 When `-config` is `-`, the configuration is read from standard input. When `-config` names a file that cannot be opened, secDNS reports the error and exits. On a successful load, secDNS logs the config source at info level.
+
+### Optional local CNAME completion
+
+An `authoritative` resolver may set `"completeCNAME": true` (default `false`). For A and AAAA queries, it follows CNAME targets only within its named record store and returns the chain plus any matching terminal address RRset. Each record retains its own TTL. Direct CNAME queries and other query types retain their existing behavior. This option makes no upstream queries.
+
+Traversal follows at most 16 aliases and also consumes one unit of the resolver depth budget per alias. Case-insensitive cycles, exhausted budgets, malformed targets, conflicting CNAME data, and invalid terminal address records produce SERVFAIL with no partial answers. The resolver returns this as a DNS response, so core does not fall through to its default upstream. CNAME owners must have one valid target and no other live RRsets.
+
+If a target is absent or has no requested address family, the existing chain is returned with NOERROR and no invented negative SOA. The store has no zone boundary model; this option does not infer that an absent target is authoritatively nonexistent. Direct negative lookups retain existing authority behavior. The default remains CNAME-only responses.
+
+Record values are copied on store input and output. Traversal reads a consistent snapshot for each owner, but concurrent changes across different owners are not one atomic zone snapshot. This feature adds neither persistence nor zone configuration, regex matching, DNSSEC signing, or a GUI.
+
+### Persistent record stores
+
+The optional top-level `recordStores` mapping binds named authority/admin stores to local SQLite files. The default remains in memory. See [record store configuration, startup and durability limits](record-stores.md).

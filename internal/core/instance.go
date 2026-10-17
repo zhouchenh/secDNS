@@ -109,6 +109,9 @@ func (i *instance) Listen(clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, s
 }
 
 func listen(s server.Server, r resolver.Resolver, resolutionDepth int, clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, serverErrorMsgHandler func(query *dns.Msg) *dns.Msg, errorHandler func(err error), wait *sync.WaitGroup) {
+	if binding, ok := s.(*server.Binding); ok {
+		r = binding.Resolver
+	}
 	s.Serve(func(query *dns.Msg) (reply *dns.Msg) {
 		if err := resolver.QueryCheck(query); err != nil {
 			handleIfError(err, errorHandler)

@@ -37,7 +37,8 @@ func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHa
 			reply = new(dns.Msg)
 			reply.SetRcode(query, dns.RcodeServerFailure)
 		}
-		if d.Protocol == "udp" {
+		switch d.Protocol {
+		case "udp", "udp4", "udp6":
 			reply = clampUDPResponse(reply, query)
 		}
 		handleIfError(w.WriteMsg(reply), errorHandler)

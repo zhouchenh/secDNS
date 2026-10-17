@@ -54,12 +54,12 @@ Default: `""` (the `default` store)
 
 > `token`: String _(Required)_
 
-Bearer token required on every request. The listener refuses to serve if this is empty.
+Bearer token required on every API request. The listener refuses to serve if this is empty.
 Use a long, random value and transport it over loopback or TLS-terminating infrastructure.
 
 ## Authentication
 
-Every endpoint requires `Authorization: Bearer <token>`. The token is compared in constant
+Every API endpoint requires `Authorization: Bearer <token>`. The token is compared in constant
 time. A missing or malformed header returns **401**; a present but incorrect token returns
 **403**.
 
@@ -81,13 +81,32 @@ Set or replace the record for a `{name, type}` (idempotent).
 
 * `type`: one of `TXT`, `A`, `AAAA`, `CNAME`.
 * `values`: non-empty array. For `A`/`AAAA` each value must be a valid address of the
-  matching family; for `CNAME` the first value is the target; for `TXT` each value is a
-  character-string.
+  matching family; for `CNAME` exactly one valid target is required; for `TXT` each value is a
+  character-string of at most 255 bytes (an empty string is valid, null is not).
 * `ttl_seconds`: DNS TTL served in answers (defaults to `60` when omitted/zero).
 * `expires_in_seconds` _(optional)_: store lifetime — the record is auto-removed after this
-  many seconds. Omit (or `0`) for no expiry. Must not be negative.
+  many seconds. Omit, use null, or use `0` for no expiry. Must be nonnegative and fit a Go duration.
 
-Returns `{"status": "ok"}`.
+* `expires_at` _(optional)_: absolute expiration as an RFC3339Nano string. Empty string or
+  null means no expiry. A nonempty timestamp must be in the future, including when the
+  store validates the mutation under its lock. The zero-time timestamp is not permanence.
+  Do not send both expiry fields, even if one is null or zero. Imports must omit already
+  expired records; do not turn them into permanent records.
+
+Owner names are trimmed, lowercased and fully qualified. IP strings are trimmed and
+canonicalized; CNAME targets are trimmed, lowercased and fully qualified. TXT values keep
+their original contents. Literal whitespace/control characters inside DNS names are
+invalid. Unknown request fields remain ignored, but duplicate recognized keys are rejected
+case-insensitively, consistently with accepted field spellings.
+
+Validation, future-expiry and CNAME-exclusivity checks are atomic with mutation for both
+memory and SQLite stores. A live CNAME cannot coexist with other live types at its owner;
+expired records do not block replacement. A failed request changes neither cached nor
+durable state. Direct internal memory Set remains permissive for compatibility, but the
+admin path always uses SetValidated. This is not compare-and-swap or multi-user conflict
+resolution; valid updates to the same name/type remain last-writer-wins.
+
+Returns `{"status": "ok"}` only after the mutation succeeds.
 
 > `DELETE {path}/records/{name}/{type}`
 
@@ -96,7 +115,7 @@ one was present.
 
 > `GET {path}/records`
 
-List the live (non-expired) records:
+List the live (non-expired) records. Expiry is emitted in UTC RFC3339Nano so an unchanged record can be echoed back without extending its expiry or losing fractional seconds. Permanent records omit expires_at:
 
 ```json
 {
@@ -108,7 +127,7 @@ List the live (non-expired) records:
 
 ## Errors
 
-Validation and auth failures return an HTTP status and a JSON body:
+Malformed/invalid records or expiry return **400**; a conflict with another live RRset at a CNAME owner returns **409**; storage or closed-store failures return generic **503**. Validation messages do not echo the submitted data. Authentication behavior is unchanged. Errors return an HTTP status and a JSON body:
 
 ```json
 {"error": "unsupported record type (allowed: TXT, A, AAAA, CNAME)"}
@@ -125,3 +144,35 @@ Validation and auth failures return an HTTP status and a JSON body:
    type: "TXT", values: [T], ttl_seconds: 60, expires_in_seconds: 1800}`.
 5. The CA resolves the challenge name, follows the `CNAME` to secDNS, and reads the `TXT`.
 6. On success the client `DELETE`s the record.
+
+## Optional records editor
+
+Set `"ui": true` in this listener configuration to enable the embedded editor at
+`{path}/ui/` (normally `/admin/ui/`). It is disabled by default. The HTML, JavaScript
+and CSS are public static assets without tokens or records; all record requests still
+require bearer authentication. The listener still refuses to start without a token.
+No external assets, telemetry or frontend package installation are used.
+
+Enter your admin token and select **Connect**. The page connects only to its own server;
+it does not connect automatically. The token is kept in page memory, sent only in the
+Authorization header, and cleared on Disconnect or page exit. Browser extensions and
+password managers remain outside the editor's control. Use a trusted browser over
+loopback or an appropriately protected HTTPS management connection.
+
+The editor supports local filtering, creating, editing and confirmed deletion. Owner
+and type are fixed during an edit; renaming requires a separate create and delete.
+Each value has its own field, including an empty TXT string. TTL is in seconds; zero
+uses the API default of 60 seconds. Expiration is separate from DNS TTL. **Keep existing
+expiration** sends the original timestamp unchanged, including nanoseconds. Choose
+**Permanent** explicitly to remove expiration, or set a new RFC3339 timestamp or relative
+number of seconds. Expired timestamps are rejected and drafts remain editable.
+
+Validation, conflict, authentication and storage errors are displayed without discarding
+the draft. A successful write followed by a failed refresh is reported separately;
+refresh before another mutation. If a connection fails after sending a mutation, inspect
+the refreshed list before retrying because the server may have completed it.
+
+This editor is intended for one operator at a time. There is no revision check or
+compare-and-swap protection: another writer can replace a record while it is being edited.
+**Saved** means the API accepted the write; restart persistence depends on the configured
+record store, not the editor. It does not provide import, zone management or deployment.

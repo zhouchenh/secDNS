@@ -98,3 +98,7 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
+func (r *FilterOutAIfAAAAPresents) ResolverDependencies() []resolver.Resolver {
+	return []resolver.Resolver{r.Resolver}
+}
