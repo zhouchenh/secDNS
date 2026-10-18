@@ -151,7 +151,7 @@ jobs:
               fi
             fi
             env "${build_env[@]}" go build -ldflags="-s -w" -o "${output_name}"
-            if ! upx --best --ultra-brute "${output_name}"; then
+            if ! upx "${output_name}"; then
               echo "UPX skipped for ${output_name} (unsupported format?)"
             fi
           done
