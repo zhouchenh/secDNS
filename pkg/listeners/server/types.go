@@ -3,12 +3,21 @@ package server
 import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
+	"net/netip"
 )
 
 type Server interface {
 	Type() descriptor.Type
 	TypeName() string
 	Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHandler func(err error))
+}
+
+// PeerServer is implemented by transports that can bind each query to the
+// address of the directly connected client. The address must come from the
+// transport socket, not from DNS payload metadata or forwarded headers.
+type PeerServer interface {
+	Server
+	ServePeer(handler func(query *dns.Msg, peer netip.Addr) (reply *dns.Msg), errorHandler func(err error))
 }
 
 var typeOfServer = descriptor.TypeOfNew(new(Server))

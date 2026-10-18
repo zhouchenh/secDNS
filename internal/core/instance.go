@@ -7,9 +7,11 @@ import (
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Instance interface {
@@ -109,22 +111,53 @@ func (i *instance) Listen(clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, s
 }
 
 func listen(s server.Server, r resolver.Resolver, resolutionDepth int, clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, serverErrorMsgHandler func(query *dns.Msg) *dns.Msg, errorHandler func(err error), wait *sync.WaitGroup) {
+	defer wait.Done()
 	if binding, ok := s.(*server.Binding); ok {
+		if binding.Resolver != nil && binding.PeerResolver != nil {
+			handleIfError(ErrInvalidListenerBinding, errorHandler)
+			return
+		}
+		if binding.PeerResolver != nil {
+			peerServer, ok := binding.Server.(server.PeerServer)
+			if !ok {
+				handleIfError(ErrInvalidListenerBinding, errorHandler)
+				return
+			}
+			peerServer.ServePeer(func(query *dns.Msg, peer netip.Addr) *dns.Msg {
+				if !peer.IsValid() || peer.Zone() != "" {
+					handleIfError(server.ErrPeerUnavailable, errorHandler)
+					return serverErrorMsgHandler(query)
+				}
+				selected, err := binding.PeerResolver.ResolverFor(peer.Unmap(), time.Now())
+				if err != nil || selected == nil {
+					if err == nil {
+						err = server.ErrResolverSelection
+					}
+					handleIfError(err, errorHandler)
+					return serverErrorMsgHandler(query)
+				}
+				return resolveQuery(query, selected, resolutionDepth, clientErrorMsgHandler, serverErrorMsgHandler, errorHandler)
+			}, errorHandler)
+			return
+		}
 		r = binding.Resolver
 	}
 	s.Serve(func(query *dns.Msg) (reply *dns.Msg) {
-		if err := resolver.QueryCheck(query); err != nil {
-			handleIfError(err, errorHandler)
-			return clientErrorMsgHandler(query)
-		}
-		reply, err := r.Resolve(query, resolutionDepth)
-		if err != nil {
-			handleIfError(err, errorHandler)
-			return serverErrorMsgHandler(query)
-		}
-		return
+		return resolveQuery(query, r, resolutionDepth, clientErrorMsgHandler, serverErrorMsgHandler, errorHandler)
 	}, errorHandler)
-	wait.Done()
+}
+
+func resolveQuery(query *dns.Msg, r resolver.Resolver, resolutionDepth int, clientErrorMsgHandler func(query *dns.Msg) *dns.Msg, serverErrorMsgHandler func(query *dns.Msg) *dns.Msg, errorHandler func(err error)) (reply *dns.Msg) {
+	if err := resolver.QueryCheck(query); err != nil {
+		handleIfError(err, errorHandler)
+		return clientErrorMsgHandler(query)
+	}
+	reply, err := r.Resolve(query, resolutionDepth)
+	if err != nil {
+		handleIfError(err, errorHandler)
+		return serverErrorMsgHandler(query)
+	}
+	return
 }
 
 func (i *instance) Type() descriptor.Type {

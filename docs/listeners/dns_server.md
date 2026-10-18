@@ -4,6 +4,10 @@
 
 The `dnsServer` listener listens for DNS queries and sends back answers over classic DNS transports (UDP or TCP).
 Configure one entry per transport if you want to listen on both UDP and TCP (as in the sample `config.json`).
+The outer listener entry may select one fixed `resolver`, or opt into the
+socket-peer `sourcePolicyRole` described in [listener resolution
+policies](../listener-resolution-policies.md). Those fields are mutually
+exclusive and are outside the `config` object below.
 
 ## ListenerConfigObject
 

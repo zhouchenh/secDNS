@@ -52,20 +52,36 @@ func bindListeners(raw interface{}, config *Config) (bool, error) {
 	}
 	entries, array := root["listeners"].([]interface{})
 	selectionPresent := false
+	sourceRolePresent := false
 	for _, entry := range entries {
 		if m, ok := entry.(map[string]interface{}); ok {
 			if _, present := m["resolver"]; present {
 				selectionPresent = true
 			}
+			if _, present := m["sourcePolicyRole"]; present {
+				sourceRolePresent = true
+			}
 		}
 	}
+	rawSourcePolicy, sourcePolicyPresent := root["sourcePolicy"]
 	// Legacy descriptors retain their own permissive behavior when the new
 	// listener binding feature is absent. Policy graph validation happens later.
-	if !selectionPresent {
+	if !selectionPresent && !sourceRolePresent && !sourcePolicyPresent {
 		return enabled, nil
 	}
 	if !array || len(entries) != len(config.Listeners) {
 		return false, ErrListenerBinding
+	}
+	if sourceRolePresent != sourcePolicyPresent {
+		return false, ErrSourcePolicyConfig
+	}
+	if sourcePolicyPresent {
+		parsed, err := parseSourcePolicy(rawSourcePolicy, config.Resolvers)
+		if err != nil {
+			return false, err
+		}
+		config.sourcePolicy = parsed
+		enabled = true
 	}
 	for index, entry := range entries {
 		m, ok := entry.(map[string]interface{})
@@ -73,7 +89,29 @@ func bindListeners(raw interface{}, config *Config) (bool, error) {
 			return false, ErrListenerBinding
 		}
 		selection, present := m["resolver"]
+		roleValue, rolePresent := m["sourcePolicyRole"]
+		if present && rolePresent {
+			return false, ErrSourcePolicyConfig
+		}
 		if !present {
+			if !rolePresent {
+				continue
+			}
+			kind, _ := m["type"].(string)
+			if kind != "dnsServer" {
+				return false, ErrSourcePolicyConfig
+			}
+			role, ok := roleValue.(string)
+			if !ok || config.sourcePolicy == nil {
+				return false, ErrSourcePolicyConfig
+			}
+			if _, ok := config.sourcePolicy.roles[role]; !ok {
+				return false, ErrSourcePolicyConfig
+			}
+			config.Listeners[index] = &server.Binding{
+				Server:       config.Listeners[index],
+				PeerResolver: &sourcePeerResolver{policy: config.sourcePolicy, role: role},
+			}
 			continue
 		}
 		enabled = true

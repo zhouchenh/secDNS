@@ -3,9 +3,10 @@ package core
 import "errors"
 
 var (
-	ErrNilErrorMsgHandler = NilPointerError("error message handler")
-	ErrNilDefaultResolver = NilPointerError("default resolver")
-	ErrInvalidDomainName  = errors.New("core: Invalid domain name")
+	ErrNilErrorMsgHandler     = NilPointerError("error message handler")
+	ErrNilDefaultResolver     = NilPointerError("default resolver")
+	ErrInvalidDomainName      = errors.New("core: Invalid domain name")
+	ErrInvalidListenerBinding = errors.New("core: invalid listener resolver binding")
 )
 
 type NilPointerError string
