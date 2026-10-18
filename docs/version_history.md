@@ -1,5 +1,27 @@
 # Version History
 
+## v1.9.1 - 2026.10.18
+
+Restore Cross-platform Daemon Builds
+
+This release fixes the optional authentication store's unconditional SQLite dependency,
+which prevented v1.9.0 from building on 20 of the existing 46 daemon asset targets.
+The v1.9.0 tag remains immutable; its release workflow failed before publishing any assets.
+
+All 46 daemon targets are preserved. Authentication stores now use the same supported
+platform boundary as record stores: Darwin amd64/arm64; FreeBSD amd64/arm64; Linux
+386/amd64/arm/arm64/loong64/ppc64le/riscv64/s390x; Windows 386/amd64/arm64.
+Android and iOS are excluded from SQLite-backed authentication support. On unsupported
+platforms, opt-in auth key/store creation, opening and offline migrations fail explicitly
+before filesystem effects. Configurations without an auth-store binding retain legacy
+administration; there is no memory-store or unauthenticated fallback.
+
+The 49-asset packaging contract is unchanged: 46 daemon binaries plus the Linux amd64,
+Linux arm64 and Windows amd64 offline adminauth helpers. All 46 daemon targets were built
+locally before this follow-up release. Human/agent/passkey behavior and explicit offline
+auth-schema migrations remain as documented below; no running instance is upgraded or
+initialized by these source changes.
+
 ## v1.9.0 - 2026.10.18
 
 Opt-in Human and Agent Administration
@@ -35,7 +57,7 @@ its matching key together as a private offline backup. Older binaries cannot ope
 schemas. Reconcile uncertain outcomes before retrying; never blindly replay a migration.
 Record databases, user DNS records and snapshot synchronization are outside these migrations.
 
-The release publishes 49 assets: the unchanged 46 `secDNS` daemon binaries plus
+The intended packaging (not published for v1.9.0) contains 49 assets: the unchanged 46 `secDNS` daemon binaries plus
 `secdns-adminauth-linux-amd64`, `secdns-adminauth-linux-arm64`, and
 `secdns-adminauth-windows-amd64.exe`. The helper is local/offline administration tooling,
 not an HTTP service or remote credential-management endpoint. Other helper platforms can
