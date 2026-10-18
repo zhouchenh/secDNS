@@ -92,6 +92,12 @@ type Decision struct {
 	CachePartition   SelectionCachePartition
 }
 
+// Explainer is the read-only selection surface used by management previews.
+// It cannot resolve a DNS query or access policy resolver instances.
+type Explainer interface {
+	Select(listenerRole string, peer netip.Addr, now time.Time) (Decision, error)
+}
+
 type compiledMember struct {
 	expiresAt time.Time
 }

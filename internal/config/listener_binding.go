@@ -63,16 +63,23 @@ func bindListeners(raw interface{}, config *Config) (bool, error) {
 			}
 		}
 	}
+	explainBinders := make([]sourcePolicyExplainBinder, 0, 1)
+	for _, listener := range config.Listeners {
+		if binder, ok := listener.(sourcePolicyExplainBinder); ok && binder.SourcePolicyExplainEnabled() {
+			explainBinders = append(explainBinders, binder)
+		}
+	}
+	explainPresent := len(explainBinders) > 0
 	rawSourcePolicy, sourcePolicyPresent := root["sourcePolicy"]
 	// Legacy descriptors retain their own permissive behavior when the new
 	// listener binding feature is absent. Policy graph validation happens later.
-	if !selectionPresent && !sourceRolePresent && !sourcePolicyPresent {
+	if !selectionPresent && !sourceRolePresent && !sourcePolicyPresent && !explainPresent {
 		return enabled, nil
 	}
 	if !array || len(entries) != len(config.Listeners) {
 		return false, ErrListenerBinding
 	}
-	if sourceRolePresent != sourcePolicyPresent {
+	if (sourceRolePresent || explainPresent) != sourcePolicyPresent {
 		return false, ErrSourcePolicyConfig
 	}
 	if sourcePolicyPresent {
@@ -82,6 +89,11 @@ func bindListeners(raw interface{}, config *Config) (bool, error) {
 		}
 		config.sourcePolicy = parsed
 		enabled = true
+		for _, binder := range explainBinders {
+			if !binder.BindSourcePolicySelector(parsed.selector) {
+				return false, ErrSourcePolicyConfig
+			}
+		}
 	}
 	for index, entry := range entries {
 		m, ok := entry.(map[string]interface{})

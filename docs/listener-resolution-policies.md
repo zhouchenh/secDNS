@@ -125,6 +125,23 @@ This source selector is local configuration only. It does not import address
 lists, accept address ranges, reload policy, authenticate a source inventory,
 configure interfaces or routes, or change network egress.
 
+### Offline selection explanation
+
+An existing `httpAdminServer` can opt into `sourcePolicyExplain` to expose a
+bearer-authenticated `POST {path}/source-policy/explain` diagnostic. It receives
+only the compiled immutable selector. A strict, bounded request supplies a
+synthetic client address, listener role, and explicit evaluation instant; the
+response reports the fingerprint, selected resolver, matched source-set/rule or
+explicit-default reason. It never receives resolver objects and performs no DNS,
+cache, upstream, router, store, or configuration operation.
+
+The requested instant is a hypothetical diagnostic preview, not the clock value
+used by any real query and not evidence of a runtime result. The endpoint does not
+accept a name or record type because source selection is independent of both. It
+does not enumerate source-set membership. Enabling explain without a complete
+top-level source policy fails configuration loading; omission preserves the
+existing admin surface.
+
 ## Caches and DNS64 limits
 
 Use distinct cache objects above different final-answer policies. Never share a

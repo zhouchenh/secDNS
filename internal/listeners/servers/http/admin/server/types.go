@@ -20,6 +20,7 @@ import (
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/recordstore"
+	"github.com/zhouchenh/secDNS/internal/sourcepolicy"
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 )
 
@@ -41,9 +42,13 @@ type HTTPAdminServer struct {
 	Store  string // shared store name; empty joins recordstore.DefaultName
 	Token  string // bearer token; required (the listener fails closed without it)
 	UI     bool   // optional embedded records editor; disabled by default
+	// SourcePolicyExplain enables the authenticated, read-only offline selector
+	// preview. Configuration binding supplies the immutable selector before Serve.
+	SourcePolicyExplain bool
 
-	store     *recordstore.Store
-	versioned *recordstore.VersionedStore
+	store                *recordstore.Store
+	versioned            *recordstore.VersionedStore
+	sourcePolicySelector sourcepolicy.Explainer
 }
 
 var typeOfHTTPAdminServer = descriptor.TypeOfNew(new(*HTTPAdminServer))
@@ -81,6 +86,9 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
+	if h.SourcePolicyExplain {
+		h.sourcePolicyExplainRoutes(mux, base)
+	}
 	if h.UI {
 		h.routerOSPreviewRoutes(mux, base)
 	}
@@ -396,6 +404,13 @@ func init() {
 				ObjectPath: descriptor.Path{"UI"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"ui"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"SourcePolicyExplain"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"sourcePolicyExplain"}, AssignableKind: descriptor.KindBool},
 					descriptor.DefaultValue{Value: false},
 				},
 			},
