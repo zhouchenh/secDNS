@@ -19,14 +19,17 @@ type agentBinding struct {
 	sessions *adminauth.Sessions
 	origin   string
 	now      func() time.Time
+	human    *adminauth.HumanAuth
 }
 type actorKey struct{}
 
 func (h *HTTPAdminServer) BindAgentAuth(store *adminauth.Store, origin string) {
-	h.agent = &agentBinding{store, adminauth.NewSessions(store), origin, time.Now}
+	sessions := adminauth.NewSessions(store)
+	h.agent = &agentBinding{store: store, sessions: sessions, origin: origin, now: time.Now, human: adminauth.NewHumanAuth(store, sessions)}
 }
 func (h *HTTPAdminServer) ClearAgentAuth() {
 	if h.agent != nil {
+		h.agent.human.Close()
 		h.agent.sessions.Close()
 	}
 }
@@ -44,11 +47,14 @@ func authenticationError(w http.ResponseWriter, e error) {
 
 // HTTPAdminServer refuses follower bindings; node role is independent of agent scopes.
 func actorJSON(a adminauth.Actor) map[string]any {
-	return map[string]any{"record_role": "writable_authority", "principal_type": "agent", "principal_id": a.ID(), "display_name": a.DisplayName(), "realm_id": a.RealmID(), "node_id": a.NodeID(), "scopes": a.Scopes()}
+	return map[string]any{"record_role": "writable_authority", "principal_type": a.Kind(), "principal_id": a.ID(), "display_name": a.DisplayName(), "realm_id": a.RealmID(), "node_id": a.NodeID(), "scopes": a.Scopes()}
 }
 func sessionJSON(i adminauth.SessionInfo) map[string]any {
 	m := actorJSON(i.Actor)
 	m["csrf"] = i.CSRF
+	if i.Actor.Kind() == "human" {
+		m["authenticated_at"] = i.AuthenticatedAt.UTC().Format(time.RFC3339)
+	}
 	m["expires_at"] = i.ExpiresAt.UTC().Format(time.RFC3339)
 	m["idle_expires_at"] = i.IdleExpiresAt.UTC().Format(time.RFC3339)
 	return m
@@ -202,12 +208,20 @@ func (h *HTTPAdminServer) agentRoutes(mux *http.ServeMux, base string) {
 			out["public_origin"] = h.agent.origin
 			out["realm_name"] = id.DisplayName
 			out["node_id"] = id.NodeID
+			if secure && h.agent.store.HumanEnabled() {
+				ready, e := h.agent.store.HumanReady()
+				if e == nil {
+					out["human_access"] = true
+					out["setup_required"] = !ready
+				}
+			}
 		}
 		writeJSON(w, 200, out)
 	})
 	if !h.AgentAuthConfigured {
 		return
 	}
+	h.humanRoutes(mux, base)
 	mux.HandleFunc("POST "+base+"/auth/agent-session", func(w http.ResponseWriter, r *http.Request) {
 		if h.agent == nil {
 			agentError(w, 503, "auth_unavailable")

@@ -2,8 +2,8 @@
   "use strict";
   const script = new URL(document.currentScript.src);
   const base = new URL("../", script);
-  let allowedOrigin=false;
-  let actor = null, csrf = "", epoch = 0, timer = null;
+  let allowedOrigin=false, publicState=null;
+  let actor = null, csrf = "", epoch = 0, timer = null, warningTimer=null;
   const panel = document.createElement("section"); panel.className = "card"; panel.hidden = true;
   const title = document.createElement("h2"); title.textContent = "Agent access";
   const description = document.createElement("p"); description.textContent = "Use a named agent credential. Its permissions remain separate from human administration.";
@@ -14,9 +14,10 @@
   const identity = document.createElement("p"); identity.id = "agent-identity"; identity.hidden = true;
   const logout = document.createElement("button"); logout.type = "button"; logout.textContent = "Sign out agent"; logout.hidden = true;
   form.append(label,input,button); panel.append(title,description,form,note); const login=document.getElementById("login");if(login)login.before(panel);else document.querySelector("main")?.prepend(panel);
-  document.querySelector("header")?.append(identity,logout);
+  const warning=document.createElement("p");warning.id="auth-session-warning";warning.role="status";warning.setAttribute("aria-live","polite");
+  document.querySelector("header")?.append(identity,logout,warning);
   const fire = name => window.dispatchEvent(new Event(name));
-  const localClear = () => { epoch++; actor = null; csrf = ""; input.value = ""; identity.textContent = ""; identity.hidden = logout.hidden = true; form.hidden = false; clearTimeout(timer); };
+  const localClear = () => { epoch++; actor = null; csrf = ""; input.value = ""; identity.textContent = ""; identity.hidden = logout.hidden = true; form.hidden = false;panel.hidden=!allowedOrigin; clearTimeout(timer);clearTimeout(warningTimer);warning.textContent=""; };
   async function api(path, options = {}) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -28,14 +29,18 @@
     } finally {clearTimeout(timeout);}
   }
   function accept(data) {
-    if(!Number.isFinite(Date.parse(data.expires_at))||!Number.isFinite(Date.parse(data.idle_expires_at))||data.record_role!=="writable_authority"||data.principal_type!=="agent"||typeof data.csrf!=="string"||!Array.isArray(data.scopes)||!data.scopes.includes("ui:view"))throw new Error("Unexpected authentication response.");
-    actor=data;csrf=data.csrf;form.hidden=true;identity.hidden=logout.hidden=false;
-    identity.textContent=`Agent · ${data.display_name} · realm ${data.realm_id} · node ${data.node_id} · Writable authority | ${data.scopes.join(" · ")} · expires ${new Date(Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))).toISOString()}`;
+    if(!Number.isFinite(Date.parse(data.expires_at))||!Number.isFinite(Date.parse(data.idle_expires_at))||data.record_role!=="writable_authority"||!["agent","human"].includes(data.principal_type)||typeof data.csrf!=="string"||!Array.isArray(data.scopes)||!data.scopes.includes("ui:view"))throw new Error("Unexpected authentication response.");
+    actor=data;csrf=data.csrf;panel.hidden=data.principal_type==="human";logout.textContent=data.principal_type==="human"?"Sign out":"Sign out agent";form.hidden=true;identity.hidden=logout.hidden=false;
+    identity.textContent=`${data.principal_type==="human"?"Human":"Agent"} · ${data.display_name} · realm ${data.realm_id} · node ${data.node_id} · Writable authority | ${data.scopes.join(" · ")} · expires ${new Date(Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))).toISOString()}`;
     clearTimeout(timer);const remaining=Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))-Date.now();
+    clearTimeout(warningTimer);warning.textContent="";if(data.principal_type==="human")warningTimer=setTimeout(()=>{warning.textContent="Your session expires in two minutes. Continue working or sign in again; local drafts are preserved.";},Math.max(0,remaining-120000));
     timer=setTimeout(()=>{localClear();note.textContent="Session expired. Sign in again; local work is preserved.";fire("agentexpired");},Math.max(0,remaining));
   }
   window.secDNSAgent={
+    get state(){return publicState;},
     get active(){return actor!==null;},
+    get kind(){return actor?.principal_type || "";},
+    acceptSession(data){if(!allowedOrigin)throw new Error("Secure origin required.");accept(data);fire("agentconnected");},
     get name(){return actor?.display_name || "";},
     allows(scope){return !actor || (actor.scopes.includes(scope)&&(scope!=="records:write"||actor.record_role==="writable_authority"));},
     headers(token,method){return actor ? (method==="GET"?{}:{"X-SecDNS-CSRF":csrf,"Content-Type":"application/json"}) : {Authorization:"Bearer "+token,"X-SecDNS-Legacy-Access":"1"};},
@@ -70,5 +75,5 @@
   window.addEventListener("pointerdown",activity);window.addEventListener("keydown",activity);
   window.addEventListener("pagehide",localClear);
   const initialEpoch=epoch;
-  api("state",{credentials:"omit"}).then(state=>{allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;panel.hidden=!allowedOrigin;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(()=>{});}).catch(()=>{});
+  api("state",{credentials:"omit"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;panel.hidden=!allowedOrigin;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(()=>{});}).catch(()=>{});
 })();

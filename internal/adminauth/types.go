@@ -99,6 +99,7 @@ func subset(a, b []Scope) bool {
 type Actor struct {
 	id, realm, node, name string
 	permissions           []Scope
+	humanEpoch            int64
 }
 
 func (a Actor) ID() string          { return a.id }
@@ -108,6 +109,9 @@ func (a Actor) DisplayName() string { return a.name }
 func (a Actor) Kind() string {
 	if a.id == "" {
 		return ""
+	}
+	if a.humanEpoch > 0 {
+		return "human"
 	}
 	return "agent"
 }
