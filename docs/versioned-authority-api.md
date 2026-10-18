@@ -25,6 +25,8 @@ Each authoritative invocation pins one immutable generation and one expiry insta
 
 The existing admin bearer authentication protects `GET` and `POST <base>/snapshot`. Keep admin traffic on a protected management path; this change adds no transport encryption. GET returns the complete canonical envelope, including retained expired entries and the decimal-string revision.
 
+Every successful GET includes a strong `ETag` bound to the complete response representation: canonical ruleset, lineage, revision, content and any operator-supplied provenance headers. An authenticated `If-None-Match` request uses standard weak comparison, list and wildcard semantics; a match returns `304 Not Modified` with the current ETag and provenance headers and no body. Authentication is evaluated before the validator. A stale or malformed validator receives the ordinary `200` snapshot. The ETag is only a bandwidth validator: clients must still validate and apply every `200` envelope through their enrolled follower ordering rules, and a `304` is not an authentication, signature, convergence or freshness proof beyond that request.
+
 POST replaces the entire exact record set atomically:
 
 ```json
