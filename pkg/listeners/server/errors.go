@@ -1,5 +1,12 @@
 package server
 
+import "errors"
+
+var (
+	ErrPeerUnavailable   = errors.New("listeners/server: client peer unavailable")
+	ErrResolverSelection = errors.New("listeners/server: resolver selection unavailable")
+)
+
 type NotRegistrableError string
 
 func (e NotRegistrableError) Error() string {

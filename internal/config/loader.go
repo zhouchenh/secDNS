@@ -155,10 +155,18 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	if selected {
 		for _, listener := range config.Listeners {
 			if binding, ok := listener.(*server.Binding); ok {
-				roots = append(roots, binding.Resolver)
+				if binding.Resolver != nil {
+					roots = append(roots, binding.Resolver)
+				}
+				if binding.PeerResolver != nil {
+					roots = append(roots, binding.PeerResolver.ResolverDependencies()...)
+				}
 			}
 		}
 		if err := validateResolverGraph(roots); err != nil {
+			return nil, err
+		}
+		if err := validateSourcePolicyCacheIsolation(config.sourcePolicy); err != nil {
 			return nil, err
 		}
 	}

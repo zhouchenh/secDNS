@@ -68,16 +68,72 @@ Policy collections reject malformed entries rather than partially loading.
 Other providers retain their existing parsing semantics, but reported provider
 errors are fatal in opt-in loads. This is not a strict schema validator for all
 legacy resolver and provider fields. There is no hot reload, mutable generation
-pinning, client-address selector, or cluster synchronization in this feature.
+pinning or cluster synchronization in this feature.
+
+## Client source selection for DNS listeners
+
+A DNS UDP or TCP listener may opt into the top-level `sourcePolicy` with an outer
+`sourcePolicyRole`. The policy maps the directly connected socket peer to one of
+the existing named resolver graphs. The listener cannot also have an outer
+`resolver`; omitting `sourcePolicy` and `sourcePolicyRole` retains the legacy
+listener behavior exactly.
+
+```json
+{
+  "listeners":[
+    {"type":"dnsServer","sourcePolicyRole":"normal","config":{"listen":"127.0.0.1","port":1053,"protocol":"udp"}}
+  ],
+  "resolvers":{"cache":{
+    "ordinary-cache":{"resolver":{"type":"address","config":"192.0.2.10"},"maxEntries":1024},
+    "special-cache":{"resolver":{"type":"address","config":"192.0.2.20"},"maxEntries":1024}
+  }},
+  "sourcePolicy":{
+    "sourceSets":[
+      {"id":"special-clients","members":[{"prefix":"127.0.0.2/32","expiresAt":"2099-01-01T00:00:00Z"}]}
+    ],
+    "rules":[
+      {"listenerRole":"normal","sourceSet":"special-clients","resolver":"special-cache"}
+    ],
+    "defaults":[
+      {"listenerRole":"normal","resolver":"ordinary-cache"}
+    ]
+  },
+  "rules":[],
+  "defaultResolver":"ordinary-cache"
+}
+```
+
+Rule order is significant: the first source set that contains the peer wins.
+Members are CIDR prefixes and an optional RFC 3339 `expiresAt`; a member is
+inactive at and after that instant. IPv4-mapped peers are treated as IPv4. A
+valid peer that matches no active member uses the role's required explicit
+default. Missing socket identity, a zone-qualified address, an unknown role, an
+unknown resolver reference, partial opt-in, or use on a non-DNS listener fails
+closed. EDNS Client Subnet and HTTP or proxy headers are never client identity.
+The request pins one clock instant and performs selection before calling a
+resolver or looking in a cache.
+
+Each distinct resolver name used by a source policy must reach a disjoint set of
+concrete `cache` resolver objects. Configuration loading walks initialized named
+resolver dependencies and rejects a cache shared by two different source-policy
+resolver names. Reusing one resolver name in several rules or roles is allowed.
+This conservative rule avoids cross-policy final answers without changing the
+legacy cache-key format. Use separate named cache objects even when their
+downstream resolvers are otherwise equivalent.
+
+This source selector is local configuration only. It does not import address
+lists, accept address ranges, reload policy, authenticate a source inventory,
+configure interfaces or routes, or change network egress.
 
 ## Caches and DNS64 limits
 
 Use distinct cache objects above different final-answer policies. Never share a
 final synthesized-answer cache with the ordinary listener. A cache below a shared
 ordinary graph can be reused because it contains the same ordinary answers for
-both roles. The loader does not automatically insert caches or verify operator
-intent; each resolver object has one fixed graph. Future source-address policy
-selection would need its own cache/context contract; ECS is not client identity.
+both fixed listener graphs. The loader does not automatically insert caches;
+each resolver object has one fixed graph. The stricter client source contract
+above rejects shared concrete cache objects across distinct selected resolver
+names. ECS is not client identity.
 
 The existing DNS64 implementation embeds IPv4 in the final 32 bits of a /96
 prefix. With `ignoreExistingAAAA:false`, native AAAA and non-NOERROR responses are
@@ -91,5 +147,6 @@ separate until independently validated.
 Tests exercise real loopback UDP/TCP listeners in isolated child processes on
 both IP families, shared ordinary and isolated synthesized caches in both query
 orders and concurrently, native IPv6 preservation, and an exclusion rule. Each
-child is terminated and waited for by its owning test. No external DNS service is
-used.
+child is terminated and waited for by its owning test. Source-policy transport
+tests send the same question from two IPv4 loopback peers through disjoint caches
+in both orders and concurrently. No external DNS service is used.

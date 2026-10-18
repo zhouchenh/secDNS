@@ -15,6 +15,7 @@ type Config struct {
 	Rules           []provider.Provider
 	DefaultResolver resolver.Resolver
 	ResolutionDepth int
+	sourcePolicy    *parsedSourcePolicy
 }
 
 var typeOfConfig = descriptor.TypeOfNew(new(*Config))

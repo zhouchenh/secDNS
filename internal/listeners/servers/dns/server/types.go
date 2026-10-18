@@ -7,6 +7,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"net"
+	"net/netip"
 	"strconv"
 )
 
@@ -31,8 +32,31 @@ func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHa
 		handleIfError(ErrNilHandler, errorHandler)
 		return
 	}
+	d.serve(func(_ dns.ResponseWriter, query *dns.Msg) *dns.Msg {
+		return safeHandle(handler, query, errorHandler)
+	}, errorHandler)
+}
+
+// ServePeer is the peer-aware DNS transport seam. It derives the address only
+// from miekg/dns's socket-backed ResponseWriter. An unrecognized, nil, or
+// zone-qualified address is passed as the zero Addr so policy integration can
+// fail closed rather than trust text supplied by a request.
+func (d *DNSServer) ServePeer(handler func(query *dns.Msg, peer netip.Addr) (reply *dns.Msg), errorHandler func(err error)) {
+	if handler == nil {
+		handleIfError(ErrNilHandler, errorHandler)
+		return
+	}
+	d.serve(func(w dns.ResponseWriter, query *dns.Msg) *dns.Msg {
+		peer := peerAddress(w.RemoteAddr())
+		return safeHandle(func(query *dns.Msg) *dns.Msg {
+			return handler(query, peer)
+		}, query, errorHandler)
+	}, errorHandler)
+}
+
+func (d *DNSServer) serve(handler func(w dns.ResponseWriter, query *dns.Msg) *dns.Msg, errorHandler func(err error)) {
 	handleIfError(dns.ListenAndServe(net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), d.Protocol, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
-		reply := safeHandle(handler, query, errorHandler)
+		reply := handler(w, query)
 		if reply == nil {
 			reply = new(dns.Msg)
 			reply.SetRcode(query, dns.RcodeServerFailure)
@@ -43,6 +67,33 @@ func (d *DNSServer) Serve(handler func(query *dns.Msg) (reply *dns.Msg), errorHa
 		}
 		handleIfError(w.WriteMsg(reply), errorHandler)
 	})), errorHandler)
+}
+
+func peerAddress(address net.Addr) netip.Addr {
+	var ip net.IP
+	var zone string
+	switch value := address.(type) {
+	case *net.UDPAddr:
+		if value == nil {
+			return netip.Addr{}
+		}
+		ip, zone = value.IP, value.Zone
+	case *net.TCPAddr:
+		if value == nil {
+			return netip.Addr{}
+		}
+		ip, zone = value.IP, value.Zone
+	default:
+		return netip.Addr{}
+	}
+	if zone != "" {
+		return netip.Addr{}
+	}
+	peer, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return netip.Addr{}
+	}
+	return peer.Unmap()
 }
 
 // safeHandle runs handler(query), converting a panic in the resolver tree into a nil

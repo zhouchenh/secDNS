@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/miekg/dns"
 	"net"
 	"os"
@@ -144,5 +145,116 @@ func TestListenerPolicyDualStackTransports(t *testing.T) {
 				concurrent.Wait()
 			})
 		}
+	}
+}
+
+func TestSourcePolicyDualClientTransportAndCacheIsolation(t *testing.T) {
+	for _, protocol := range []string{"udp", "tcp"} {
+		t.Run(protocol, func(t *testing.T) {
+			var port int
+			if protocol == "udp" {
+				listener, err := net.ListenPacket("udp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				port = listener.LocalAddr().(*net.UDPAddr).Port
+				listener.Close()
+			} else {
+				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				port = listener.Addr().(*net.TCPAddr).Port
+				listener.Close()
+			}
+
+			var config map[string]any
+			if err := json.Unmarshal([]byte(sourceSelectedConfig), &config); err != nil {
+				t.Fatal(err)
+			}
+			config["listeners"] = []any{map[string]any{
+				"type": "dnsServer", "sourcePolicyRole": "normal",
+				"config": map[string]any{"listen": "127.0.0.1", "port": port, "protocol": protocol},
+			}}
+			raw, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(executable, "-test.run=^TestListenerPolicyTransportHelper$")
+			cmd.Env = append(os.Environ(), "SECDNS_POLICY_TEST_CONFIG="+string(raw))
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+			endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+			ask := func(source string) (*dns.Msg, error) {
+				var local net.Addr
+				if protocol == "udp" {
+					local = &net.UDPAddr{IP: net.ParseIP(source)}
+				} else {
+					local = &net.TCPAddr{IP: net.ParseIP(source)}
+				}
+				client := &dns.Client{Net: protocol, Timeout: 300 * time.Millisecond, Dialer: &net.Dialer{LocalAddr: local}}
+				query := new(dns.Msg)
+				query.SetQuestion("same.invalid.", dns.TypeA)
+				deadline := time.Now().Add(5 * time.Second)
+				var lastErr error
+				for {
+					answer, _, err := client.Exchange(query, endpoint)
+					if err == nil {
+						return answer, nil
+					}
+					lastErr = err
+					if time.Now().After(deadline) {
+						return nil, lastErr
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+			assertAddress := func(source, want string) error {
+				answer, err := ask(source)
+				if err != nil {
+					return err
+				}
+				if answer.Rcode != dns.RcodeSuccess || len(answer.Answer) != 1 {
+					return fmt.Errorf("source %s: %v", source, answer)
+				}
+				record, ok := answer.Answer[0].(*dns.A)
+				if !ok || record.A.String() != want {
+					return fmt.Errorf("source %s: %v", source, answer.Answer)
+				}
+				return nil
+			}
+
+			// Reversing request order proves neither cache can satisfy the other
+			// policy's identical question.
+			for _, pair := range [][2]string{{"127.0.0.1", "192.0.2.10"}, {"127.0.0.2", "192.0.2.20"}, {"127.0.0.2", "192.0.2.20"}, {"127.0.0.1", "192.0.2.10"}} {
+				if err := assertAddress(pair[0], pair[1]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var group sync.WaitGroup
+			for n := 0; n < 8; n++ {
+				group.Add(1)
+				go func(index int) {
+					defer group.Done()
+					if index%2 == 0 {
+						if err := assertAddress("127.0.0.1", "192.0.2.10"); err != nil {
+							t.Error(err)
+						}
+					} else {
+						if err := assertAddress("127.0.0.2", "192.0.2.20"); err != nil {
+							t.Error(err)
+						}
+					}
+				}(n)
+			}
+			group.Wait()
+		})
 	}
 }
