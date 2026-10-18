@@ -21,7 +21,11 @@ const previewSource = "/ip dns static\r\n" +
 	"add regexp=\"^host\\\\.invalid\\$\" type=FWD forward-to=forward.invalid ttl=1h disabled=no match-subdomain=yes\r\n"
 
 func previewRequest(h *HTTPAdminServer, reader io.Reader, token string, headers http.Header) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("POST", h.basePath()+"/import/routeros/preview", reader)
+	return previewRequestAt(h, h.basePath()+"/import/routeros/preview", reader, token, headers)
+}
+
+func previewRequestAt(h *HTTPAdminServer, target string, reader io.Reader, token string, headers http.Header) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", target, reader)
 	r.ContentLength = -1 // Exercise the streaming bound, without trusting Content-Length.
 	r.Header = headers.Clone()
 	if token != "" {
@@ -95,10 +99,12 @@ func (r *previewReadSpy) Read([]byte) (int, error) {
 func TestRouterOSPreviewAuthHeadersAndReadFailures(t *testing.T) {
 	h := &HTTPAdminServer{Token: testToken, UI: true}
 	for _, token := range []string{"", "wrong"} {
-		reader := &previewReadSpy{}
-		w := previewRequest(h, reader, token, previewHeaders())
-		if reader.reads != 0 || token == "" && w.Code != 401 || token != "" && w.Code != 403 {
-			t.Fatal("authentication read body", reader.reads, w.Code)
+		for _, target := range []string{h.basePath() + "/import/routeros/preview", h.basePath() + "/import/routeros/preview?profile=exact&ruleset_id=auth.test"} {
+			reader := &previewReadSpy{}
+			w := previewRequestAt(h, target, reader, token, previewHeaders())
+			if reader.reads != 0 || token == "" && w.Code != 401 || token != "" && w.Code != 403 {
+				t.Fatal("authentication read body", target, reader.reads, w.Code)
+			}
 		}
 	}
 	for _, headers := range []http.Header{
@@ -192,5 +198,121 @@ func TestRouterOSPreviewOutputGuard(t *testing.T) {
 	w = previewRequest(&HTTPAdminServer{Token: testToken, UI: true}, strings.NewReader(source), testToken, previewHeaders())
 	if w.Code != 200 || !json.Valid(w.Body.Bytes()) || w.Body.Len() > maxPreviewResponseBytes {
 		t.Fatal("bounded expanded response", w.Code, w.Body.Len())
+	}
+}
+
+const exactPreviewSource = "/ip dns static\n" +
+	"add name=one.invalid type=A address=192.0.2.1 ttl=0 disabled=no match-subdomain=no comment=retained\n" +
+	"add name=alias.invalid type=CNAME cname=one.invalid ttl=5m disabled=no match-subdomain=no\n"
+
+type routerOSExactResponse struct {
+	Profile       string                 `json:"profile"`
+	RulesetID     string                 `json:"ruleset_id"`
+	Compiled      bool                   `json:"compiled"`
+	CanApply      bool                   `json:"can_apply"`
+	SourceSHA256  string                 `json:"source_sha256"`
+	Source        *routeros.Preview      `json:"source"`
+	Blockers      []routerOSExactBlocker `json:"blockers"`
+	ContentSHA256 string                 `json:"content_sha256"`
+	Bindings      []routerOSExactBinding `json:"bindings"`
+	Content       map[string]any         `json:"content"`
+}
+
+func TestRouterOSExactPreviewSuccessRefusalAndNoMutation(t *testing.T) {
+	v, err := recordstore.NewVersionedMemory(recordstore.Enrollment{RulesetID: "existing", LineageID: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer v.Close()
+	h := &HTTPAdminServer{Token: testToken, UI: true, versioned: v}
+	before := do(h, "GET", h.basePath()+"/snapshot", testToken, "").Body.Bytes()
+	target := h.basePath() + "/import/routeros/preview?profile=exact&ruleset_id=web.test"
+	w := previewRequestAt(h, target, strings.NewReader(exactPreviewSource), testToken, previewHeaders())
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-store" || !json.Valid(w.Body.Bytes()) {
+		t.Fatal("exact success", w.Code, w.Body.String())
+	}
+	var got routerOSExactResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := routeros.CompileExact(strings.NewReader(exactPreviewSource), "web.test")
+	if err != nil || got.Profile != routeros.ExactProfile || got.RulesetID != "web.test" || !got.Compiled || got.CanApply || got.SourceSHA256 != compiled.Preview().SourceSHA256 || !reflect.DeepEqual(got.Source, compiled.Preview()) || got.ContentSHA256 != compiled.ContentSHA256() || len(got.Blockers) != 0 || len(got.Bindings) != 2 {
+		t.Fatal("exact report mismatch", err, w.Body.String())
+	}
+	var wantContent map[string]any
+	if err := json.Unmarshal(compiled.ContentJSON(), &wantContent); err != nil || !reflect.DeepEqual(got.Content, wantContent) || strings.Contains(w.Body.String(), "compiler-validation") || strings.Contains(w.Body.String(), "revision") || strings.Contains(w.Body.String(), "lineage") {
+		t.Fatal("candidate content changed or scratch identity leaked", w.Body.String())
+	}
+	if !bytes.Equal(before, do(h, "GET", h.basePath()+"/snapshot", testToken, "").Body.Bytes()) {
+		t.Fatal("exact preview changed snapshot")
+	}
+
+	mixed := exactPreviewSource + "add regexp=\"^blocked\" type=A address=192.0.2.2 ttl=1m disabled=no match-subdomain=no\n"
+	w = previewRequestAt(h, target, strings.NewReader(mixed), testToken, previewHeaders())
+	if w.Code != http.StatusUnprocessableEntity || !json.Valid(w.Body.Bytes()) {
+		t.Fatal("exact refusal", w.Code, w.Body.String())
+	}
+	got = routerOSExactResponse{}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || got.Compiled || got.CanApply || got.Source == nil || len(got.Source.Entries) != 3 || len(got.Blockers) != 1 || got.Blockers[0].Ordinal != 3 || got.ContentSHA256 != "" || got.Bindings != nil || got.Content != nil {
+		t.Fatal("refusal exposed partial candidate", err, w.Body.String())
+	}
+	if !bytes.Equal(before, do(h, "GET", h.basePath()+"/snapshot", testToken, "").Body.Bytes()) {
+		t.Fatal("refusal changed snapshot")
+	}
+}
+
+func TestRouterOSExactPreviewAdmissionAndFailures(t *testing.T) {
+	h := &HTTPAdminServer{Token: testToken, UI: true}
+	for _, target := range []string{
+		h.basePath() + "/import/routeros/preview?profile=exact",
+		h.basePath() + "/import/routeros/preview?ruleset_id=test",
+		h.basePath() + "/import/routeros/preview?profile=exact&ruleset_id=",
+		h.basePath() + "/import/routeros/preview?profile=other&ruleset_id=test",
+		h.basePath() + "/import/routeros/preview?profile=exact&ruleset_id=a&ruleset_id=b",
+		h.basePath() + "/import/routeros/preview?profile=exact&ruleset_id=test&extra=1",
+		h.basePath() + "/import/routeros/preview?profile=exact;ruleset_id=test",
+	} {
+		reader := &previewReadSpy{}
+		w := previewRequestAt(h, target, reader, testToken, previewHeaders())
+		if w.Code != http.StatusBadRequest || reader.reads != 0 || !strings.Contains(w.Body.String(), "routeros_exact_options") {
+			t.Fatal("options read body", target, w.Code, reader.reads, w.Body.String())
+		}
+	}
+	reader := &previewReadSpy{}
+	w := previewRequestAt(h, h.basePath()+"/import/routeros/preview?profile=exact&ruleset_id=bad%20id", reader, testToken, previewHeaders())
+	if w.Code != http.StatusBadRequest || reader.reads != 0 || !strings.Contains(w.Body.String(), "routeros_exact_config") {
+		t.Fatal("config read body", w.Code, reader.reads, w.Body.String())
+	}
+
+	target := h.basePath() + "/import/routeros/preview?profile=exact&ruleset_id=test"
+	for _, source := range []string{"/ip dns static\nadd unknown=private-value\n", "\xff"} {
+		w = previewRequestAt(h, target, strings.NewReader(source), testToken, previewHeaders())
+		if w.Code != http.StatusBadRequest || strings.Contains(w.Body.String(), "private-value") || strings.Contains(w.Body.String(), "source") {
+			t.Fatal("parse failure exposed report", w.Code, w.Body.String())
+		}
+	}
+	oversized := strings.Repeat(" ", routeros.MaxInputBytes+1)
+	w = previewRequestAt(h, target, strings.NewReader(oversized), testToken, previewHeaders())
+	if w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), "routeros_preview_too_large") {
+		t.Fatal("exact input limit", w.Code, w.Body.String())
+	}
+}
+
+func TestRouterOSExactPreviewOutputGuard(t *testing.T) {
+	c, err := routeros.CompileExact(strings.NewReader(exactPreviewSource), "web.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := encodeRouterOSExact(c, "web.test", maxPreviewResponseBytes)
+	if err != nil || !json.Valid(encoded) {
+		t.Fatal(err)
+	}
+	if _, err := encodeRouterOSExact(c, "web.test", len(encoded)-1); !errors.Is(err, errPreviewOutputLimit) {
+		t.Fatal("exact output budget not enforced", err)
+	}
+	w := httptest.NewRecorder()
+	writeRouterOSExact(w, c, "web.test", http.StatusOK, 10)
+	if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), "content_sha256") || strings.Contains(w.Body.String(), "source_sha256") {
+		t.Fatal("partial exact output published", w.Code, w.Body.String())
 	}
 }

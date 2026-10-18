@@ -52,8 +52,8 @@ go run ./cmd/routeros-dns-preview --compile-exact --ruleset-id migration.review 
 `--compile-exact` requires a nonempty valid `--ruleset-id`; the identifier names only
 the candidate content namespace. Without `--compile-exact`, specifying a ruleset or any
 unknown/positional option is rejected. Invalid options/configuration fail before input
-is read. The admin preview endpoint and page still call the original parser; there is
-no compiler HTTP endpoint, apply button or record-store mutation.
+is read. The optional admin page also exposes the same compiler as an explicit strict
+review mode. Neither interface has an apply button or record-store mutation.
 
 The opt-in command writes one bounded JSON report. It contains the fixed profile and
 ruleset ID, `compiled`, top-level `can_apply:false`, the original-byte source SHA-256,
@@ -129,33 +129,47 @@ Enter a token separately; credentials are kept only in that tab's memory. The
 static shell contains no token or export. UI remains disabled by default and adds
 no management-transport encryption.
 
-Choose a file or paste DNS-static export text, then click **Preview export**. No
-upload occurs before that explicit action. Files use their original bytes;
+Choose a file or paste DNS-static export text, then click **Preview export**. The
+default remains the original parser-only preview. No upload occurs before that explicit
+action. Files use their original bytes;
 pasted text uses UTF-8 bytes of the textarea value, without trimming. The returned
 hash identifies those submitted bytes before the parser's newline normalization.
 Results retain entry order, duplicate owners, disabled entries and all diagnostics,
 with 50 entries displayed per page. Missing source defaults are never filled.
 An explicit disabled entry may still be a structural exact-record candidate;
-classification does not establish applicability. No apply button or supported-subset
-conversion exists. Source and results are not saved in browser storage.
+classification does not establish applicability. Source and results are not saved in
+browser storage.
+
+Select **Strict exact conversion** and enter an explicit ruleset ID to opt into the
+whole-source exact compiler. A complete success shows and can download one bounded
+review JSON report containing source provenance, canonical content, content hash and
+ordinal bindings. A semantic refusal shows and can download the complete source and
+all fixed blockers, with no candidate content/hash/bindings. The download is created
+in browser memory only after an explicit click. It is review data, not an apply token.
+There is no supported-subset conversion, apply action, store read/write or current-state
+comparison. Missing type, TTL, enabled state or exact-matching flags are never guessed.
 
 The selected source is sent to the same-origin authenticated
 `POST <base>/import/routeros/preview` route, available only when `ui` is enabled.
 It accepts exactly one `Content-Type: application/octet-stream` header, with no
 parameters, and no Content-Encoding or a single `identity` value. Compressed,
 ambiguous and multipart requests are rejected. The route calls the existing parser
-without reading or writing records or snapshots. A successful response uses the
-existing Preview JSON model and always has `can_apply: false`.
+without reading or writing records or snapshots. With no query, a successful response
+uses the existing Preview JSON model. Strict review requires exactly
+`?profile=exact&ruleset_id=<id>`; malformed, duplicate or partial options fail before
+the body is read. It returns 200 with a complete candidate, or 422 with a complete
+source and blockers but no candidate. Every response model has `can_apply: false`.
 
 The body limit is 1 MiB (413). Media/encoding rejection is 415; read and complete
-parse failures are 400. Parse failures return only a fixed error code and diagnostic
+parse/configuration failures are 400. Parse failures return only a fixed error code and diagnostic
 line/column/category, never partial entries or the input fragment. Parser columns
 are byte positions after its newline normalization. Unexpected/output-budget
 failure returns 503. Serialization is capped at 32 MiB before success headers;
 this per-request bound is not aggregate concurrency protection. Authentication is
 checked before body reads; 401/403 clears the page token even if the response body
 is malformed. Changing source/token or disconnecting invalidates old asynchronous
-results. Retrying is explicit and only recomputes a preview.
+results. The same stale-response, token and source-change safeguards cover both modes.
+Retrying is explicit and only recomputes a review.
 
 ### Synthetic checks
 
@@ -175,15 +189,16 @@ Run `go test ./cmd/routeros-dns-preview` for the command's unchanged default pre
 golden, strict success/refusal reports, option/configuration admission, fixed malformed
 input diagnostics and output-error handling.
 
-`node scripts/test-routeros-preview-state.cjs` tests bounded response validation and
-request generations. `scripts/test-routeros-preview-browser.cjs` requires an existing
+`node scripts/test-routeros-preview-state.cjs` tests bounded preview/exact response
+validation and request generations. `scripts/test-routeros-preview-browser.cjs` requires an existing
 Playwright/Chromium installation and a dedicated synthetic localhost memory admin
 listener with `ui: true` and token `local-browser-test-only`. It uses synthetic
 exports and mocked editor failures; never point it at an operational admin instance.
 `PLAYWRIGHT_MODULE`, `PREVIEW_TEST_URL`, `PREVIEW_SCREENSHOT` and
 `PREVIEW_MOBILE_SCREENSHOT` select installed tooling, test endpoint and screenshots.
 No dependency download is required. Handler tests also cover auth-before-read,
-parser parity, size/media limits, output buffering and no store mutation.
+parser parity, strict success/whole-source refusal, exact option admission,
+size/media limits, output buffering and no store mutation.
 
 The grammar subset follows the official [RouterOS scripting documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/47579229/Scripting).
 Field names and semantic distinctions come from [DNS-static documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/37748767/DNS).
