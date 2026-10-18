@@ -12,6 +12,15 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 	if tx.QueryRow("PRAGMA application_id").Scan(&id) != nil || tx.QueryRow("PRAGMA user_version").Scan(&version) != nil || tx.QueryRow("PRAGMA quick_check").Scan(&integrity) != nil || id != applicationID || version != expectedVersion || integrity != "ok" {
 		return ErrInvalid
 	}
+	expectedSchema := map[string]string{}
+	for k, v := range schema {
+		expectedSchema[k] = v
+	}
+	if expectedVersion == 3 {
+		for k, v := range humanSchema {
+			expectedSchema[k] = v
+		}
+	}
 	rows, e := tx.Query("SELECT name,type,sql FROM sqlite_schema WHERE substr(name,1,7) != 'sqlite_'")
 	if e != nil {
 		return ErrInvalid
@@ -19,7 +28,7 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 	seen := map[string]bool{}
 	for rows.Next() {
 		var name, kind, ddl string
-		if rows.Scan(&name, &kind, &ddl) != nil || kind != "table" || schema[name] != ddl || seen[name] {
+		if rows.Scan(&name, &kind, &ddl) != nil || kind != "table" || expectedSchema[name] != ddl || seen[name] {
 			rows.Close()
 			return ErrInvalid
 		}
@@ -27,7 +36,7 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 	}
 	e = rows.Err()
 	rows.Close()
-	if e != nil || len(seen) != len(schema) {
+	if e != nil || len(seen) != len(expectedSchema) {
 		return ErrInvalid
 	}
 	var n int
@@ -117,8 +126,15 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 			return ErrInvalid
 		}
 	}
-	if tx.QueryRow(`SELECT count(*) FROM audit WHERE typeof(sequence)!='integer' OR sequence<=0 OR typeof(at)!='integer' OR at<=0 OR typeof(action)!='text' OR action NOT IN ('bootstrap_created','bootstrap_cancelled','agent_issued','agent_revoked','session_created','session_revoked') OR typeof(credential_id)!='text' OR (action IN ('bootstrap_created','bootstrap_cancelled') AND credential_id!='') OR (action IN ('agent_issued','agent_revoked','session_created','session_revoked') AND length(CAST(credential_id AS BLOB))!=32)`).Scan(&invalid) != nil || invalid != 0 {
+	if tx.QueryRow(`SELECT count(*) FROM audit WHERE typeof(sequence)!='integer' OR sequence<=0 OR typeof(at)!='integer' OR at<=0 OR typeof(action)!='text' OR action NOT IN ('bootstrap_created','bootstrap_cancelled','agent_issued','agent_revoked','session_created','session_revoked','human_grant','human_grant_cancelled','human_setup','human_recovered','human_login','human_logout','human_reauth','human_codes','human_password','human_sessions_revoked') OR typeof(credential_id)!='text' OR (action IN ('bootstrap_created','bootstrap_cancelled','human_grant','human_grant_cancelled') AND credential_id!='') OR (action IN ('agent_issued','agent_revoked','session_created','session_revoked','human_setup','human_recovered','human_login','human_logout','human_reauth','human_codes','human_password','human_sessions_revoked') AND length(CAST(credential_id AS BLOB))!=32)`).Scan(&invalid) != nil || invalid != 0 {
 		return ErrInvalid
+	}
+	if expectedVersion < 3 {
+		if tx.QueryRow("SELECT count(*) FROM audit WHERE action LIKE 'human_%'").Scan(&invalid) != nil || invalid != 0 {
+			return ErrInvalid
+		}
+	} else if e := s.validateHuman(tx); e != nil {
+		return e
 	}
 	if expectedVersion == 1 {
 		if tx.QueryRow("SELECT count(*) FROM audit WHERE action IN ('session_created','session_revoked')").Scan(&invalid) != nil || invalid != 0 {

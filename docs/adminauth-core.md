@@ -1,11 +1,11 @@
-> The original internal-only core described below is now optionally integrated by [Scoped agent access](agent-admin-access.md). New auth stores use schema 2; schema 1 requires explicit offline migration. Human authentication remains unavailable.
+> The original internal-only core described below is now optionally integrated by [Scoped agent access](agent-admin-access.md). New auth stores use schema 2; schema 1 requires explicit offline migration. Human authentication requires the explicit schema-3 enable operation described in [Human owner sign-in](human-admin-access.md).
 
 # Node-local administration authentication core
 
 `internal/adminauth` is an opt-in authentication library. When no auth binding is configured, existing listener configuration,
 legacy bearer authentication, editors, record databases and running previews
 are unchanged. This is a bounded first part of the human/agent authentication
-contract. Agent API and GUI session integration is documented separately; human login is not implemented.
+contract. Agent API and GUI session integration is documented separately; human login is supplied by the separate schema-3 integration.
 
 ## Local ownership and durable identity
 
@@ -18,11 +18,8 @@ requirement. A trusted local operator must prevent concurrent path replacement.
 
 The database binds immutable realm ID, node ID, display name and an HMAC key
 check. A wrong key or identity refuses startup. It does not recover a lost key,
-silently rotate identity, or migrate an unknown schema. Schema 1 currently has
-four exact tables: realm, credentials, bootstrap and audit. The realm's human
-setup state is always `pending`: no password, TOTP, passkey, recovery code or
-human session is accepted by this slice. Those need a reviewed additive schema
-migration and real authentication protocol, not a caller-supplied success flag.
+silently rotate identity, or migrate an unknown schema. The original schema 1 has
+four exact tables: realm, credentials, bootstrap and audit. The legacy realm `setup` column remains the immutable `pending` sentinel. Schema 3 derives human readiness from its strictly validated owner row and adds four human-authentication tables through an explicit offline migration. No caller-supplied success flag creates human authority.
 
 Open checks SQLite application/version IDs, exact table definitions and object
 set, integrity, bounded counts and byte/type/semantic constraints before
@@ -86,10 +83,9 @@ credential IDs, never token material, operator labels, passwords or DNS data.
 Bootstrap creation/cancellation, issuance and revocation commit with audit;
 audit failure rolls back the action. Public errors are fixed categories.
 
-User/password guessing limits, Argon2, TOTP, passkeys and encrypted authenticator
-enrollment remain unimplemented. Opt-in agent browser sessions, cookies, CSRF,
+Password/TOTP, recovery, rate limits and encrypted enrollment are documented in [Human owner sign-in](human-admin-access.md). Passkeys remain unimplemented. Opt-in agent browser sessions, cookies, CSRF,
 HTTPS-origin checks, offline CLI and HTTP authorization are now supplied by
-[Scoped agent access](agent-admin-access.md); they do not provide human login.
+[Scoped agent access](agent-admin-access.md).
 No auth state
 is replicated with DNS snapshots. Database/key backup restoration can resurrect
 old credentials and revocations; no rollback-resistant external authority is
@@ -100,3 +96,5 @@ scope widening, expiry, concurrent one-use redemption, durable revoke/reopen,
 caller mutation, real audit-write rollback, simulated lost commit acknowledgement
 and fail-closed handle behavior. All tests use synthetic credentials and local
 temporary databases, with no candidate or production access.
+
+Human owner authentication is available only after the separate explicit schema-3 enable operation; see [Human owner sign-in](human-admin-access.md). Schema2 remains agent-only. No record database or live deployment is changed.

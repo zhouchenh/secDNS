@@ -1,6 +1,6 @@
 # Scoped agent access
 
-This opt-in integration adds named agent API credentials and short browser sessions. Existing admin and snapshot-reader tokens remain supported. It does not add human password/TOTP/passkey sign-in, credential-management HTTP routes, shared sessions between nodes, TLS termination, or a deployment. The public release 1.8.0 predates this feature.
+This opt-in integration adds named agent API credentials and short browser sessions. Existing admin and snapshot-reader tokens remain supported. Human password/TOTP/recovery is a separate explicit opt-in described in [Human owner sign-in](human-admin-access.md). This agent integration does not add passkeys, remote agent-credential management, shared sessions between nodes, TLS termination, or a deployment. The public release 1.8.0 predates this feature.
 
 ## Separate local identity
 

@@ -18,12 +18,17 @@ func editorHeaders(w http.ResponseWriter) {
 }
 
 func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
-	data, _ := editorAssets.ReadFile("auth_ui/agent.js")
-	mux.HandleFunc("GET "+base+"/auth/agent.js", func(w http.ResponseWriter, r *http.Request) {
-		editorHeaders(w)
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Write(data)
-	})
+	for _, name := range []string{"agent.js", "human.js", "auth.css"} {
+		data, _ := editorAssets.ReadFile("auth_ui/" + name)
+		mux.HandleFunc("GET "+base+"/auth/"+name, func(w http.ResponseWriter, r *http.Request) {
+			editorHeaders(w)
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+			if name == "auth.css" {
+				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			}
+			w.Write(data)
+		})
+	}
 	mux.HandleFunc("GET "+base+"/ui", func(w http.ResponseWriter, r *http.Request) {
 		editorHeaders(w)
 		http.Redirect(w, r, base+"/ui/", http.StatusSeeOther)

@@ -19,7 +19,7 @@ func run(args []string, out, errOut io.Writer) int {
 	f := flag.NewFlagSet("secdns-adminauth", flag.ContinueOnError)
 	f.SetOutput(errOut)
 	definition := f.String("definition", "", "Private JSON auth definition file")
-	operation := f.String("operation", "", "create, migrate-schema1, issue-agent, cancel-bootstrap, revoke-agent")
+	operation := f.String("operation", "", "create, migrate-schema1, enable-human, setup-human, recover-human, cancel-human, issue-agent, cancel-bootstrap, revoke-agent")
 	name := f.String("name", "", "Agent display name")
 	sc := f.String("scopes", "", "Comma-separated exact scopes")
 	expiry := f.String("expires", "", "Optional RFC3339 absolute expiry")
@@ -66,7 +66,13 @@ func run(args []string, out, errOut io.Writer) int {
 		if s.Close() != nil {
 			return fail()
 		}
-		fmt.Fprintln(out, "Authentication store created; human setup remains unavailable.")
+		fmt.Fprintln(out, "Authentication store created; run enable-human explicitly before human setup.")
+		return 0
+	case "enable-human":
+		if adminauth.EnableHumanSchema(d.Path, d.KeyPath, d.Identity(), nil) != nil {
+			return fail()
+		}
+		fmt.Fprintln(out, "Human schema enabled. Create a one-use local setup grant next.")
 		return 0
 	case "migrate-schema1":
 		if adminauth.MigrateSchema1(d.Path, d.KeyPath, d.Identity(), nil) != nil {
@@ -74,7 +80,7 @@ func run(args []string, out, errOut io.Writer) int {
 		}
 		fmt.Fprintln(out, "Authentication schema migrated.")
 		return 0
-	case "issue-agent", "cancel-bootstrap", "revoke-agent":
+	case "issue-agent", "cancel-bootstrap", "revoke-agent", "setup-human", "recover-human", "cancel-human":
 	default:
 		return 2
 	}
@@ -84,6 +90,23 @@ func run(args []string, out, errOut io.Writer) int {
 	}
 	defer s.Close()
 	now := time.Now()
+	if *operation == "setup-human" || *operation == "recover-human" {
+		grant, e := s.CreateHumanGrant(*operation == "recover-human", now)
+		if e != nil {
+			return fail()
+		}
+		if json.NewEncoder(out).Encode(map[string]string{"grant": grant}) != nil {
+			return fail()
+		}
+		return 0
+	}
+	if *operation == "cancel-human" {
+		if s.CancelHumanGrant(now) != nil {
+			return fail()
+		}
+		fmt.Fprintln(out, "Human grant cancelled.")
+		return 0
+	}
 	if *operation == "cancel-bootstrap" {
 		if s.CancelBootstrapLocal(now) != nil {
 			return fail()

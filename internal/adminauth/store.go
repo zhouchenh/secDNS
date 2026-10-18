@@ -36,6 +36,7 @@ type Store struct {
 	key      []byte
 	identity Identity
 	legacy   [][32]byte
+	version  int
 	faulted  bool
 	commit   func(*sql.Tx) error // private fault seam; production always tx.Commit
 }
@@ -151,6 +152,12 @@ func openWithCommit(path, keyPath string, id Identity, legacy []string, create, 
 		}
 	}
 	expectedVersion := 2
+	if !create && !migrate {
+		var actual int
+		if tx.QueryRow("PRAGMA user_version").Scan(&actual) == nil && actual == 3 {
+			expectedVersion = 3
+		}
+	}
 	if migrate {
 		expectedVersion = 1
 	}
@@ -164,6 +171,10 @@ func openWithCommit(path, keyPath string, id Identity, legacy []string, create, 
 	}
 	if e = s.commit(tx); e != nil {
 		return nil, ErrUnavailable
+	}
+	s.version = expectedVersion
+	if migrate {
+		s.version = 2
 	}
 	return s, nil
 }
@@ -255,7 +266,18 @@ func (s *Store) collides(tx *sql.Tx, d [32]byte) bool {
 	}
 	var n int
 	e := tx.QueryRow("SELECT (SELECT count(*) FROM credentials WHERE digest=?)+(SELECT count(*) FROM bootstrap WHERE digest=?)", d[:], d[:]).Scan(&n)
-	return e != nil || n != 0
+	if e != nil || n != 0 {
+		return true
+	}
+	if s.version == 3 {
+		if s.db == nil {
+			return true
+		}
+		if tx.QueryRow("SELECT count(*) FROM human_grant WHERE digest=?", d[:]).Scan(&n) != nil || n != 0 {
+			return true
+		}
+	}
+	return false
 }
 func encodeScopes(sc []Scope) string { b, _ := json.Marshal(sc); return string(b) }
 func decodeScopes(raw string) ([]Scope, error) {
