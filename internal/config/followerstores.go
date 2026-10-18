@@ -161,6 +161,10 @@ func ValidateStoreListenerTopology(raw []byte, versioned map[string]recordstore.
 				}
 			}
 		}
+		if string(looseConfig["followerStatusOnly"]) == "true" {
+			// Strict mode/feature validation is performed by parseFollowerStatusBindings.
+			continue
+		}
 		store := recordstore.DefaultName
 		if rawStore, ok := looseConfig["store"]; ok {
 			_ = json.Unmarshal(rawStore, &store)
