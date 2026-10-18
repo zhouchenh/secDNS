@@ -1,5 +1,35 @@
 # Version History
 
+## v1.6.4 - 2026.10.18
+
+Operator Provenance and Aggregate Import Coverage
+
+* tooling: add `--coverage-only` to the source-tree RouterOS exact conversion command. It
+  runs the same whole-source compiler and reports bounded aggregate diagnostic/blocker counts
+  without source fields, names, values, comments, bindings or candidate content. Refused input
+  still exits nonzero and yields no content hash or partial candidate.
+* admin: preserve the fixed strict profile, source SHA-256 and canonical content SHA-256 as
+  operator-supplied provenance when an unchanged transferred candidate is explicitly submitted.
+  GET and POST keep their existing bodies and expose the tuple through three response headers;
+  any local edit, including edit then revert, omits the original tuple.
+* storage: new versioned SQLite stores use schema 3 with bounded canonical nullable provenance
+  blobs and request-digest binding. Existing schema-2 stores open in legacy-compatible mode and
+  continue legacy replacements without a rewrite. Tuple-bearing writes are refused until an
+  explicit library caller opts into the atomic schema-2-to-3 migration.
+
+Runtime configuration does not expose or enable schema migration, so this release never
+automatically upgrades an existing database. Operational migration still requires separate
+authorization and the normal pre-migration backup; older binaries cannot open schema 3. The
+stored source/profile tuple is an operator assertion, not proof of RouterOS authenticity,
+compiler provenance, policy parity, or apply authorization.
+
+The release workflow continues to publish the 46 existing `secDNS` platform binaries. The
+embedded admin/editor and provenance storage behavior are included in those binaries. The
+`cmd/routeros-dns-preview` coverage command remains a source-tree tool and is not published as
+a separate release asset. See the [RouterOS import preview](routeros-import-preview.md),
+[versioned authority API](versioned-authority-api.md), and
+[versioned exact store](versioned-exact-store.md).
+
 ## v1.6.3 - 2026.10.18
 
 Exact Import Draft Handoff and Address Resolver Options
