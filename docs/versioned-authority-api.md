@@ -27,6 +27,10 @@ The existing admin bearer authentication protects `GET` and `POST <base>/snapsho
 
 Every successful GET includes a strong `ETag` bound to the complete response representation: canonical ruleset, lineage, revision, content and any operator-supplied provenance headers. An authenticated `If-None-Match` request uses standard weak comparison, list and wildcard semantics; a match returns `304 Not Modified` with the current ETag and provenance headers and no body. Authentication is evaluated before the validator. A stale or malformed validator receives the ordinary `200` snapshot. The ETag is only a bandwidth validator: clients must still validate and apply every `200` envelope through their enrolled follower ordering rules, and a `304` is not an authentication, signature, convergence or freshness proof beyond that request.
 
+`GET <base>/snapshot/events` exposes a bounded Server-Sent Events hint stream under the same bearer authentication. The initial event is `resync` unless `Last-Event-ID` exactly names the current `<lineage_id>:<revision>`; an exact resume waits for a later publication. A sequential publication is `advanced`. Missing, stale, future or other-lineage resume state, and any locally coalesced revision gap, is `resync`. Event data contains only `status`, `ruleset_id`, `lineage_id` and the decimal-string `revision`; it never contains records, provenance or a write receipt.
+
+Each connection lasts at most 30 seconds, honors cancellation and occupies one of 64 process-local subscription slots for that store. A slow client retains only the newest hint and is told to resync. Clients reconnect with bounded backoff and, after every event, fetch the complete authenticated snapshot (normally with its last ETag) and apply the existing enrollment, identity and revision checks. Events are not replayed or persisted, and an event or quiet stream is not a durable write acknowledgement, content authentication, freshness proof or convergence proof. This endpoint adds no follower worker, transport encryption, signing, trust enrollment or automatic cluster synchronization.
+
 POST replaces the entire exact record set atomically:
 
 ```json

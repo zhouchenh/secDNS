@@ -81,13 +81,16 @@ type versionedHooks struct {
 // VersionedStore is an opt-in exact snapshot substrate. Legacy Store and its
 // configuration/API are unchanged. One process exclusively owns a SQLite file.
 type VersionedStore struct {
-	mu            sync.Mutex
-	current       atomic.Pointer[versionedGeneration]
-	receipts      map[string]Receipt
-	db            *sql.DB
-	schemaVersion int
-	now           func() time.Time
-	hooks         versionedHooks
+	mu                     sync.Mutex
+	revisionMu             sync.Mutex
+	current                atomic.Pointer[versionedGeneration]
+	receipts               map[string]Receipt
+	revisionSubscribers    map[uint64]*revisionSubscriber
+	nextRevisionSubscriber uint64
+	db                     *sql.DB
+	schemaVersion          int
+	now                    func() time.Time
+	hooks                  versionedHooks
 }
 
 func validOperationID(s string) bool {
@@ -231,15 +234,25 @@ func (s *VersionedStore) replace(expected Expected, operationID string, records 
 		s.hooks.afterCommit()
 	}
 	s.receipts[operationID] = receipt
+	s.revisionMu.Lock()
 	s.current.Store(generation)
+	s.publishRevisionLocked(generation)
+	s.revisionMu.Unlock()
 	return receipt, nil
 }
 func (s *VersionedStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.revisionMu.Lock()
 	if s.current.Swap(nil) == nil {
+		s.revisionMu.Unlock()
 		return nil
 	}
+	for id, subscriber := range s.revisionSubscribers {
+		delete(s.revisionSubscribers, id)
+		close(subscriber.events)
+	}
+	s.revisionMu.Unlock()
 	if s.db != nil {
 		if err := s.db.Close(); err != nil {
 			return ErrVersionedStorage
