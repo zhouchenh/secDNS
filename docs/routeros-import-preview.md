@@ -1,8 +1,9 @@
 # RouterOS DNS-static import preview
 
 `go run ./cmd/routeros-dns-preview < dns-static.rsc` reads a DNS-static export from
-standard input and writes a JSON preview. It never executes the export, contacts a
-router, opens a record store or applies changes. **Every preview has `can_apply: false`.**
+standard input and writes the original JSON preview. With no arguments its output and
+exit behavior remain the parser-only interface. It never executes the export, contacts
+a router, opens a record store or applies changes. **Every preview has `can_apply: false`.**
 The source SHA-256 identifies input bytes; it is not an authenticity signature.
 
 Use a DNS-static-only export. The accepted subset is a `/ip dns static` or
@@ -38,12 +39,31 @@ Applying the exact-record subset of a mixed export would lose policy and is deli
 not offered here. The exact-record cluster snapshot model is a separate, narrower
 namespace; this preview is not convertible to a complete snapshot by discarding entries.
 
-## Internal exact compiler
+## Strict exact conversion
 
 `routeros.CompileExact(reader, rulesetID)` is a pure internal API with profile
 `secdns.routeros-exact-explicit.v1`. It compiles the entire submitted source or exposes
-no candidate. The CLI, admin preview endpoint and page still call the original parser;
-there is no compiler endpoint, apply button or record-store mutation.
+no candidate. The existing command exposes it only through explicit opt-in flags:
+
+~~~sh
+go run ./cmd/routeros-dns-preview --compile-exact --ruleset-id migration.review < dns-static.rsc
+~~~
+
+`--compile-exact` requires a nonempty valid `--ruleset-id`; the identifier names only
+the candidate content namespace. Without `--compile-exact`, specifying a ruleset or any
+unknown/positional option is rejected. Invalid options/configuration fail before input
+is read. The admin preview endpoint and page still call the original parser; there is
+no compiler HTTP endpoint, apply button or record-store mutation.
+
+The opt-in command writes one bounded JSON report. It contains the fixed profile and
+ruleset ID, `compiled`, top-level `can_apply:false`, the original-byte source SHA-256,
+and the complete source Preview with every field and diagnostic. A fully successful
+compile additionally contains canonical content JSON, its SHA-256 and ordinal-to-key
+bindings. A semantic or target-limit refusal writes the complete source and fixed
+blockers, omits content/hash/bindings, and exits nonzero. Parse/configuration failures
+write only fixed diagnostics to standard error and no partial report. Output failures
+also use fixed standard-error text. The report is review data, not a snapshot envelope
+or authorization capability.
 
 The strict profile requires explicit uppercase `A`, `AAAA` or `CNAME`, exact integer
 TTL seconds/components, `disabled=no` and `match-subdomain=no` on every entry. TTL0
@@ -85,6 +105,18 @@ only representation under this narrow profile, not complete export capture, Rout
 answer parity, policy migration or safe replacement of a live store. A mixed source
 containing even one regexp rule cannot yield a supported subset. Revision-checked
 apply and persistence of source annotations remain separate work.
+
+For example, this compiles only when both rows are explicit and exact:
+
+~~~routeros
+/ip dns static
+add name=one.example.invalid type=A address=192.0.2.10 ttl=5m disabled=no match-subdomain=no
+add name=alias.example.invalid type=CNAME cname=one.example.invalid ttl=5m disabled=no match-subdomain=no
+~~~
+
+Adding a disabled, regexp, forwarding or negative row makes the complete conversion
+exit nonzero with blockers and no `content`, `content_sha256` or `bindings` fields. The
+command never turns the remaining rows into a partial record set.
 
 ## Validation
 
@@ -138,6 +170,10 @@ cycles and collisions. `go test ./internal/importers/routeros -fuzz
 FuzzCompileExactNeverReturnsPartialCandidate -fuzztime 10s` checks the compiler's
 no-partial-result invariant. The synthetic 141-entry test reproduces counts and an
 unnamed regexp only; it contains no private inventory and makes no migration claim.
+
+Run `go test ./cmd/routeros-dns-preview` for the command's unchanged default preview
+golden, strict success/refusal reports, option/configuration admission, fixed malformed
+input diagnostics and output-error handling.
 
 `node scripts/test-routeros-preview-state.cjs` tests bounded response validation and
 request generations. `scripts/test-routeros-preview-browser.cjs` requires an existing
