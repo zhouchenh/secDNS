@@ -24,7 +24,7 @@ func (s *captureListener) Serve(handler func(*dns.Msg) *dns.Msg, _ func(error)) 
 
 func TestBindingUsesExistingHandlerAndNormalGraph(t *testing.T) {
 	i := NewInstance()
-	normal := address.Address{[]net.IP{net.ParseIP("192.0.2.10").To4()}, nil}
+	normal := address.Address{Addresses: [2][]net.IP{{net.ParseIP("192.0.2.10").To4()}}}
 	i.SetDefaultResolver(&normal)
 	i.SetResolutionDepth(32)
 	r, _ := i.GetResolver()
@@ -48,7 +48,7 @@ func TestBindingUsesExistingHandlerAndNormalGraph(t *testing.T) {
 func TestBindingPreservesMalformedQueryAndDepthHandling(t *testing.T) {
 	for _, malformed := range []bool{false, true} {
 		i := NewInstance()
-		normal := address.Address{[]net.IP{net.ParseIP("192.0.2.10").To4()}, nil}
+		normal := address.Address{Addresses: [2][]net.IP{{net.ParseIP("192.0.2.10").To4()}}}
 		i.SetDefaultResolver(&normal)
 		i.SetResolutionDepth(-1)
 		q := new(dns.Msg)
