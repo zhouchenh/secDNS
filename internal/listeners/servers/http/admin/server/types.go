@@ -81,6 +81,9 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
+	if h.UI {
+		h.routerOSPreviewRoutes(mux, base)
+	}
 	if h.versioned != nil {
 		mux.HandleFunc("GET "+base+"/snapshot", h.auth(h.handleSnapshot))
 		mux.HandleFunc("POST "+base+"/snapshot", h.auth(h.handleReplace))

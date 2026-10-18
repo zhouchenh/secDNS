@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-//go:embed ui/* versioned_ui/*
+//go:embed ui/* versioned_ui/* preview_ui/*
 var editorAssets embed.FS
 
 const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
