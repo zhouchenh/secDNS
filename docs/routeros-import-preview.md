@@ -49,11 +49,20 @@ no candidate. The existing command exposes it only through explicit opt-in flags
 go run ./cmd/routeros-dns-preview --compile-exact --ruleset-id migration.review < dns-static.rsc
 ~~~
 
+For a bounded aggregate report that omits source fields and candidate content, add
+`--coverage-only`:
+
+~~~sh
+go run ./cmd/routeros-dns-preview --compile-exact --coverage-only --ruleset-id migration.review < dns-static.rsc
+~~~
+
 `--compile-exact` requires a nonempty valid `--ruleset-id`; the identifier names only
-the candidate content namespace. Without `--compile-exact`, specifying a ruleset or any
-unknown/positional option is rejected. Invalid options/configuration fail before input
-is read. The optional admin page also exposes the same compiler as an explicit strict
-review mode. Neither interface has an apply button or record-store mutation.
+the candidate content namespace. `--coverage-only` is valid only with
+`--compile-exact`. Without `--compile-exact`, specifying either coverage mode or a
+ruleset is rejected; unknown and positional options are also rejected. Invalid
+options/configuration fail before input is read. The optional admin page also exposes
+the same compiler as an explicit strict review mode. Neither interface has an apply
+button or record-store mutation.
 
 The opt-in command writes one bounded JSON report. It contains the fixed profile and
 ruleset ID, `compiled`, top-level `can_apply:false`, the original-byte source SHA-256,
@@ -64,6 +73,16 @@ blockers, omits content/hash/bindings, and exits nonzero. Parse/configuration fa
 write only fixed diagnostics to standard error and no partial report. Output failures
 also use fixed standard-error text. The report is review data, not a snapshot envelope
 or authorization capability.
+
+Coverage-only mode runs that same whole-source compiler and keeps its success/nonzero
+refusal behavior. It reports source-entry, parser-candidate, parser-unsupported,
+compiler-blocked and global-blocker counts, plus sorted counts for each fixed diagnostic
+and blocker code. It omits the complete Preview, per-row blockers and locations,
+bindings, canonical content, names, values and comments. A successful compile retains
+the canonical content SHA-256 so the aggregate can bind the reviewed result. A refusal
+has no content hash. `parser_exact_record_candidates` is only a structural count; it is
+never a supported subset, an authentic-export claim, RouterOS behavior parity or apply
+authorization.
 
 The strict profile requires explicit uppercase `A`, `AAAA` or `CNAME`, exact integer
 TTL seconds/components, `disabled=no` and `match-subdomain=no` on every entry. TTL0
