@@ -134,9 +134,17 @@ func TestSnapshotAPIOperatorSuppliedProvenanceHeaders(t *testing.T) {
 				t.Fatal(get.Code)
 			}
 			assertOperatorProvenanceHeaders(t, get, source, content)
+			if get.Header().Get("ETag") == "" {
+				t.Fatal("snapshot ETag absent")
+			}
 			if _, err = recordset.Parse(get.Body.Bytes()); err != nil || strings.Contains(get.Body.String(), "provenance") {
 				t.Fatal("canonical snapshot body changed", err, get.Body.String())
 			}
+			notModified := getSnapshot(h, testToken, get.Header().Get("ETag"))
+			if notModified.Code != 304 || notModified.Body.Len() != 0 || notModified.Header().Get("ETag") != get.Header().Get("ETag") {
+				t.Fatal(notModified.Code, notModified.Body.String())
+			}
+			assertOperatorProvenanceHeaders(t, notModified, source, content)
 			replay := do(h, "POST", "/admin/snapshot", testToken, body)
 			if replay.Body.String() != post.Body.String() {
 				t.Fatal("provenance replay receipt changed")
