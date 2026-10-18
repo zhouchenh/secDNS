@@ -27,6 +27,7 @@
   }
   const idValid = s => typeof s === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(s);
   const hashValid = s => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
+  const operatorProvenance = (p, content = null) => exactKeys(p,["profile","source_sha256","content_sha256"]) && p.profile === HANDOFF_PROFILE && hashValid(p.source_sha256) && hashValid(p.content_sha256) && (content === null || p.content_sha256 === content);
   const handoffID = s => typeof s === "string" && /^[a-f0-9]{48}$/.test(s);
   function envelope(s) { return exactKeys(s, ["schema", "ruleset_id", "lineage_id", "revision", "content_sha256", "records"]) && s.schema === "secdns.exact-record-set.v1" && idValid(s.ruleset_id) && idValid(s.lineage_id) && revision(s.revision) && hashValid(s.content_sha256) && recordsValid(s.records) && bytes(JSON.stringify(s)) <= LIMIT; }
   function exactDraftHandoff(x, channelID, sourcePath, targetPath, now) {
@@ -55,7 +56,7 @@
   }
   class Model {
     constructor() { this.clear(); }
-    clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
+    clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = this.currentProvenance = this.receiptProvenance = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
     dirty() { const d = this.base && changes(this.base.records, this.draft); return this.formDirty || !!(d && (d.added || d.changed || d.removed)); }
     touch() { this.edits++; this.formDirty = true; }
     stage(record, oldKey = null) {
@@ -74,11 +75,11 @@
       this.draft = clone(handoff.content.records); this.formDirty = false; this.edits++;
       this.draftProvenance = Object.freeze({profile:handoff.profile,rulesetID:handoff.content.ruleset_id,sourceSHA256:handoff.source_sha256,contentSHA256:handoff.content_sha256,transferredAt:handoff.issued_at_ms,editCounter:this.edits});
     }
-    accept(s) {
-      if (!envelope(s)) throw new Error("invalid_snapshot_response");
+    accept(s, provenance = null) {
+      if (!envelope(s) || provenance !== null && !operatorProvenance(provenance,s.content_sha256)) throw new Error("invalid_snapshot_response");
       if (this.base && identity(s) !== identity(this.base)) { this.identityBlocked = true; this.fresh = false; throw new Error("identity_conflict"); }
       if (this.observed && compare(s.revision, this.observed) < 0) throw new Error("stale_snapshot_response");
-      this.current = clone(s); this.observed = s.revision; this.fresh = true;
+      this.current = clone(s); this.currentProvenance = provenance === null ? null : clone(provenance); this.observed = s.revision; this.fresh = true;
       if (!this.base) this.adopt();
       else if (this.pending?.status === "acknowledged" && this.receipt && compare(s.revision, this.receipt.revision) >= 0 && this.edits === this.pending.editCounter) this.adopt();
       return s;
@@ -92,21 +93,25 @@
       if (!recordsValid(this.draft)) throw new Error("invalid_snapshot_request");
       increment(this.base.revision);
       const expected = {ruleset_id:this.base.ruleset_id, lineage_id:this.base.lineage_id, revision:this.base.revision};
-      const body = JSON.stringify({expected, operation_id:operationID, records:this.draft});
+      const replacement = {expected, operation_id:operationID, records:this.draft};
+      if (this.draftProvenance && this.edits === this.draftProvenance.editCounter) replacement.operator_supplied_provenance = {profile:this.draftProvenance.profile,source_sha256:this.draftProvenance.sourceSHA256,content_sha256:this.draftProvenance.contentSHA256};
+      const body = JSON.stringify(replacement);
       if (bytes(body) > LIMIT) throw new Error("snapshot_too_large");
       this.pending = {status:"sending"};
-      for (const [k,v] of Object.entries({endpoint, expected:Object.freeze(expected), operationID, body, editCounter:this.edits})) Object.defineProperty(this.pending,k,{value:v,enumerable:true});
+      const submittedProvenance = replacement.operator_supplied_provenance ? Object.freeze(clone(replacement.operator_supplied_provenance)) : null;
+      for (const [k,v] of Object.entries({endpoint, expected:Object.freeze(expected), operationID, body, editCounter:this.edits,operatorSuppliedProvenance:submittedProvenance})) Object.defineProperty(this.pending,k,{value:v,enumerable:true});
       return this.pending;
     }
-    acknowledge(r) {
+    acknowledge(r, provenance = null) {
       const p = this.pending;
-      if (!p || !exactKeys(r, ["operation_id", "revision", "content_sha256", "committed_at"]) || r.operation_id !== p.operationID || !revision(r.revision) || r.revision !== increment(p.expected.revision) || !hashValid(r.content_sha256) || !stamp(r.committed_at)) throw new Error("invalid_receipt");
-      this.receipt = clone(r); p.status = "acknowledged";
+      const provenanceMismatch = !p || (p.operatorSuppliedProvenance === null) !== (provenance === null) || p.operatorSuppliedProvenance !== null && JSON.stringify(p.operatorSuppliedProvenance) !== JSON.stringify(provenance);
+      if (!p || !exactKeys(r, ["operation_id", "revision", "content_sha256", "committed_at"]) || r.operation_id !== p.operationID || !revision(r.revision) || r.revision !== increment(p.expected.revision) || !hashValid(r.content_sha256) || !stamp(r.committed_at) || provenance !== null && !operatorProvenance(provenance,r.content_sha256) || provenanceMismatch) throw new Error("invalid_receipt");
+      this.receipt = clone(r); this.receiptProvenance = provenance === null ? null : clone(provenance); p.status = "acknowledged";
       if (!this.observed || compare(r.revision, this.observed) > 0) this.observed = r.revision;
       this.fresh = false;
     }
     uncertain() { if (this.pending && this.pending.status !== "acknowledged") this.pending.status = "uncertain"; this.fresh = false; }
   }
-  const api = {Model, compare, revision, increment, recordsValid, envelope, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
+  const api = {Model, compare, revision, increment, recordsValid, envelope, operatorProvenance, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.SnapshotEditor = api;
 })(globalThis);

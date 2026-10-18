@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +20,19 @@ var enrollment = Enrollment{RulesetID: "test", LineageID: "lineage"}
 
 func exactRecords(value string) []recordset.Record {
 	return []recordset.Record{{Name: "host.invalid.", Type: "A", Values: []string{value}, TTLSeconds: 300}}
+}
+
+func operatorProvenance(t *testing.T, records []recordset.Record, sourceDigit string) recordset.OperatorSuppliedProvenance {
+	t.Helper()
+	snapshot, err := recordset.New(enrollment.RulesetID, enrollment.LineageID, 1, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := recordset.NewOperatorSuppliedProvenance(recordset.RouterOSExactExplicitProfile, strings.Repeat(sourceDigit, 64), snapshot.Metadata().ContentSHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
 }
 func expectation(v View) Expected {
 	m := v.Metadata()
@@ -105,6 +120,142 @@ func TestVersionedCASRetryIdentityAndIsolation(t *testing.T) {
 		}
 	})
 }
+
+func TestVersionedRequestDigestCompatibilityAndProvenanceIdentity(t *testing.T) {
+	e := Expected{"r", "l", 1}
+	content := strings.Repeat("a", 64)
+	if got := requestDigest(e, content); got != "0233ddd6380b2d2600309ce87ad0ce7db24a59ccc6966527a390fe1e930702a7" {
+		t.Fatal("legacy digest changed", got)
+	}
+	p, err := recordset.NewOperatorSuppliedProvenance(recordset.RouterOSExactExplicitProfile, strings.Repeat("b", 64), content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := requestDigestWithOperatorSuppliedProvenance(e, content, p); got != "e13f397b4b94470efe40e8f9d55bd5a4d82d20788d71afbaa708ad6d0ffe4d46" {
+		t.Fatal("provenance digest changed", got)
+	}
+}
+
+func TestVersionedOperatorSuppliedProvenancePublicationReplayAndClear(t *testing.T) {
+	bothVersioned(t, func(t *testing.T, s *VersionedStore) {
+		base, _ := s.Acquire()
+		records := exactRecords("192.0.2.1")
+		p := operatorProvenance(t, records, "1")
+		first, err := s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "with-provenance", records, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := first.OperatorSuppliedProvenance(); !ok || got != p {
+			t.Fatal("receipt lost provenance", got, ok)
+		}
+		current, _ := s.Acquire()
+		if got, ok := current.OperatorSuppliedProvenance(); !ok || got != p {
+			t.Fatal("view lost provenance", got, ok)
+		}
+		if _, ok := base.OperatorSuppliedProvenance(); ok {
+			t.Fatal("old pinned view changed")
+		}
+		replay, err := s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "with-provenance", exactRecords("192.0.2.1"), p)
+		if err != nil || replay != first {
+			t.Fatal("exact retry changed", replay, err)
+		}
+		other := operatorProvenance(t, records, "2")
+		if _, err = s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "with-provenance", records, other); !errors.Is(err, ErrOperationConflict) {
+			t.Fatal("changed provenance replay", err)
+		}
+		if _, err = s.Replace(expectation(base), "with-provenance", records); !errors.Is(err, ErrOperationConflict) {
+			t.Fatal("present-to-absent replay", err)
+		}
+		if _, err = s.Replace(expectation(current), "legacy-clear", nil); err != nil {
+			t.Fatal(err)
+		}
+		cleared, _ := s.Acquire()
+		if _, ok := cleared.OperatorSuppliedProvenance(); ok {
+			t.Fatal("legacy replacement retained provenance")
+		}
+	})
+}
+
+func TestVersionedOperatorSuppliedProvenanceAtomicGeneration(t *testing.T) {
+	s, err := NewVersionedMemory(enrollment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	done := make(chan struct{})
+	errorsSeen := make(chan string, 4)
+	var readers sync.WaitGroup
+	for range 4 {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				view, acquireErr := s.Acquire()
+				if acquireErr != nil {
+					errorsSeen <- acquireErr.Error()
+					return
+				}
+				records := view.Records()
+				provenance, present := view.OperatorSuppliedProvenance()
+				if len(records) == 0 {
+					if view.Metadata().Revision != 1 || present {
+						errorsSeen <- "initial generation carried provenance"
+						return
+					}
+					continue
+				}
+				switch records[0].Values[0] {
+				case "192.0.2.1":
+					if present {
+						errorsSeen <- "legacy generation carried provenance"
+						return
+					}
+				case "192.0.2.2":
+					if !present || provenance.ContentSHA256() != view.Metadata().ContentSHA256 {
+						errorsSeen <- "provenance generation was torn"
+						return
+					}
+				default:
+					errorsSeen <- "unexpected published record"
+					return
+				}
+			}
+		}()
+	}
+
+	for n := 0; n < 100; n++ {
+		base, acquireErr := s.Acquire()
+		if acquireErr != nil {
+			t.Fatal(acquireErr)
+		}
+		records := exactRecords("192.0.2.1")
+		if n%2 == 0 {
+			records = exactRecords("192.0.2.2")
+			provenance := operatorProvenance(t, records, "a")
+			_, err = s.ReplaceWithOperatorSuppliedProvenance(expectation(base), fmt.Sprint("atomic-", n), records, provenance)
+		} else {
+			_, err = s.Replace(expectation(base), fmt.Sprint("atomic-", n), records)
+		}
+		if err != nil {
+			close(done)
+			readers.Wait()
+			t.Fatal(err)
+		}
+	}
+	close(done)
+	readers.Wait()
+	close(errorsSeen)
+	for message := range errorsSeen {
+		t.Error(message)
+	}
+}
+
 func TestVersionedConcurrentCAS(t *testing.T) {
 	bothVersioned(t, func(t *testing.T, s *VersionedStore) {
 		v, _ := s.Acquire()
@@ -221,7 +372,7 @@ func TestVersionedCapacityAndOverflow(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	s.current.Store(boundary)
+	s.current.Store(&versionedGeneration{snapshot: boundary})
 	v, _ = s.Acquire()
 	if _, e = s.Replace(expectation(v), "overflow", nil); !errors.Is(e, ErrRevisionOverflow) {
 		t.Fatal(e)

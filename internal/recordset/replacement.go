@@ -12,6 +12,12 @@ type Replacement struct {
 	RulesetID, LineageID, OperationID string
 	Revision                          uint64
 	Records                           []Record
+	operatorSuppliedProvenance        OperatorSuppliedProvenance
+	hasOperatorSuppliedProvenance     bool
+}
+
+func (r Replacement) OperatorSuppliedProvenance() (OperatorSuppliedProvenance, bool) {
+	return r.operatorSuppliedProvenance, r.hasOperatorSuppliedProvenance
 }
 
 func ParseReplacement(raw []byte) (Replacement, error) {
@@ -22,7 +28,7 @@ func ParseReplacement(raw []byte) (Replacement, error) {
 	if !utf8.Valid(raw) || !validUnicodeEscapes(raw) {
 		return fail, ErrInvalid
 	}
-	fields, e := object(raw, []string{"expected", "operation_id", "records"}, nil)
+	fields, e := object(raw, []string{"expected", "operation_id", "records"}, []string{"operator_supplied_provenance"})
 	if e != nil {
 		return fail, e
 	}
@@ -61,5 +67,12 @@ func ParseReplacement(raw []byte) (Replacement, error) {
 		return fail, e
 	}
 	r.Records = snapshot.Records()
+	if rawProvenance, ok := fields["operator_supplied_provenance"]; ok {
+		r.operatorSuppliedProvenance, e = ParseOperatorSuppliedProvenance(rawProvenance)
+		if e != nil || r.operatorSuppliedProvenance.ContentSHA256() != snapshot.Metadata().ContentSHA256 {
+			return fail, ErrInvalid
+		}
+		r.hasOperatorSuppliedProvenance = true
+	}
 	return r, nil
 }

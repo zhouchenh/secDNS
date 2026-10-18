@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/zhouchenh/secDNS/internal/recordset"
@@ -49,6 +50,49 @@ func legacyFixture(t *testing.T, path string, rows []legacyRow) {
 		t.Fatal(e)
 	}
 }
+
+func versionedV2Fixture(t *testing.T, path string) Receipt {
+	t.Helper()
+	records := exactRecords("192.0.2.1")
+	snapshot, err := recordset.New(enrollment.RulesetID, enrollment.LineageID, 2, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 18, 1, 2, 3, 456, time.UTC)
+	receipt := Receipt{
+		OperationID:   "legacy-op",
+		RequestSHA256: requestDigest(Expected{enrollment.RulesetID, enrollment.LineageID, 1}, snapshot.Metadata().ContentSHA256),
+		Revision:      2,
+		ContentSHA256: snapshot.Metadata().ContentSHA256,
+		CommittedAt:   at,
+	}
+	db, err := openExclusiveDatabase(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for _, q := range []string{snapshotTableSQLV2, receiptTableSQLV2, fmt.Sprintf("PRAGMA application_id=%d", applicationID), "PRAGMA user_version=2"} {
+		if _, err = tx.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wire, _ := snapshot.MarshalJSON()
+	if _, err = tx.Exec("INSERT INTO snapshot_state(id,envelope) VALUES(1,?)", wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at) VALUES(?,?,?,?,?)", receipt.OperationID, receipt.RequestSHA256, "2", receipt.ContentSHA256, at.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return receipt
+}
 func migrationEnrollment() Enrollment { e := enrollment; e.AllowSchema1Migration = true; return e }
 func fileDigest(t *testing.T, path string) [32]byte {
 	t.Helper()
@@ -88,6 +132,83 @@ func TestVersionedMigrationPreservesExpiredTTLAndTXT(t *testing.T) {
 	if again.Metadata() != v.Metadata() || len(again.Records()) != 2 {
 		t.Fatal("migration restarted differently")
 	}
+}
+
+func TestVersionedSchema2CompatibilityMigrationAndProvenanceRestart(t *testing.T) {
+	p := dbPath(t)
+	legacyReceipt := versionedV2Fixture(t, p)
+	s, err := OpenVersionedSQLite(p, enrollment)
+	if err != nil || s.schemaVersion != 2 {
+		t.Fatal("schema 2 compatibility open", s, err)
+	}
+	base, _ := s.Acquire()
+	retry, err := s.Replace(Expected{enrollment.RulesetID, enrollment.LineageID, 1}, "legacy-op", exactRecords("192.0.2.1"))
+	if err != nil || retry != legacyReceipt {
+		t.Fatal("schema 2 legacy retry", retry, err)
+	}
+	provenance := operatorProvenance(t, exactRecords("192.0.2.2"), "3")
+	if _, err = s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "not-yet", exactRecords("192.0.2.2"), provenance); !errors.Is(err, ErrOperatorProvenanceUnavailable) {
+		t.Fatal("schema 2 accepted provenance", err)
+	}
+	legacySecond, err := s.Replace(expectation(base), "legacy-second", exactRecords("192.0.2.2"))
+	if err != nil || legacySecond.Revision != 3 {
+		t.Fatal("schema 2 legacy write", legacySecond, err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrate := enrollment
+	migrate.AllowSchema2Migration = true
+	s, err = OpenVersionedSQLite(p, migrate)
+	if err != nil || s.schemaVersion != 3 {
+		t.Fatal("explicit schema 2 migration", s, err)
+	}
+	if retry, err = s.Replace(Expected{enrollment.RulesetID, enrollment.LineageID, 1}, "legacy-op", exactRecords("192.0.2.1")); err != nil || retry != legacyReceipt {
+		t.Fatal("legacy retry changed after migration", retry, err)
+	}
+	beforeProvenance, _ := s.Acquire()
+	provenance = operatorProvenance(t, exactRecords("192.0.2.3"), "4")
+	withProvenance, err := s.ReplaceWithOperatorSuppliedProvenance(expectation(beforeProvenance), "provenance-op", exactRecords("192.0.2.3"), provenance)
+	if err != nil || withProvenance.Revision != 4 {
+		t.Fatal(withProvenance, err)
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err = OpenVersionedSQLite(p, enrollment)
+	if err != nil || s.schemaVersion != 3 {
+		t.Fatal("schema 3 reopen", s, err)
+	}
+	defer s.Close()
+	view, _ := s.Acquire()
+	if got, ok := view.OperatorSuppliedProvenance(); !ok || got != provenance {
+		t.Fatal("reopen lost provenance", got, ok)
+	}
+	if retry, err = s.ReplaceWithOperatorSuppliedProvenance(expectation(beforeProvenance), "provenance-op", exactRecords("192.0.2.3"), provenance); err != nil || retry != withProvenance {
+		t.Fatal("provenance retry changed after restart", retry, err)
+	}
+}
+
+func TestVersionedSchema2MigrationRollback(t *testing.T) {
+	p := dbPath(t)
+	versionedV2Fixture(t, p)
+	before := fileDigest(t, p)
+	migrate := enrollment
+	migrate.AllowSchema2Migration = true
+	hooks := versionedHooks{beforeCommit: func(*sql.Tx) error { return errors.New("test migration refusal") }}
+	if _, err := openVersionedSQLite(p, migrate, hooks); !errors.Is(err, ErrVersionedStorage) {
+		t.Fatal(err)
+	}
+	if fileDigest(t, p) != before {
+		t.Fatal("failed schema 2 migration changed bytes")
+	}
+	s, err := OpenVersionedSQLite(p, enrollment)
+	if err != nil || s.schemaVersion != 2 {
+		t.Fatal("failed migration did not retain schema 2", err)
+	}
+	s.Close()
 }
 
 func TestVersionedMigrationPreservesJSONLookingTXT(t *testing.T) {
@@ -231,6 +352,98 @@ func TestVersionedRejectsCorruptLedgerAndSchema(t *testing.T) {
 		t.Fatal("corrupt DB admitted")
 	}
 }
+
+func TestVersionedRejectsCorruptOperatorSuppliedProvenance(t *testing.T) {
+	for name, mutate := range map[string]func(*testing.T, string, []byte){
+		"snapshot-text-type": func(t *testing.T, path string, _ []byte) {
+			mutateVersionedFile(t, path, "UPDATE snapshot_state SET operator_provenance=CAST(operator_provenance AS TEXT)")
+		},
+		"receipt-noncanonical": func(t *testing.T, path string, wire []byte) {
+			mutateVersionedFile(t, path, "UPDATE operation_receipts SET operator_provenance=?", append([]byte(" "), wire...))
+		},
+		"snapshot-receipt-mismatch": func(t *testing.T, path string, wire []byte) {
+			var decoded map[string]string
+			if json.Unmarshal(wire, &decoded) != nil {
+				t.Fatal("decode fixture")
+			}
+			decoded["source_sha256"] = strings.Repeat("9", 64)
+			other, _ := recordset.NewOperatorSuppliedProvenance(decoded["profile"], decoded["source_sha256"], decoded["content_sha256"])
+			otherWire, _ := other.MarshalJSON()
+			mutateVersionedFile(t, path, "UPDATE snapshot_state SET operator_provenance=?", otherWire)
+		},
+		"tuple-digest-mismatch": func(t *testing.T, path string, wire []byte) {
+			var decoded map[string]string
+			if json.Unmarshal(wire, &decoded) != nil {
+				t.Fatal("decode fixture")
+			}
+			decoded["source_sha256"] = strings.Repeat("9", 64)
+			other, _ := recordset.NewOperatorSuppliedProvenance(decoded["profile"], decoded["source_sha256"], decoded["content_sha256"])
+			otherWire, _ := other.MarshalJSON()
+			mutateVersionedFile(t, path, "UPDATE snapshot_state SET operator_provenance=?", otherWire)
+			mutateVersionedFile(t, path, "UPDATE operation_receipts SET operator_provenance=?", otherWire)
+		},
+		"tuple-content-mismatch": func(t *testing.T, path string, wire []byte) {
+			var decoded map[string]string
+			if json.Unmarshal(wire, &decoded) != nil {
+				t.Fatal("decode fixture")
+			}
+			decoded["content_sha256"] = strings.Repeat("0", 64)
+			other, _ := recordset.NewOperatorSuppliedProvenance(decoded["profile"], decoded["source_sha256"], decoded["content_sha256"])
+			otherWire, _ := other.MarshalJSON()
+			mutateVersionedFile(t, path, "UPDATE snapshot_state SET operator_provenance=?", otherWire)
+			mutateVersionedFile(t, path, "UPDATE operation_receipts SET operator_provenance=?", otherWire)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := dbPath(t)
+			s := openVersionedTest(t, p)
+			base, _ := s.Acquire()
+			records := exactRecords("192.0.2.1")
+			provenance := operatorProvenance(t, records, "8")
+			if _, err := s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "with-provenance", records, provenance); err != nil {
+				t.Fatal(err)
+			}
+			wire, _ := provenance.MarshalJSON()
+			s.Close()
+			mutate(t, p, wire)
+			if _, err := OpenVersionedSQLite(p, enrollment); !errors.Is(err, ErrVersionedSchema) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestVersionedProvenanceReceiptFailureIsAtomic(t *testing.T) {
+	s := openVersionedTest(t, dbPath(t))
+	defer s.Close()
+	base, _ := s.Acquire()
+	records := exactRecords("192.0.2.1")
+	provenance := operatorProvenance(t, records, "7")
+	if _, err := s.db.Exec("CREATE TRIGGER fail_provenance_receipt BEFORE INSERT ON operation_receipts BEGIN SELECT RAISE(ABORT,'test'); END"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "failed-provenance", records, provenance); !errors.Is(err, ErrVersionedStorage) {
+		t.Fatal(err)
+	}
+	current, _ := s.Acquire()
+	if current.Metadata() != base.Metadata() {
+		t.Fatal("failed provenance commit published snapshot")
+	}
+	if _, ok := current.OperatorSuppliedProvenance(); ok {
+		t.Fatal("failed provenance commit published tuple")
+	}
+	var stored any
+	if err := s.db.QueryRow("SELECT operator_provenance FROM snapshot_state WHERE id=1").Scan(&stored); err != nil || stored != nil {
+		t.Fatal("failed provenance commit changed durable tuple", stored, err)
+	}
+	if _, err := s.db.Exec("DROP TRIGGER fail_provenance_receipt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ReplaceWithOperatorSuppliedProvenance(expectation(base), "healthy-provenance", records, provenance); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestVersionedReceiptInsertFailureAndReadOnly(t *testing.T) {
 	s := openVersionedTest(t, dbPath(t))
 	v, _ := s.Acquire()
@@ -429,7 +642,7 @@ func TestVersionedDurableLedgerCapacity(t *testing.T) {
 	at := time.Now().UTC().Format(time.RFC3339Nano)
 	for n := 1; n <= MaxOperationReceipts; n++ {
 		request := requestDigest(Expected{"test", "lineage", uint64(n)}, snapshot.Metadata().ContentSHA256)
-		if _, e = tx.Exec("INSERT INTO operation_receipts VALUES(?,?,?,?,?)", fmt.Sprint("op", n), request, fmt.Sprint(n+1), snapshot.Metadata().ContentSHA256, at); e != nil {
+		if _, e = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at) VALUES(?,?,?,?,?)", fmt.Sprint("op", n), request, fmt.Sprint(n+1), snapshot.Metadata().ContentSHA256, at); e != nil {
 			t.Fatal(e)
 		}
 	}

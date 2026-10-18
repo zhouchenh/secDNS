@@ -2,10 +2,9 @@
 
 This internal opt-in store provides atomic generations for the exact snapshot
 format described in [exact record snapshots](exact-record-snapshots.md). It is
-not activated by configuration, DNS resolvers, the editor, or HTTP endpoints.
-Legacy `Store`, its API, and its database schema remain the default. There is no
-network synchronization, follower protocol, authority election, or automatic
-production migration in this change.
+activated only by an explicit `versionedRecordStores` binding; legacy `Store`, its
+API, and its database schema remain the default. There is no automatic network
+synchronization, authority election, or production migration in this change.
 
 ## Identity, reads and replacement
 
@@ -33,6 +32,14 @@ the same ID and request returns its original result, even after newer revisions;
 the same ID with different input conflicts. A stale new operation conflicts.
 Digests detect content changes; they are not authentication or signatures.
 
+`ReplaceWithOperatorSuppliedProvenance` additionally binds the fixed
+`secdns.routeros-exact-explicit.v1` profile, an operator-supplied source SHA-256,
+and the server-checked canonical content SHA-256. It uses a separate request-digest
+domain. The source hash and profile are assertions, not proof that bytes came from
+RouterOS or that a particular compiler produced them. Legacy `Replace` keeps its
+original digest preimage exactly and clears provenance on the new generation.
+Snapshot and optional provenance publish through one immutable atomic generation.
+
 SQLite updates the snapshot and inserts the receipt in one transaction, then
 publishes the new immutable pointer only after commit. Failure leaves both
 memory and durable state unchanged. `Close` waits for an in-flight writer before
@@ -41,12 +48,12 @@ these operations only within its process and offers no restart durability.
 
 ## Schema and ownership
 
-SQLite uses application ID 1396985427 and schema version 2, with exactly two
+SQLite uses application ID 1396985427 and schema version 3, with exactly two
 non-internal tables:
 
 ```sql
-CREATE TABLE snapshot_state (id INTEGER PRIMARY KEY CHECK(id=1), envelope BLOB NOT NULL);
-CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL);
+CREATE TABLE snapshot_state (id INTEGER PRIMARY KEY CHECK(id=1), envelope BLOB NOT NULL, operator_provenance BLOB);
+CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL, operator_provenance BLOB);
 ```
 
 The single envelope is the source of truth; there is no separately editable row
@@ -56,6 +63,10 @@ precision. Receipts must be valid, contiguous and unique from revision 2 through
 the current revision, and the latest digest must match the envelope. Size guards
 use byte length, including embedded NUL tails, before loading payloads. Unexpected
 tables, triggers, schema versions, storage types or inconsistent history fail.
+Provenance is NULL when absent or a bounded canonical JSON BLOB when present. Its
+content hash must match its snapshot or receipt, and the current snapshot tuple must
+match the latest receipt. Noncanonical, partial, mismatched or text-typed values fail
+strict open.
 
 The first ledger is capped at 10,000 receipts, without eviction. At capacity,
 matching retries still work but new operations fail with `ErrReceiptCapacity`.
@@ -72,7 +83,7 @@ filesystem stall. The design supports one local authority process, not shared
 SQLite writers, network filesystems, copied live database files or WAL replication.
 Local commit success does not imply any follower has received the generation.
 
-## Explicit schema 1 conversion
+## Explicit schema conversion
 
 Only `OpenVersionedSQLite` with `AllowSchema1Migration:true` converts schema 1.
 The default rejects it with `ErrMigrationRequired`. The conversion reads every
@@ -83,23 +94,31 @@ format. Incompatible duplicate addresses, escaped/Unicode names, malformed data,
 or retained CNAME conflicts cause refusal; no records are silently dropped,
 merged or repaired.
 
-Creating schema 2, storing the snapshot, dropping schema 1 and changing the
+Creating schema 3, storing the snapshot, dropping schema 1 and changing the
 version happen in the same transaction. Errors or failed commits preserve the
-original schema and data. Old legacy binaries refuse schema 2. Operational
+original schema and data. Old legacy binaries refuse schema 3. Operational
 rollback therefore requires a separately prepared pre-migration backup; this
 package provides no downgrade or automatic restore. No real database is migrated
 by merely building or merging this source change.
+
+A valid schema-2 database opens in compatibility mode by default. Its legacy
+replacements and receipt digests remain byte-compatible; a provenance-bearing
+replacement is refused before mutation. `AllowSchema2Migration:true` adds the two
+nullable columns and changes the version in one transaction after fully validating
+the old state. Existing envelopes, receipts and request digests are not rewritten.
+Runtime configuration supplies neither migration permission, so existing instances
+are never upgraded automatically.
 
 ## Verification and next boundary
 
 Synthetic tests cover CAS contention and replay, immutable reads while commit is
 blocked, Close ordering, exact expiry across restart, ledger capacity, malformed
-and oversized storage, transactional migration/refusal, deferred-constraint commit
+and oversized storage, schema-2 compatibility, transactional migration/refusal,
+provenance restart/replay and corruption, deferred-constraint commit
 failure followed by a successful write, receipt insert failure, read-only writes,
 exclusive ownership, and subprocess death before/after commit. Private test hooks
 are inaccessible to configuration or API callers.
 
-The next integration must acquire one view for an entire same-store CNAME lookup
-and must require CAS/idempotency metadata for versioned mutations. Until that
-separate change is reviewed, do not claim query-pinned authority responses,
-cluster synchronization or conflict-safe GUI editing from this substrate alone.
+Resolvers acquire one view for an entire same-store CNAME lookup and versioned
+mutations require CAS/idempotency metadata. This substrate still does not establish
+cluster synchronization, source authenticity, or cross-store atomicity.

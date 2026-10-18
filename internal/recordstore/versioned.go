@@ -23,39 +23,55 @@ var ErrReceiptCapacity = errors.New("exact store receipt capacity reached")
 var ErrRevisionOverflow = errors.New("exact store revision exhausted")
 var ErrVersionedSchema = errors.New("unsupported or inconsistent exact store schema")
 var ErrMigrationRequired = errors.New("explicit exact store migration required")
+var ErrOperatorProvenanceUnavailable = errors.New("operator-supplied provenance is unavailable for this exact store schema")
 var ErrVersionedStorage = errors.New("exact store storage failure")
 var ErrVersionedInput = errors.New("invalid exact store input")
 
 type Enrollment struct {
-	RulesetID, LineageID  string
-	AllowSchema1Migration bool
+	RulesetID, LineageID                         string
+	AllowSchema1Migration, AllowSchema2Migration bool
 }
 type Expected struct {
 	RulesetID, LineageID string
 	Revision             uint64
 }
 type Receipt struct {
-	OperationID, RequestSHA256 string
-	Revision                   uint64
-	ContentSHA256              string
-	CommittedAt                time.Time
+	OperationID, RequestSHA256    string
+	Revision                      uint64
+	ContentSHA256                 string
+	CommittedAt                   time.Time
+	operatorSuppliedProvenance    recordset.OperatorSuppliedProvenance
+	hasOperatorSuppliedProvenance bool
+}
+
+func (r Receipt) OperatorSuppliedProvenance() (recordset.OperatorSuppliedProvenance, bool) {
+	return r.operatorSuppliedProvenance, r.hasOperatorSuppliedProvenance
+}
+
+type versionedGeneration struct {
+	snapshot                      *recordset.Snapshot
+	operatorSuppliedProvenance    recordset.OperatorSuppliedProvenance
+	hasOperatorSuppliedProvenance bool
 }
 
 // View pins one immutable generation and one expiry instant. It remains usable
 // after publication of another generation or Close. No resolver is wired here.
 type View struct {
-	snapshot *recordset.Snapshot
-	at       time.Time
+	generation *versionedGeneration
+	at         time.Time
 }
 
-func (v View) Metadata() recordset.Metadata    { return v.snapshot.Metadata() }
+func (v View) Metadata() recordset.Metadata    { return v.generation.snapshot.Metadata() }
 func (v View) CapturedAt() time.Time           { return v.at }
-func (v View) Records() []recordset.Record     { return v.snapshot.Records() }
-func (v View) LiveRecords() []recordset.Record { return v.snapshot.RecordsAt(v.at) }
+func (v View) Records() []recordset.Record     { return v.generation.snapshot.Records() }
+func (v View) LiveRecords() []recordset.Record { return v.generation.snapshot.RecordsAt(v.at) }
 func (v View) Lookup(name, typ string) (recordset.Record, bool) {
-	return v.snapshot.Lookup(name, typ, v.at)
+	return v.generation.snapshot.Lookup(name, typ, v.at)
 }
-func (v View) MarshalJSON() ([]byte, error) { return v.snapshot.MarshalJSON() }
+func (v View) MarshalJSON() ([]byte, error) { return v.generation.snapshot.MarshalJSON() }
+func (v View) OperatorSuppliedProvenance() (recordset.OperatorSuppliedProvenance, bool) {
+	return v.generation.operatorSuppliedProvenance, v.generation.hasOperatorSuppliedProvenance
+}
 
 type versionedHooks struct {
 	beforeCommit func(*sql.Tx) error
@@ -65,12 +81,13 @@ type versionedHooks struct {
 // VersionedStore is an opt-in exact snapshot substrate. Legacy Store and its
 // configuration/API are unchanged. One process exclusively owns a SQLite file.
 type VersionedStore struct {
-	mu       sync.Mutex
-	current  atomic.Pointer[recordset.Snapshot]
-	receipts map[string]Receipt
-	db       *sql.DB
-	now      func() time.Time
-	hooks    versionedHooks
+	mu            sync.Mutex
+	current       atomic.Pointer[versionedGeneration]
+	receipts      map[string]Receipt
+	db            *sql.DB
+	schemaVersion int
+	now           func() time.Time
+	hooks         versionedHooks
 }
 
 func validOperationID(s string) bool {
@@ -89,8 +106,8 @@ func NewVersionedMemory(e Enrollment) (*VersionedStore, error) {
 	if err != nil {
 		return nil, ErrVersionedInput
 	}
-	s := &VersionedStore{receipts: map[string]Receipt{}, now: time.Now}
-	s.current.Store(initial)
+	s := &VersionedStore{receipts: map[string]Receipt{}, schemaVersion: 3, now: time.Now}
+	s.current.Store(&versionedGeneration{snapshot: initial})
 	return s, nil
 }
 
@@ -113,12 +130,32 @@ func requestDigest(e Expected, content string) string {
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:])
 }
+
+func requestDigestWithOperatorSuppliedProvenance(e Expected, content string, provenance recordset.OperatorSuppliedProvenance) string {
+	payload, _ := json.Marshal(struct {
+		Kind, RulesetID, LineageID string
+		Revision                   uint64 `json:",string"`
+		ContentSHA256              string
+		OperatorSuppliedProvenance recordset.OperatorSuppliedProvenance
+	}{"replace-exact-with-operator-supplied-provenance-v1", e.RulesetID, e.LineageID, e.Revision, content, provenance})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
 func (s *VersionedStore) Replace(expected Expected, operationID string, records []recordset.Record) (Receipt, error) {
+	return s.replace(expected, operationID, records, nil)
+}
+
+func (s *VersionedStore) ReplaceWithOperatorSuppliedProvenance(expected Expected, operationID string, records []recordset.Record, provenance recordset.OperatorSuppliedProvenance) (Receipt, error) {
+	return s.replace(expected, operationID, records, &provenance)
+}
+
+func (s *VersionedStore) replace(expected Expected, operationID string, records []recordset.Record, provenance *recordset.OperatorSuppliedProvenance) (Receipt, error) {
 	initial := s.current.Load()
 	if initial == nil {
 		return Receipt{}, ErrClosed
 	}
-	identity := initial.Metadata()
+	identity := initial.snapshot.Metadata()
 	if expected.RulesetID != identity.RulesetID || expected.LineageID != identity.LineageID {
 		return Receipt{}, ErrIdentity
 	}
@@ -131,15 +168,24 @@ func (s *VersionedStore) Replace(expected Expected, operationID string, records 
 		return Receipt{}, ErrVersionedInput
 	}
 	request := requestDigest(expected, candidate.Metadata().ContentSHA256)
+	if provenance != nil {
+		if !provenance.Valid() || provenance.ContentSHA256() != candidate.Metadata().ContentSHA256 {
+			return Receipt{}, ErrVersionedInput
+		}
+		request = requestDigestWithOperatorSuppliedProvenance(expected, candidate.Metadata().ContentSHA256, *provenance)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current := s.current.Load()
 	if current == nil {
 		return Receipt{}, ErrClosed
 	}
-	meta := current.Metadata()
+	meta := current.snapshot.Metadata()
 	if expected.RulesetID != meta.RulesetID || expected.LineageID != meta.LineageID {
 		return Receipt{}, ErrIdentity
+	}
+	if provenance != nil && s.db != nil && s.schemaVersion < 3 {
+		return Receipt{}, ErrOperatorProvenanceUnavailable
 	}
 	if receipt, ok := s.receipts[operationID]; ok {
 		if receipt.RequestSHA256 != request {
@@ -164,9 +210,16 @@ func (s *VersionedStore) Replace(expected Expected, operationID string, records 
 	if at.Year() < 1 || at.Year() > 9999 || at.IsZero() {
 		return Receipt{}, ErrVersionedInput
 	}
-	receipt := Receipt{operationID, request, next.Metadata().Revision, next.Metadata().ContentSHA256, at}
+	receipt := Receipt{OperationID: operationID, RequestSHA256: request, Revision: next.Metadata().Revision, ContentSHA256: next.Metadata().ContentSHA256, CommittedAt: at}
+	generation := &versionedGeneration{snapshot: next}
+	if provenance != nil {
+		receipt.operatorSuppliedProvenance = *provenance
+		receipt.hasOperatorSuppliedProvenance = true
+		generation.operatorSuppliedProvenance = *provenance
+		generation.hasOperatorSuppliedProvenance = true
+	}
 	if s.db != nil {
-		if err := s.persistReplacement(next, receipt); err != nil {
+		if err := s.persistReplacement(generation, receipt); err != nil {
 			return Receipt{}, ErrVersionedStorage
 		}
 	} else if s.hooks.beforeCommit != nil {
@@ -178,7 +231,7 @@ func (s *VersionedStore) Replace(expected Expected, operationID string, records 
 		s.hooks.afterCommit()
 	}
 	s.receipts[operationID] = receipt
-	s.current.Store(next)
+	s.current.Store(generation)
 	return receipt, nil
 }
 func (s *VersionedStore) Close() error {
