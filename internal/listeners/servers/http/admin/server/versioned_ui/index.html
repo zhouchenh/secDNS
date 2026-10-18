@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Versioned DNS records · SecDNS</title><link rel="stylesheet" href="style.css"><script defer src="state.js"></script><script defer src="app.js"></script></head>
 <body><header><strong>SecDNS</strong><span>Operations</span><span id="connection">Disconnected</span></header><main>
+<p class="hint"><a href="import-preview/" target="_blank" rel="noopener noreferrer">RouterOS import preview</a> opens in a separate page; this workspace stays here.</p>
 <div class="heading"><div><p class="eyebrow">VERSIONED EXACT RECORDS</p><h1>DNS record workspace</h1><p>Review local changes, then replace one complete record snapshot.</p></div><button id="disconnect" hidden>Disconnect</button></div>
 <section id="login" class="card"><h2>Connect to this server</h2><p id="endpoint"></p><form id="connect-form"><label for="token">Admin access token</label><div class="inline"><input id="token" type="password" autocomplete="off" required spellcheck="false"><button id="connect" class="primary">Connect</button></div></form><p class="hint">Credentials stay in this page’s memory. Reconnecting preserves local work.</p></section>
 <p id="status" role="status" aria-live="polite"></p>
