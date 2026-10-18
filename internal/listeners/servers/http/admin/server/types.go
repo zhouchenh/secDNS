@@ -94,6 +94,7 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 	}
 	if h.versioned != nil {
 		mux.HandleFunc("GET "+base+"/snapshot", h.auth(h.handleSnapshot))
+		mux.HandleFunc("GET "+base+"/snapshot/events", h.auth(h.handleSnapshotEvents))
 		mux.HandleFunc("POST "+base+"/snapshot", h.auth(h.handleReplace))
 		blocked := h.auth(func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "versioned_batch_required"})
