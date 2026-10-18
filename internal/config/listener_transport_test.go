@@ -424,3 +424,235 @@ func TestSourcePolicyDualClientTransportAndCacheIsolation(t *testing.T) {
 		})
 	}
 }
+
+type taggedUDPObservation struct {
+	name   string
+	source string
+}
+
+type taggedUDPUpstream struct {
+	connection net.PacketConn
+	port       int
+	tag        string
+
+	mu           sync.Mutex
+	observations []taggedUDPObservation
+}
+
+func startTaggedUDPUpstream(t *testing.T, network, host, tag string) *taggedUDPUpstream {
+	t.Helper()
+	connection, err := net.ListenPacket(network, net.JoinHostPort(host, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := &taggedUDPUpstream{connection: connection, tag: tag}
+	switch address := connection.LocalAddr().(type) {
+	case *net.UDPAddr:
+		upstream.port = address.Port
+	default:
+		connection.Close()
+		t.Fatalf("unexpected upstream address %T", address)
+	}
+	t.Cleanup(func() { _ = connection.Close() })
+	go func() {
+		buffer := make([]byte, 64<<10)
+		for {
+			n, peer, readErr := connection.ReadFrom(buffer)
+			if readErr != nil {
+				return
+			}
+			var query dns.Msg
+			if unpackErr := query.Unpack(buffer[:n]); unpackErr != nil {
+				t.Errorf("%s upstream unpack: %v", tag, unpackErr)
+				continue
+			}
+			if len(query.Question) != 1 {
+				t.Errorf("%s upstream question count: %d", tag, len(query.Question))
+				continue
+			}
+			peerAddress, ok := peer.(*net.UDPAddr)
+			if !ok {
+				t.Errorf("%s upstream peer type: %T", tag, peer)
+				continue
+			}
+			upstream.mu.Lock()
+			upstream.observations = append(upstream.observations, taggedUDPObservation{
+				name: query.Question[0].Name, source: peerAddress.IP.String(),
+			})
+			upstream.mu.Unlock()
+
+			answer := new(dns.Msg)
+			answer.SetReply(&query)
+			answer.Answer = []dns.RR{&dns.TXT{
+				Hdr: dns.RR_Header{Name: query.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 60},
+				Txt: []string{tag},
+			}}
+			wire, packErr := answer.Pack()
+			if packErr != nil {
+				t.Errorf("%s upstream pack: %v", tag, packErr)
+				continue
+			}
+			if _, writeErr := connection.WriteTo(wire, peer); writeErr != nil {
+				return
+			}
+		}
+	}()
+	return upstream
+}
+
+func (u *taggedUDPUpstream) snapshot() []taggedUDPObservation {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]taggedUDPObservation(nil), u.observations...)
+}
+
+// TestObservedEgressPolicyComposition is a local resolver-policy regression.
+// Its upstream labels mirror the observed RouterHK classes, but it does not
+// emulate policy routing, NAT64 translation, or any production interface.
+func TestObservedEgressPolicyComposition(t *testing.T) {
+	for _, protocol := range []string{"udp", "tcp"} {
+		t.Run(protocol, func(t *testing.T) {
+			defaultUpstream := startTaggedUDPUpstream(t, "udp4", "127.0.0.1", "default-source")
+			hkt2IPv4 := startTaggedUDPUpstream(t, "udp4", "127.0.0.1", "hkt2-ipv4")
+			mainIPv6 := startTaggedUDPUpstream(t, "udp6", "::1", "main-native-ipv6")
+			hkt2NAT64 := startTaggedUDPUpstream(t, "udp6", "::1", "hkt2-nat64-destination")
+
+			dnsPort := freeTransportPort(t, protocol)
+			const (
+				ipv4Name  = "ipv4-upstream.invalid."
+				nativeV6  = "native-ipv6-upstream.invalid."
+				nat64Name = "nat64-destination.invalid."
+			)
+			nameServer := func(address, sendThrough string, port int) map[string]any {
+				return map[string]any{
+					"address": address, "port": port, "protocol": "udp",
+					"queryTimeout": 0.5, "sendThrough": sendThrough,
+				}
+			}
+			config := map[string]any{
+				"listeners": []any{map[string]any{
+					"type": "dnsServer", "sourcePolicyRole": "normal",
+					"config": map[string]any{"listen": "127.0.0.1", "port": dnsPort, "protocol": protocol},
+				}},
+				"resolvers": map[string]any{
+					"nameServer": map[string]any{
+						"default-upstream": nameServer("127.0.0.1", "127.0.0.1", defaultUpstream.port),
+						"hkt2-ipv4":        nameServer("127.0.0.1", "127.0.0.2", hkt2IPv4.port),
+						"main-native-ipv6": nameServer("::1", "::1", mainIPv6.port),
+						"hkt2-nat64":       nameServer("::1", "::1", hkt2NAT64.port),
+					},
+					"policy": map[string]any{
+						"default-policy": map[string]any{"rules": []any{}, "defaultResolver": "default-upstream"},
+						"observed-hkt2-policy": map[string]any{
+							"rules": []any{map[string]any{"type": "collection", "config": []any{
+								map[string]any{"name": strconv.Quote(ipv4Name), "resolver": "hkt2-ipv4"},
+								map[string]any{"name": strconv.Quote(nativeV6), "resolver": "main-native-ipv6"},
+								map[string]any{"name": strconv.Quote(nat64Name), "resolver": "hkt2-nat64"},
+							}}},
+							"defaultResolver": "hkt2-ipv4",
+						},
+					},
+					"cache": map[string]any{
+						"default-cache": map[string]any{"resolver": "default-policy", "maxEntries": 32},
+						"hkt2-cache":    map[string]any{"resolver": "observed-hkt2-policy", "maxEntries": 32},
+					},
+				},
+				"sourcePolicy": map[string]any{
+					"sourceSets": []any{map[string]any{
+						"id": "observed-hkt2-source", "members": []any{map[string]any{"prefix": "127.0.0.2/32"}},
+					}},
+					"rules": []any{map[string]any{
+						"listenerRole": "normal", "sourceSet": "observed-hkt2-source", "resolver": "hkt2-cache",
+					}},
+					"defaults": []any{map[string]any{"listenerRole": "normal", "resolver": "default-cache"}},
+				},
+				"rules": []any{}, "defaultResolver": "default-cache",
+			}
+			raw, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateConfig(strings.NewReader(string(raw))); err != nil {
+				t.Fatal(err)
+			}
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(executable, "-test.run=^TestListenerPolicyTransportHelper$")
+			cmd.Env = append(os.Environ(), "SECDNS_POLICY_TEST_CONFIG="+string(raw))
+			if err = cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+			endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(dnsPort))
+			ask := func(source, name, wantTag string) {
+				t.Helper()
+				var local net.Addr
+				if protocol == "udp" {
+					local = &net.UDPAddr{IP: net.ParseIP(source)}
+				} else {
+					local = &net.TCPAddr{IP: net.ParseIP(source)}
+				}
+				client := &dns.Client{Net: protocol, Timeout: 300 * time.Millisecond, Dialer: &net.Dialer{LocalAddr: local}}
+				query := new(dns.Msg)
+				query.SetQuestion(name, dns.TypeTXT)
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					answer, _, exchangeErr := client.Exchange(query, endpoint)
+					if exchangeErr == nil {
+						if answer.Rcode != dns.RcodeSuccess || len(answer.Answer) != 1 {
+							t.Fatalf("source %s name %s: %v", source, name, answer)
+						}
+						txt, ok := answer.Answer[0].(*dns.TXT)
+						if !ok || len(txt.Txt) != 1 || txt.Txt[0] != wantTag {
+							t.Fatalf("source %s name %s: %v", source, name, answer.Answer)
+						}
+						return
+					}
+					if time.Now().After(deadline) {
+						t.Fatal(exchangeErr)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+
+			// Prime the same names through both source-selected graphs in mixed order.
+			ask("127.0.0.2", ipv4Name, "hkt2-ipv4")
+			ask("127.0.0.1", ipv4Name, "default-source")
+			ask("127.0.0.1", nativeV6, "default-source")
+			ask("127.0.0.2", nativeV6, "main-native-ipv6")
+			ask("127.0.0.2", nat64Name, "hkt2-nat64-destination")
+			ask("127.0.0.1", nat64Name, "default-source")
+			// Reversing the second pass proves the final-answer caches remain disjoint.
+			for _, name := range []string{nat64Name, nativeV6, ipv4Name} {
+				ask("127.0.0.1", name, "default-source")
+			}
+			for name, tag := range map[string]string{
+				ipv4Name: "hkt2-ipv4", nativeV6: "main-native-ipv6", nat64Name: "hkt2-nat64-destination",
+			} {
+				ask("127.0.0.2", name, tag)
+			}
+
+			assertObservations := func(upstream *taggedUDPUpstream, want map[string]string) {
+				t.Helper()
+				observed := upstream.snapshot()
+				if len(observed) != len(want) {
+					t.Fatalf("%s observations: %+v", upstream.tag, observed)
+				}
+				for _, item := range observed {
+					if wantSource, ok := want[item.name]; !ok || item.source != wantSource {
+						t.Fatalf("%s unexpected observation: %+v", upstream.tag, item)
+					}
+				}
+			}
+			assertObservations(defaultUpstream, map[string]string{
+				ipv4Name: "127.0.0.1", nativeV6: "127.0.0.1", nat64Name: "127.0.0.1",
+			})
+			assertObservations(hkt2IPv4, map[string]string{ipv4Name: "127.0.0.2"})
+			assertObservations(mainIPv6, map[string]string{nativeV6: "::1"})
+			assertObservations(hkt2NAT64, map[string]string{nat64Name: "::1"})
+		})
+	}
+}
