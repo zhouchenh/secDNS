@@ -122,7 +122,7 @@ func (h *HumanAuth) BeginEnrollment(grant, user, name, password, source string, 
 	}
 	s := h.store
 	s.mu.Lock()
-	if !s.healthy() || s.version != 3 {
+	if !s.healthy() || s.version < 3 {
 		s.mu.Unlock()
 		return Enrollment{}, ErrUnavailable
 	}
@@ -173,7 +173,7 @@ func (h *HumanAuth) checkPassword(user, password string) (*humanCeremony, error)
 	}
 	s := h.store
 	s.mu.Lock()
-	if !s.healthy() || s.version != 3 {
+	if !s.healthy() || s.version < 3 {
 		s.mu.Unlock()
 		return nil, ErrUnavailable
 	}
@@ -384,6 +384,11 @@ func (h *HumanAuth) confirm(challenge, code, source string, now time.Time, recen
 		}
 		if _, e = tx.Exec("INSERT INTO human VALUES(1,?,?,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET username=excluded.username,name=excluded.name,password=excluded.password,seed=excluded.seed,counter=excluded.counter,epoch=excluded.epoch", id, p.user, p.name, p.phc, enc, counter, epoch, now.Unix()); e != nil {
 			return ErrUnavailable
+		}
+		if s.version == 4 && (p.purpose == "recover" || p.purpose == "code-recover") {
+			if _, e = tx.Exec("DELETE FROM passkeys"); e != nil {
+				return ErrUnavailable
+			}
 		}
 		if _, e = tx.Exec("DELETE FROM recovery_codes"); e != nil {
 			return ErrUnavailable

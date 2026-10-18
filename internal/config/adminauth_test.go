@@ -141,3 +141,22 @@ func TestAdminAuthSingleRealmOnly(t *testing.T) {
 		t.Fatal("multiple independently valid realms admitted")
 	}
 }
+
+func TestPasskeyRPBindingValidation(t *testing.T) {
+	for _, rp := range []any{"invalid", 42, "admin.invalid:443", ""} {
+		raw, c, _ := authFixture(t)
+		raw["listeners"].([]interface{})[0].(map[string]interface{})["passkeyRPID"] = rp
+		if _, e := parseAdminBindings(raw, c); e == nil {
+			t.Fatal("invalid RP accepted", rp)
+		}
+	}
+	raw, c, _ := authFixture(t)
+	raw["listeners"].([]interface{})[0].(map[string]interface{})["passkeyRPID"] = "admin.invalid"
+	b, e := parseAdminBindings(raw, c)
+	if e != nil || b[0].passkeyRP != "admin.invalid" {
+		t.Fatal(e)
+	}
+	if e := validateAdminAuthSyntax([]byte(`{"listeners":[{"passkeyRPID":"a","passkeyRPID":"b"}]}`)); e == nil {
+		t.Fatal("duplicate RP binding")
+	}
+}

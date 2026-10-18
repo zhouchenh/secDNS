@@ -16,8 +16,13 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 	for k, v := range schema {
 		expectedSchema[k] = v
 	}
-	if expectedVersion == 3 {
+	if expectedVersion >= 3 {
 		for k, v := range humanSchema {
+			expectedSchema[k] = v
+		}
+	}
+	if expectedVersion == 4 {
+		for k, v := range passkeySchema {
 			expectedSchema[k] = v
 		}
 	}
@@ -126,7 +131,7 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 			return ErrInvalid
 		}
 	}
-	if tx.QueryRow(`SELECT count(*) FROM audit WHERE typeof(sequence)!='integer' OR sequence<=0 OR typeof(at)!='integer' OR at<=0 OR typeof(action)!='text' OR action NOT IN ('bootstrap_created','bootstrap_cancelled','agent_issued','agent_revoked','session_created','session_revoked','human_grant','human_grant_cancelled','human_setup','human_recovered','human_login','human_logout','human_reauth','human_codes','human_password','human_sessions_revoked') OR typeof(credential_id)!='text' OR (action IN ('bootstrap_created','bootstrap_cancelled','human_grant','human_grant_cancelled') AND credential_id!='') OR (action IN ('agent_issued','agent_revoked','session_created','session_revoked','human_setup','human_recovered','human_login','human_logout','human_reauth','human_codes','human_password','human_sessions_revoked') AND length(CAST(credential_id AS BLOB))!=32)`).Scan(&invalid) != nil || invalid != 0 {
+	if tx.QueryRow(`SELECT count(*) FROM audit WHERE typeof(sequence)!='integer' OR sequence<=0 OR typeof(at)!='integer' OR at<=0 OR typeof(action)!='text' OR action NOT IN ('bootstrap_created','bootstrap_cancelled','agent_issued','agent_revoked','session_created','session_revoked','human_grant','human_grant_cancelled','human_setup','human_recovered','human_login','human_logout','human_reauth','human_codes','human_password','human_sessions_revoked','passkey_added','passkey_renamed','passkey_removed','passkey_login','passkey_reauth','passkey_test','passkey_warning') OR typeof(credential_id)!='text' OR (action IN ('bootstrap_created','bootstrap_cancelled','human_grant','human_grant_cancelled') AND credential_id!='') OR (action IN ('agent_issued','agent_revoked','session_created','session_revoked','human_setup','human_recovered','human_login','human_logout','human_reauth','human_codes','human_password','human_sessions_revoked','passkey_added','passkey_renamed','passkey_removed','passkey_login','passkey_reauth','passkey_test','passkey_warning') AND length(CAST(credential_id AS BLOB))!=32)`).Scan(&invalid) != nil || invalid != 0 {
 		return ErrInvalid
 	}
 	if expectedVersion < 3 {
@@ -135,6 +140,16 @@ func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 		}
 	} else if e := s.validateHuman(tx); e != nil {
 		return e
+	}
+	if expectedVersion < 4 {
+		if tx.QueryRow("SELECT count(*) FROM audit WHERE action LIKE 'passkey_%'").Scan(&invalid) != nil || invalid != 0 {
+			return ErrInvalid
+		}
+	}
+	if expectedVersion == 4 {
+		if e := s.validatePasskeys(tx); e != nil {
+			return e
+		}
 	}
 	if expectedVersion == 1 {
 		if tx.QueryRow("SELECT count(*) FROM audit WHERE action IN ('session_created','session_revoked')").Scan(&invalid) != nil || invalid != 0 {

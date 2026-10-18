@@ -19,7 +19,9 @@ func run(args []string, out, errOut io.Writer) int {
 	f := flag.NewFlagSet("secdns-adminauth", flag.ContinueOnError)
 	f.SetOutput(errOut)
 	definition := f.String("definition", "", "Private JSON auth definition file")
-	operation := f.String("operation", "", "create, migrate-schema1, enable-human, setup-human, recover-human, cancel-human, issue-agent, cancel-bootstrap, revoke-agent")
+	operation := f.String("operation", "", "create, migrate-schema1, enable-human, enable-passkeys, setup-human, recover-human, cancel-human, issue-agent, cancel-bootstrap, revoke-agent")
+	origin := f.String("public-origin", "", "Exact HTTPS origin for explicit passkey migration")
+	rp := f.String("rp-id", "", "Exact origin hostname for explicit passkey migration")
 	name := f.String("name", "", "Agent display name")
 	sc := f.String("scopes", "", "Comma-separated exact scopes")
 	expiry := f.String("expires", "", "Optional RFC3339 absolute expiry")
@@ -67,6 +69,12 @@ func run(args []string, out, errOut io.Writer) int {
 			return fail()
 		}
 		fmt.Fprintln(out, "Authentication store created; run enable-human explicitly before human setup.")
+		return 0
+	case "enable-passkeys":
+		if adminauth.EnablePasskeySchema(d.Path, d.KeyPath, d.Identity(), nil, *origin, *rp) != nil {
+			return fail()
+		}
+		fmt.Fprintln(out, "Passkey schema enabled for the explicit RP identity. Configure passkeyRPID on the matching admin listener.")
 		return 0
 	case "enable-human":
 		if adminauth.EnableHumanSchema(d.Path, d.KeyPath, d.Identity(), nil) != nil {

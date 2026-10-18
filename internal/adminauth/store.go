@@ -154,8 +154,8 @@ func openWithCommit(path, keyPath string, id Identity, legacy []string, create, 
 	expectedVersion := 2
 	if !create && !migrate {
 		var actual int
-		if tx.QueryRow("PRAGMA user_version").Scan(&actual) == nil && actual == 3 {
-			expectedVersion = 3
+		if tx.QueryRow("PRAGMA user_version").Scan(&actual) == nil && (actual == 3 || actual == 4) {
+			expectedVersion = actual
 		}
 	}
 	if migrate {
@@ -269,7 +269,7 @@ func (s *Store) collides(tx *sql.Tx, d [32]byte) bool {
 	if e != nil || n != 0 {
 		return true
 	}
-	if s.version == 3 {
+	if s.version >= 3 {
 		if s.db == nil {
 			return true
 		}

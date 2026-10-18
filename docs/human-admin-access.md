@@ -1,6 +1,6 @@
 # Human owner sign-in
 
-Human sign-in is opt-in and node-local. It adds a username/password plus authenticator-code flow alongside the existing dedicated Agent access and legacy-token paths. It does not deploy a portal, create DNS records or certificates, synchronize identities between nodes, or change any record database. Passkeys and remote agent-credential management are subsequent work; no inactive controls claim those features.
+Human sign-in is opt-in and node-local. It adds a username/password plus authenticator-code flow alongside the existing dedicated Agent access and legacy-token paths. It does not deploy a portal, create DNS records or certificates, synchronize identities between nodes, or change any record database. Optional passkeys are available after separate explicit schema/RP setup; see [Passkeys](passkey-admin-access.md). Remote agent-credential management remains subsequent work.
 
 ## Enable explicitly while offline
 

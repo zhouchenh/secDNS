@@ -17,6 +17,7 @@ type authBinding struct {
 	server     *admin.HTTPAdminServer
 	definition adminauth.Definition
 	origin     string
+	passkeyRP  string
 	legacy     []string
 }
 type authInstance struct {
@@ -46,6 +47,12 @@ func (i *authInstance) PrepareAdminAuth() (func() error, error) {
 		}
 		stores = append(stores, s)
 		b.server.BindAgentAuth(s, b.origin)
+		if b.passkeyRP != "" {
+			if e := b.server.BindPasskeyAuth(b.passkeyRP); e != nil {
+				cleanup()
+				return nil, adminauth.ErrUnavailable
+			}
+		}
 	}
 	return cleanup, nil
 }
@@ -127,8 +134,9 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 		}
 		name, p := m["authStore"]
 		originRaw, op := m["publicOrigin"]
+		rpRaw, rpp := m["passkeyRPID"]
 		if !p {
-			if op {
+			if op || rpp {
 				return nil, adminauth.ErrInvalid
 			}
 			continue
@@ -157,9 +165,16 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 			}
 			hosts[u.Hostname()] = true
 		}
+		rp := ""
+		if rpp {
+			rp, ok = rpRaw.(string)
+			if !ok || adminauth.ValidatePasskeyOrigin(origin, rp) != nil {
+				return nil, adminauth.ErrInvalid
+			}
+		}
 		used[n] = true
 		h.AgentAuthConfigured = true
-		out = append(out, authBinding{h, d, origin, append([]string(nil), legacy...)})
+		out = append(out, authBinding{h, d, origin, rp, append([]string(nil), legacy...)})
 	}
 	if len(used) != len(defs) {
 		return nil, adminauth.ErrInvalid
@@ -188,7 +203,7 @@ func validateAdminAuthSyntax(raw []byte) error {
 	var listeners []json.RawMessage
 	if value, ok := root["listeners"]; ok && json.Unmarshal(value, &listeners) == nil {
 		for _, value := range listeners {
-			if _, e := authObject(value, map[string]bool{"authStore": true, "publicOrigin": true}); e != nil {
+			if _, e := authObject(value, map[string]bool{"authStore": true, "publicOrigin": true, "passkeyRPID": true}); e != nil {
 				return e
 			}
 		}
