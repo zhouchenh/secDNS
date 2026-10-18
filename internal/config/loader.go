@@ -130,6 +130,10 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	statusBindings, err := parseFollowerStatusBindings(rawData, config)
+	if err != nil {
+		return nil, err
+	}
 	selected, err := bindListeners(data, config)
 	if err != nil {
 		return nil, err
@@ -211,8 +215,8 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 			return nil, err
 		}
 	}
-	if len(authBindings) > 0 {
-		return &authInstance{Instance: instance, bindings: authBindings}, nil
+	if len(authBindings) > 0 || len(statusBindings) > 0 {
+		return &authInstance{Instance: instance, bindings: authBindings, followerStatus: statusBindings}, nil
 	}
 	return instance, nil
 }

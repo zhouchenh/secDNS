@@ -142,6 +142,7 @@ func (w *Worker) stream(parent context.Context) (bool, string) {
 		return false, errorProtocol
 	}
 	w.update(func(status *Status) {
+		status.LastContact = w.now().UTC()
 		status.ConnectionState = "streaming"
 		status.ErrorCategory = ""
 	})

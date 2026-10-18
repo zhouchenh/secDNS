@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Local follower status | secDNS</title><link rel="stylesheet" href="style.css"><link rel="stylesheet" href="../../auth/auth.css"><script defer src="../../auth/agent.js"></script><script defer src="../../auth/human.js"></script><script defer src="../../auth/passkey.js"></script><script defer src="app.js"></script></head>
+<body><header><strong>secDNS</strong><a href="../">Record workspace</a></header><main>
+<h1>Local follower workers</h1><p>This page observes only explicitly configured workers in this secDNS process. It does not monitor remote node health or prove fleet convergence.</p>
+<section id="login" class="card"><h2>Legacy token access</h2><form id="connect-form"><label for="token">Legacy admin access token</label><input id="token" type="password" autocomplete="off" spellcheck="false" required><button type="submit">Connect</button></form><p>Credentials remain in this page's memory.</p></section>
+<div class="controls"><button id="refresh" disabled>Refresh status</button><button id="disconnect" hidden>Disconnect</button></div>
+<p id="status" role="status" aria-live="polite">Connect to request a status sample. There is no automatic polling.</p><p id="sample"></p><div id="rows"></div>
+<p class="hint">Recent contact means an accepted snapshot, a valid no-change response, or a validated event-stream response header within 90 seconds of sampling. It does not prove the authority is reachable now. Stale or failed contact never means a remote node is offline. A retained revision can continue serving during contact errors; store availability is shown separately. Timestamps are process-local observations and reset on restart.</p>
+</main></body></html>

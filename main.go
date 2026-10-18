@@ -200,6 +200,19 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 			workers = append(workers, worker)
 		}
 		var workerGroup sync.WaitGroup
+		if binder, ok := instance.(interface {
+			BindFollowerStatus(map[string]*snapshotfollower.Worker) error
+		}); ok {
+			byName := make(map[string]*snapshotfollower.Worker, len(workers))
+			for index, worker := range workers {
+				byName[followerNames[index]] = worker
+			}
+			if binder.BindFollowerStatus(byName) != nil {
+				cancelWorkers()
+				common.ErrOutput("snapshot follower: status binding failed")
+				return exitStartup
+			}
+		}
 		for _, worker := range workers {
 			workerGroup.Add(1)
 			go func(worker *snapshotfollower.Worker) {
