@@ -8,7 +8,7 @@ import (
 //go:embed ui/* versioned_ui/* preview_ui/* auth_ui/*
 var editorAssets embed.FS
 
-const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 func editorHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", editorCSP)

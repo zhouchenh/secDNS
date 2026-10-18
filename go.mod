@@ -3,8 +3,10 @@ module github.com/zhouchenh/secDNS
 go 1.25.0
 
 require (
+	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/miekg/dns v1.1.62
 	github.com/rs/zerolog v1.33.0
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/txthinking/socks5 v0.0.0-20230325130024-4230056ae301
 	github.com/zhouchenh/go-descriptor v1.1.0
 	golang.org/x/crypto v0.51.0
@@ -21,10 +23,12 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/txthinking/runnergroup v0.0.0-20241229123329-7b873ad00768 // indirect
-	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/tools v0.44.0 // indirect
+	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	modernc.org/libc v1.72.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect

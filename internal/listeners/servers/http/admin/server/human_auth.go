@@ -100,7 +100,7 @@ func (h *HTTPAdminServer) humanRoutes(mux *http.ServeMux, base string) {
 			authenticationError(w, e)
 			return
 		}
-		writeJSON(w, 200, en)
+		h.writeEnrollment(w, en)
 	}))
 	mux.HandleFunc("POST "+base+"/auth/recovery/local", public([]string{"grant", "username", "name", "password"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, source string, now time.Time) {
 		en, e := h.agent.human.BeginEnrollment(b["grant"], b["username"], b["name"], b["password"], source, true, now)
@@ -108,7 +108,7 @@ func (h *HTTPAdminServer) humanRoutes(mux *http.ServeMux, base string) {
 			authenticationError(w, e)
 			return
 		}
-		writeJSON(w, 200, en)
+		h.writeEnrollment(w, en)
 	}))
 	mux.HandleFunc("POST "+base+"/auth/recovery/code", public([]string{"username", "password", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, source string, now time.Time) {
 		en, e := h.agent.human.BeginCodeRecovery(b["username"], b["password"], b["code"], source, now)
@@ -116,7 +116,7 @@ func (h *HTTPAdminServer) humanRoutes(mux *http.ServeMux, base string) {
 			authenticationError(w, e)
 			return
 		}
-		writeJSON(w, 200, en)
+		h.writeEnrollment(w, en)
 	}))
 	mux.HandleFunc("POST "+base+"/auth/login/password", public([]string{"username", "password"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, source string, now time.Time) {
 		challenge, e := h.agent.human.PasswordLogin(b["username"], b["password"], source, now)
@@ -202,7 +202,7 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, 200, en)
+		h.writeEnrollment(w, en)
 	}))
 	mux.HandleFunc("POST "+base+"/auth/totp/confirm", protected(true, []string{"challenge", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
 		result, e := h.agent.human.ConfirmReplacement(token, csrf, b["challenge"], b["code"], humanSource(r), now)
