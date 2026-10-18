@@ -1,8 +1,11 @@
 package recordstore
 
 import (
+	"errors"
 	"sync"
 	"time"
+
+	"github.com/zhouchenh/secDNS/internal/recordset"
 )
 
 // DefaultName is the store joined when a resolver or admin listener omits a store name,
@@ -15,11 +18,21 @@ const DefaultName = "default"
 var gcInterval = 10 * time.Second
 
 var (
+	ErrExactReadBinding = errors.New("exact read store binding unavailable")
+
 	registryMu        sync.Mutex
 	registry          = map[string]*Store{}
 	versionedRegistry = map[string]*VersionedStore{}
 	followerRegistry  = map[string]*FollowerStore{}
 )
+
+// ExactView is the immutable read surface shared by writer-versioned and
+// enrolled-follower generations. Implementations pin both content and the
+// expiry instant used by Lookup.
+type ExactView interface {
+	CapturedAt() time.Time
+	Lookup(name, typ string) (recordset.Record, bool)
+}
 
 // GetOrCreate returns the shared store for name, creating it (and starting its
 // background GC sweep) on first use. An empty name maps to DefaultName, so a resolver
@@ -104,4 +117,25 @@ func FollowerBinding(name string) *FollowerStore {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	return followerRegistry[name]
+}
+
+// AcquireExactView resolves only an explicitly prepared writer-versioned or
+// enrolled-follower name. It never creates or falls back to a mutable legacy
+// store; closed tombstones remain terminal for the process lifetime.
+func AcquireExactView(name string) (ExactView, error) {
+	if name == "" {
+		name = DefaultName
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if registry[name] != nil {
+		return nil, ErrExactReadBinding
+	}
+	if versioned := versionedRegistry[name]; versioned != nil {
+		return versioned.Acquire()
+	}
+	if follower := followerRegistry[name]; follower != nil {
+		return follower.Acquire()
+	}
+	return nil, ErrExactReadBinding
 }

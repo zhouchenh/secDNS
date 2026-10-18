@@ -7,6 +7,7 @@ import (
 
 	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/address"
 	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/authoritative"
+	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/cache"
 	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/nameserver"
 	noanswer "github.com/zhouchenh/secDNS/internal/upstream/resolvers/no/answer/resolver"
 	notexist "github.com/zhouchenh/secDNS/internal/upstream/resolvers/not/exist/resolver"
@@ -20,6 +21,7 @@ var ErrListenerBinding = errors.New("config: invalid listener resolver selection
 var ErrResolverCycle = errors.New("config: cyclic resolver graph is unsupported for listener selection or policy (including recursive aliases)")
 var ErrOpaqueResolver = errors.New("config: unsupported resolver dependency shape")
 var ErrResolverGraphLimit = errors.New("config: resolver dependency graph limit exceeded")
+var ErrExactStoreOverlayCachePlacement = errors.New("config: exact store overlay cannot be nested behind a cache")
 
 // Called inside the loader transaction; restores the registry callback cleared
 // by Config.Descriptor for the duration of selector construction,
@@ -168,6 +170,9 @@ func containsPolicyGraph(roots []resolver.Resolver) bool {
 		if _, ok := r.(*policy.Policy); ok {
 			return true
 		}
+		if _, ok := r.(*authoritative.ExactStoreOverlay); ok {
+			return true
+		}
 		if d, ok := r.(resolver.DependencyProvider); ok {
 			pending = append(pending, d.ResolverDependencies()...)
 		}
@@ -218,6 +223,47 @@ func validateResolverGraph(roots []resolver.Resolver) error {
 	for _, r := range roots {
 		if err := visit(r, 0); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// A cache above an overlay would retain answers across exact-store revisions.
+// Fallback caches below the overlay remain valid and keep their existing policy
+// semantics. Track both reachability states because a shared subtree may be
+// reached through cached and uncached parents.
+func validateExactStoreOverlayCachePlacement(roots []resolver.Resolver) error {
+	type entry struct {
+		resolver resolver.Resolver
+		cached   bool
+	}
+	seen := map[entry]bool{}
+	pending := make([]entry, 0, len(roots))
+	for _, root := range roots {
+		pending = append(pending, entry{resolver: root})
+	}
+	for len(pending) > 0 {
+		current := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if current.resolver == nil {
+			continue
+		}
+		value := reflect.ValueOf(current.resolver)
+		if value.Kind() != reflect.Ptr || value.IsNil() || seen[current] {
+			continue
+		}
+		if len(seen) >= 8192 {
+			return ErrResolverGraphLimit
+		}
+		seen[current] = true
+		if _, overlay := current.resolver.(*authoritative.ExactStoreOverlay); overlay && current.cached {
+			return ErrExactStoreOverlayCachePlacement
+		}
+		_, isCache := current.resolver.(*cache.Cache)
+		if provider, ok := current.resolver.(resolver.DependencyProvider); ok {
+			for _, child := range provider.ResolverDependencies() {
+				pending = append(pending, entry{resolver: child, cached: current.cached || isCache})
+			}
 		}
 	}
 	return nil

@@ -82,37 +82,44 @@ func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	} else if a.follower != nil {
 		view, err := a.follower.Acquire()
 		if err != nil {
-			resp := new(dns.Msg)
-			resp.SetReply(query)
-			resp.Rcode = dns.RcodeServerFailure
-			return resp, nil
+			return serverFailure(query), nil
 		}
-		reader = followerViewReader{view}
+		reader = viewReader{view}
 	} else if a.store == nil {
-		resp := new(dns.Msg)
-		resp.SetReply(query)
-		resp.Rcode = dns.RcodeServerFailure
-		return resp, nil
+		return serverFailure(query), nil
 	}
+	return a.resolveFromReader(query, depth, reader), nil
+}
+
+func serverFailure(query *dns.Msg) *dns.Msg {
+	resp := new(dns.Msg)
+	resp.SetReply(query)
+	resp.Rcode = dns.RcodeServerFailure
+	return resp
+}
+
+// resolveFromReader renders an answer after the caller has acquired and pinned
+// one read generation. It never acquires a second view.
+func (a *Authoritative) resolveFromReader(query *dns.Msg, depth int, reader recordReader) *dns.Msg {
 	q := query.Question[0]
 	resp := new(dns.Msg)
 	resp.SetReply(query)
 	resp.Authoritative = true
 
 	if a.CompleteCNAME && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
-		return a.resolveChain(query, depth, reader), nil
+		return a.resolveChain(query, depth, reader)
 	}
 
 	// Exact {name, type} hit.
 	if rec, ok := reader.Get(q.Name, q.Qtype); ok {
 		resp.Answer = append(resp.Answer, recordToRRs(rec, q.Name, q.Qclass)...)
-		return resp, nil
+		return resp
 	}
 	// A CNAME at the name answers any other type (the requester re-queries the target).
 	if q.Qtype != dns.TypeCNAME {
 		if cn, ok := reader.Get(q.Name, dns.TypeCNAME); ok {
 			resp.Answer = append(resp.Answer, recordToRRs(cn, q.Name, q.Qclass)...)
-			return resp, nil
+			return resp
 		}
 	}
 	// No matching record: NODATA when the name exists for another type, else NXDOMAIN.
@@ -122,7 +129,7 @@ func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		resp.Rcode = dns.RcodeNameError
 	}
 	resp.Ns = append(resp.Ns, a.soa(q.Name))
-	return resp, nil
+	return resp
 }
 
 // recordToRRs renders a stored record as resource records owned by the queried name.

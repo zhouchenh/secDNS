@@ -6,6 +6,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	named "github.com/zhouchenh/secDNS/internal/config/named/resolver"
 	"github.com/zhouchenh/secDNS/internal/core"
+	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/authoritative"
 	"github.com/zhouchenh/secDNS/internal/upstream/resolvers/policy"
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"github.com/zhouchenh/secDNS/pkg/rules/provider"
@@ -63,6 +64,9 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 			if parseErr = ValidateStoreListenerTopology(rawData, versioned, followers); parseErr != nil {
 				return nil, parseErr
 			}
+		}
+		if parseErr = ValidateExactStoreOverlayTopology(rawData, legacy, versioned, followers); parseErr != nil {
+			return nil, parseErr
 		}
 	}
 	if strict {
@@ -166,6 +170,9 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 		if _, ok := r.(*policy.Policy); ok {
 			roots = append(roots, r)
 		}
+		if _, ok := r.(*authoritative.ExactStoreOverlay); ok {
+			roots = append(roots, r)
+		}
 	}
 	selected = selected || containsPolicyGraph(roots)
 	if providerError != nil && (strict || selected) {
@@ -188,6 +195,9 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 			}
 		}
 		if err := validateResolverGraph(roots); err != nil {
+			return nil, err
+		}
+		if err := validateExactStoreOverlayCachePlacement(roots); err != nil {
 			return nil, err
 		}
 		if err := validateSourcePolicyCacheIsolation(config.sourcePolicy); err != nil {

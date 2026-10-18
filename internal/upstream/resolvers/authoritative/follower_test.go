@@ -1,6 +1,7 @@
 package authoritative
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -10,7 +11,9 @@ import (
 )
 
 func TestFollowerAuthoritativeAtomicTransition(t *testing.T) {
-	name := t.Name()
+	// Registry tombstones intentionally survive Close for the process lifetime.
+	// A repeated test invocation therefore needs a fresh logical binding name.
+	name := fmt.Sprintf("%s-%d", t.Name(), versionedTestSequence.Add(1))
 	enrollment := recordstore.FollowerEnrollment{ClusterID: "cluster", Kind: recordstore.FollowerExactRecords, RulesetID: "rules", LineageID: "lineage", AuthorityEpoch: "epoch"}
 	cleanup, err := recordstore.PrepareBindingsWithFollowers(nil, nil, map[string]recordstore.FollowerConfig{
 		name: {SQLitePath: filepath.Join(t.TempDir(), "follower.db"), Enrollment: enrollment, CreateIfMissing: true},

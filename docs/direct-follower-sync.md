@@ -91,6 +91,12 @@ strictly with the configured immutable enrollment tuple. A missing file is creat
 only when `createIfMissing` is explicitly true. The `-test` command validates this
 configuration without touching the filesystem or network.
 
+The example above treats the replica as the complete authority for every question sent
+to it. To overlay a changing set of exact owners on an existing ordinary resolver graph,
+use [`exactStoreOverlay`](resolvers/exact_store_overlay.md) with the follower store and
+that graph as its fallback. Owner membership is then taken from each accepted generation;
+it does not require regenerating static selection rules.
+
 `authorityUrl` is one absolute HTTPS origin and fixed base path, with no user info,
 query, fragment, redirect, proxy, discovery, or response-selected alternate origin.
 Changing the URL, token, lineage, or authority epoch is a deliberate operator

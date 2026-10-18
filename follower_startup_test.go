@@ -27,8 +27,10 @@ func TestFollowerTestModeDoesNotOpenDatabaseOrNetwork(t *testing.T) {
 		"followerRecordStores": map[string]any{"default": map[string]any{
 			"sqlitePath": database, "createIfMissing": true, "clusterId": "cluster", "kind": "exact-records", "rulesetId": "rules", "lineageId": "lineage", "authorityEpoch": "epoch", "nodeId": "node", "authorityUrl": "https://authority.invalid/admin", "token": "reader-token-0123456789abcdef-0001",
 		}},
-		"listeners":       []any{map[string]any{"type": "dnsServer", "config": map[string]any{"listen": "127.0.0.1", "port": 0, "protocol": "udp"}}},
-		"defaultResolver": map[string]any{"type": "authoritative", "config": map[string]any{}},
+		"listeners": []any{map[string]any{"type": "dnsServer", "config": map[string]any{"listen": "127.0.0.1", "port": 0, "protocol": "udp"}}},
+		"defaultResolver": map[string]any{"type": "exactStoreOverlay", "config": map[string]any{
+			"store": "default", "completeCNAME": true, "fallback": map[string]any{"type": "address", "config": "192.0.2.1"},
+		}},
 	}
 	raw, err := json.Marshal(config)
 	if err != nil {
