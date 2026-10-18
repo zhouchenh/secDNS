@@ -1,5 +1,33 @@
 # Version History
 
+## v1.6.2 - 2026.10.18
+
+RouterOS Import Review and Exact Conversion
+
+This release adds an optional authenticated browser page for reviewing RouterOS DNS-static
+exports and a strict source-tree conversion command. Existing configurations and the default
+preview command behavior are unchanged.
+
+* admin: add a read-only RouterOS import preview page for file or pasted input. The page is
+  available only when the authenticated admin UI is explicitly enabled, shows the complete
+  bounded source report and diagnostics, and does not apply, store, or send records.
+* tools: add strict exact-record conversion to
+  `go run ./cmd/routeros-dns-preview --compile-exact --ruleset-id <id>`. Conversion requires the
+  complete submitted source; requires explicit type, TTL, enabled state, and exact matching;
+  canonicalizes supported A, AAAA, and CNAME records; and refuses unsupported policy,
+  duplicate/conflicting data, CNAME cycles, or incomplete input. A refused conversion reports
+  blockers and emits no candidate content.
+* tooling: exact conversion reports source and content identities, ruleset bindings, and
+  `can_apply: false`. It does not create a revision, compare current state, or perform an apply.
+
+The release workflow continues to publish the 46 existing `secDNS` platform binaries. The
+authenticated preview page is included in those binaries. The RouterOS preview/conversion
+command remains a source-tree command and is not published as a separate release binary.
+
+The strict exact profile supports literal static DNS records only. It does not translate the
+full RouterOS DNS policy surface, prove that a pasted export is a complete router export, contact
+a router, or mutate a store. See the [RouterOS import preview](routeros-import-preview.md).
+
 ## v1.6.1 - 2026.10.18
 
 Readable Versioned Record Comparison
