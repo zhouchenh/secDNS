@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	_ "modernc.org/sqlite"
 )
 
 const applicationID = 1396982098
@@ -62,6 +60,9 @@ func open(path, keyPath string, id Identity, legacy []string, create, migrate bo
 
 // The commit callback is private and permits deterministic uncertainty tests.
 func openWithCommit(path, keyPath string, id Identity, legacy []string, create, migrate bool, commit func(*sql.Tx) error) (_ *Store, err error) {
+	if !sqlitePlatformSupported {
+		return nil, ErrUnsupportedPlatform
+	}
 	if !id.valid() || path == keyPath || len(legacy) > 128 {
 		return nil, ErrInvalid
 	}

@@ -40,6 +40,9 @@ func privatePath(path string, exists bool) error {
 // CreateKey is an explicit local-only operation. It never overwrites a key.
 // An interrupted creation is retained for diagnosis, never silently regenerated.
 func CreateKey(path string) error {
+	if !sqlitePlatformSupported {
+		return ErrUnsupportedPlatform
+	}
 	if err := privatePath(path, false); err != nil {
 		return err
 	}

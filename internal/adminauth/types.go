@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	ErrInvalid     = errors.New("invalid auth input")
-	ErrDenied      = errors.New("authentication denied")
-	ErrUnavailable = errors.New("authentication unavailable")
-	ErrExists      = errors.New("authentication store already exists")
+	ErrUnsupportedPlatform = errors.New("authentication store unsupported on this platform")
+	ErrInvalid             = errors.New("invalid auth input")
+	ErrDenied              = errors.New("authentication denied")
+	ErrUnavailable         = errors.New("authentication unavailable")
+	ErrExists              = errors.New("authentication store already exists")
 )
 
 type Scope string

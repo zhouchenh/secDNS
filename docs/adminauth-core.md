@@ -98,3 +98,13 @@ and fail-closed handle behavior. All tests use synthetic credentials and local
 temporary databases, with no candidate or production access.
 
 Human owner authentication is available only after the separate explicit schema-3 enable operation; see [Human owner sign-in](human-admin-access.md). Schema2 remains agent-only. No record database or live deployment is changed.
+
+## Platform availability
+
+The optional durable auth store uses the same SQLite platform boundary as the record
+store: Darwin amd64/arm64; FreeBSD amd64/arm64; Linux 386/amd64/arm/arm64/loong64/
+ppc64le/riscv64/s390x; Windows 386/amd64/arm64. Android and iOS are excluded.
+Other daemon targets keep legacy-token administration and configurations without auth
+stores. Opt-in auth key/store creation, opening and offline migrations refuse on those
+platforms before filesystem effects; no in-memory or unauthenticated fallback is used.
+The three published administration helper platforms are unchanged.
