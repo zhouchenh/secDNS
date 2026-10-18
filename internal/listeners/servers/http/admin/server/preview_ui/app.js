@@ -11,7 +11,7 @@
   const status=(text,kind="")=>{$("status").textContent=text;$("status").className=kind;};
   const bytes=n=>n>=1024?(n/1024).toFixed(2)+" KiB":n+" B";
   function controls(){
-    $("preview").disabled=gate.busy;
+    $("preview").disabled=gate.busy || (window.secDNSAgent && !window.secDNSAgent.allows("routeros:preview"));
     $("transfer").disabled=gate.busy||!!transferRequest;
     $("authentication").textContent=verified?"Last preview authenticated":token?"Token held · not verified":"Token not verified";
     $("ruleset-source").hidden=$("operation").value!=="exact";$("preview").textContent=$("operation").value==="exact"?"Review exact conversion":"Preview export";
@@ -70,8 +70,9 @@
   }
   $("preview-form").addEventListener("submit",async event=>{
     event.preventDefault();if(gate.busy)return;
-    const entered=$("token").value.trim();if(entered){token=entered;verified=false;$("token").value="";invalidate(true);}
-    if(!token){status("Enter an admin token before submitting.","error");return;}
+    const entered=$("token").value.trim();if(entered){$("token").value="";try{await window.secDNSAgent?.switchToLegacy();}catch{status("Could not end the agent session. Legacy access was not started.","error");return;}token=entered;verified=false;$("token").value="";invalidate(true);}
+    if(!token&&!window.secDNSAgent?.active){status("Sign in as an agent or enter a legacy admin token before submitting.","error");return;}
+    if(window.secDNSAgent && !window.secDNSAgent.allows("routeros:preview")){status("This agent cannot preview imports.","error");return;}
     const operation=$("operation").value,ruleset=$("ruleset").value.trim();
     if(operation==="exact"&&!S.validRulesetID(ruleset)){status("Enter a valid ruleset ID before strict conversion.","error");return;}
     const captured=gate.begin(),capturedToken=token,mode=$("mode").value,file=$("file").files[0],text=$("source").value;
@@ -81,7 +82,7 @@
       if(mode==="file"){if(!file)throw new Error("file_required");S.fileSize(file);const buffer=await file.arrayBuffer();if(!gate.current(captured))return;if(buffer.byteLength>S.INPUT||buffer.byteLength!==file.size)throw new Error("input_limit");data=new Uint8Array(buffer);}else data=S.encodeText(text);
       if(!gate.current(captured))return;
       const active=new AbortController(),requestURL=new URL(endpoint.href);controller=active;if(operation==="exact"){requestURL.searchParams.set("profile","exact");requestURL.searchParams.set("ruleset_id",ruleset);}status(operation==="exact"?"Requesting strict whole-source conversion. Nothing will be applied…":"Requesting a preview. No records will be changed…");
-      const response=await fetch(requestURL.href,{method:"POST",headers:{Authorization:"Bearer "+capturedToken,"Content-Type":"application/octet-stream"},body:data,credentials:"omit",redirect:"error",cache:"no-store",signal:active.signal});
+      const response=await fetch(requestURL.href,{method:"POST",headers:{...(window.secDNSAgent?.headers(capturedToken,"POST") || {Authorization:"Bearer "+capturedToken}),"Content-Type":"application/octet-stream"},body:data,credentials:window.secDNSAgent?.credentials() || "omit",redirect:"error",cache:"no-store",signal:active.signal});
       if(!gate.current(captured))return;
       if(response.status===401||response.status===403){void response.body?.cancel().catch(()=>{});disconnect(false);status("Authentication rejected. Re-enter a token; source retained without automatic retry.","error");return;}
       if(response.redirected||response.type==="opaqueredirect")throw new Error("invalid_response");
@@ -100,7 +101,9 @@
   for(const id of ["source","file","mode","operation","ruleset"])$(id).addEventListener(["source","ruleset"].includes(id)?"input":"change",()=>{invalidate();status("Review settings changed locally. Click the review button to submit these bytes.");});
   $("token").addEventListener("input",()=>{token="";verified=false;invalidate(true);status("Token changed locally; not yet verified.");});
   $("clear").addEventListener("click",()=>{$("source").value="";$("file").value="";invalidate();status("Source and preview cleared from this page.");});
-  $("disconnect").addEventListener("click",()=>disconnect());
+  $("disconnect").addEventListener("click",()=>{if(window.secDNSAgent?.active)void window.secDNSAgent.logout().catch(()=>{});disconnect();});
+  window.addEventListener("agentconnected",()=>{token="";$("token").value="";invalidate(true);status("Agent signed in. Source retained; submit explicitly.");});
+  window.addEventListener("agentexpired",()=>disconnect());
   $("download").addEventListener("click",()=>{if(!result||resultOperation!=="exact")return;const blob=new Blob([JSON.stringify(result,null,2)+"\n"],{type:"application/json"}),href=URL.createObjectURL(blob),a=document.createElement("a");a.href=href;a.download="routeros-exact-"+result.ruleset_id+".json";a.click();setTimeout(()=>URL.revokeObjectURL(href),0);});
   function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
   handoffChannel?.addEventListener("message",event=>{if(!transferRequest||!S.validHandoffResult(event.data,handoff,transferRequest))return;if(transferTimer)clearTimeout(transferTimer);transferTimer=null;const accepted=event.data.accepted;transferRequest="";$("transfer-status").textContent=accepted?"Candidate copied into the editor's local draft. Review it there before any replacement.":({handoff_reconciliation_required:"Editor kept its existing local work; explicitly clear or finish it before another transfer.",handoff_identity_conflict:"Editor refused the candidate because its ruleset ID differs.",invalid_draft_handoff:"Editor rejected an invalid or stale transfer. Nothing changed.",editor_unavailable:"Editor is busy or not connected to a fresh snapshot. Nothing changed."})[event.data.error];controls();});

@@ -47,15 +47,20 @@ func (*Store) GoString() string { return "adminauth.Store[redacted]" }
 // including empty files, are never adopted. Legacy credentials are collision
 // inputs only; they are never persisted or accepted by this store.
 func Create(path, keyPath string, id Identity, legacy []string) (*Store, error) {
-	return open(path, keyPath, id, legacy, true)
+	return open(path, keyPath, id, legacy, true, false)
 }
 
 // Open requires an existing exact schema and matching immutable identity/key.
 // It does not create, recover identity, or reset pending setup implicitly.
 func Open(path, keyPath string, id Identity, legacy []string) (*Store, error) {
-	return open(path, keyPath, id, legacy, false)
+	return open(path, keyPath, id, legacy, false, false)
 }
-func open(path, keyPath string, id Identity, legacy []string, create bool) (_ *Store, err error) {
+func open(path, keyPath string, id Identity, legacy []string, create, migrate bool) (*Store, error) {
+	return openWithCommit(path, keyPath, id, legacy, create, migrate, func(tx *sql.Tx) error { return tx.Commit() })
+}
+
+// The commit callback is private and permits deterministic uncertainty tests.
+func openWithCommit(path, keyPath string, id Identity, legacy []string, create, migrate bool, commit func(*sql.Tx) error) (_ *Store, err error) {
 	if !id.valid() || path == keyPath || len(legacy) > 128 {
 		return nil, ErrInvalid
 	}
@@ -75,7 +80,7 @@ func open(path, keyPath string, id Identity, legacy []string, create bool) (_ *S
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{key: key, identity: id, commit: func(tx *sql.Tx) error { return tx.Commit() }}
+	s := &Store{key: key, identity: id, commit: commit}
 	defer func() {
 		if err != nil {
 			clear(key)
@@ -137,7 +142,7 @@ func open(path, keyPath string, id Identity, legacy []string, create bool) (_ *S
 		if _, e = tx.Exec(fmt.Sprintf("PRAGMA application_id=%d", applicationID)); e != nil {
 			return nil, ErrUnavailable
 		}
-		if _, e = tx.Exec("PRAGMA user_version=1"); e != nil {
+		if _, e = tx.Exec("PRAGMA user_version=2"); e != nil {
 			return nil, ErrUnavailable
 		}
 		check := s.digest("realm-key-check:" + id.RealmID + ":" + id.NodeID)
@@ -145,10 +150,19 @@ func open(path, keyPath string, id Identity, legacy []string, create bool) (_ *S
 			return nil, ErrUnavailable
 		}
 	}
-	if e = s.validate(tx); e != nil {
+	expectedVersion := 2
+	if migrate {
+		expectedVersion = 1
+	}
+	if e = s.validateVersion(tx, expectedVersion); e != nil {
 		return nil, e
 	}
-	if e = tx.Commit(); e != nil {
+	if migrate {
+		if _, e = tx.Exec("PRAGMA user_version=2"); e != nil {
+			return nil, ErrUnavailable
+		}
+	}
+	if e = s.commit(tx); e != nil {
 		return nil, ErrUnavailable
 	}
 	return s, nil
@@ -316,7 +330,7 @@ func (s *Store) CancelBootstrapLocal(now time.Time) error {
 
 func (s *Store) BootstrapIssueAgent(grant string, request CredentialRequest, now time.Time) (string, Credential, error) {
 	sc, e := scopes(request.Scopes)
-	if e != nil || !label(request.Name, 128) || (request.Purpose != "" && !label(request.Purpose, 256)) || !validNow(now) || (!request.ExpiresAt.IsZero() && (!validNow(request.ExpiresAt) || unix(request.ExpiresAt) <= now.Unix())) {
+	if e != nil || request.Validate(now) != nil {
 		return "", Credential{}, ErrInvalid
 	}
 	if len(grant) != 102 || !strings.HasPrefix(grant, "sdnb_") {
@@ -434,4 +448,14 @@ func (s *Store) RevokeLocal(id string, now time.Time) error {
 		}
 		return audit(tx, now, "agent_revoked", id)
 	})
+}
+
+// MigrateSchema1 explicitly upgrades only a strictly valid schema-1 store.
+// Runtime Open never migrates. Take an offline private backup before invocation.
+func MigrateSchema1(path, keyPath string, id Identity, legacy []string) error {
+	s, e := open(path, keyPath, id, legacy, false, true)
+	if e != nil {
+		return e
+	}
+	return s.Close()
 }

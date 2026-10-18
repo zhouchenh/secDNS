@@ -6,10 +6,10 @@ import (
 	"encoding/hex"
 )
 
-func (s *Store) validate(tx *sql.Tx) error {
+func (s *Store) validateVersion(tx *sql.Tx, expectedVersion int) error {
 	var id, version int
 	var integrity string
-	if tx.QueryRow("PRAGMA application_id").Scan(&id) != nil || tx.QueryRow("PRAGMA user_version").Scan(&version) != nil || tx.QueryRow("PRAGMA quick_check").Scan(&integrity) != nil || id != applicationID || version != 1 || integrity != "ok" {
+	if tx.QueryRow("PRAGMA application_id").Scan(&id) != nil || tx.QueryRow("PRAGMA user_version").Scan(&version) != nil || tx.QueryRow("PRAGMA quick_check").Scan(&integrity) != nil || id != applicationID || version != expectedVersion || integrity != "ok" {
 		return ErrInvalid
 	}
 	rows, e := tx.Query("SELECT name,type,sql FROM sqlite_schema WHERE substr(name,1,7) != 'sqlite_'")
@@ -117,8 +117,13 @@ func (s *Store) validate(tx *sql.Tx) error {
 			return ErrInvalid
 		}
 	}
-	if tx.QueryRow(`SELECT count(*) FROM audit WHERE typeof(sequence)!='integer' OR sequence<=0 OR typeof(at)!='integer' OR at<=0 OR typeof(action)!='text' OR action NOT IN ('bootstrap_created','bootstrap_cancelled','agent_issued','agent_revoked') OR typeof(credential_id)!='text' OR (action IN ('bootstrap_created','bootstrap_cancelled') AND credential_id!='') OR (action IN ('agent_issued','agent_revoked') AND length(CAST(credential_id AS BLOB))!=32)`).Scan(&invalid) != nil || invalid != 0 {
+	if tx.QueryRow(`SELECT count(*) FROM audit WHERE typeof(sequence)!='integer' OR sequence<=0 OR typeof(at)!='integer' OR at<=0 OR typeof(action)!='text' OR action NOT IN ('bootstrap_created','bootstrap_cancelled','agent_issued','agent_revoked','session_created','session_revoked') OR typeof(credential_id)!='text' OR (action IN ('bootstrap_created','bootstrap_cancelled') AND credential_id!='') OR (action IN ('agent_issued','agent_revoked','session_created','session_revoked') AND length(CAST(credential_id AS BLOB))!=32)`).Scan(&invalid) != nil || invalid != 0 {
 		return ErrInvalid
+	}
+	if expectedVersion == 1 {
+		if tx.QueryRow("SELECT count(*) FROM audit WHERE action IN ('session_created','session_revoked')").Scan(&invalid) != nil || invalid != 0 {
+			return ErrInvalid
+		}
 	}
 	if tx.QueryRow("SELECT count(*) FROM audit").Scan(&n) != nil || n > maxAudit {
 		return ErrInvalid

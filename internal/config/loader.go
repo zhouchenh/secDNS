@@ -48,6 +48,9 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 		return nil, err
 	}
 	if root, ok := data.(map[string]interface{}); ok {
+		if err := validateAdminAuthSyntax(rawData); err != nil {
+			return nil, err
+		}
 		legacy, parseErr := ParseRecordStores(rawData)
 		if parseErr != nil {
 			return nil, parseErr
@@ -122,6 +125,10 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	}
 	if config.DefaultResolver == nil {
 		return nil, ErrMissingDefaultResolverConfig
+	}
+	authBindings, err := parseAdminBindings(data, config)
+	if err != nil {
+		return nil, err
 	}
 	selected, err := bindListeners(data, config)
 	if err != nil {
@@ -203,6 +210,9 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 		if err := validateSourcePolicyCacheIsolation(config.sourcePolicy); err != nil {
 			return nil, err
 		}
+	}
+	if len(authBindings) > 0 {
+		return &authInstance{Instance: instance, bindings: authBindings}, nil
 	}
 	return instance, nil
 }

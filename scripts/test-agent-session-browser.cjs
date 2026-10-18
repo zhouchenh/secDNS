@@ -1,0 +1,50 @@
+// Temporary localhost TLS server is owned/reaped by TestAgentBrowser.
+const assert=require('node:assert/strict');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+(async()=>{
+ const base=process.env.AGENT_TEST_URL,token=process.env.AGENT_TEST_TOKEN;
+ assert.equal(new URL(base).hostname,'127.0.0.1');assert.equal(new URL(base).protocol,'https:');
+ const api=new URL('../snapshot',base).href;
+ const browser=await chromium.launch({headless:true});
+ const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1280,height:960}});
+ const page=await context.newPage(),errors=[],posts=[],exchanges=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ page.on('request',r=>{assert.ok(!r.url().includes(token));if(r.url()===api&&r.method()==='POST')posts.push(r.postData());if(r.url().endsWith('/auth/agent-session'))exchanges.push(r);});
+ const signIn=async()=>{await page.locator('#agent-credential').fill(token);await page.getByRole('button',{name:'Sign in as agent',exact:true}).click();await page.waitForFunction(()=>window.secDNSAgent?.active);await page.locator('#connection').filter({hasText:'Connected'}).waitFor();};
+ const stage=async()=>{await page.locator('#new-record').click();await page.locator('#name').fill('session.invalid.');await page.locator('#type').selectOption('TXT');await page.getByLabel('Record value',{exact:true}).fill('preserved');await page.locator('#stage').click();};
+ try{
+  const alternate=process.env.AGENT_TEST_ALTERNATE;assert.equal(new URL(alternate).hostname,'127.0.0.1');assert.equal(new URL(alternate).protocol,'http:');
+  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/auth/state')),page.goto(alternate)]);
+  assert.equal(await page.locator('#agent-credential').isVisible(),false);
+  await page.evaluate(value=>{const input=document.getElementById('agent-credential');input.value=value;input.closest('form').dispatchEvent(new Event('submit',{cancelable:true}));},token);
+  assert.equal(exchanges.length,0,'wrong-origin form must never dispatch a bearer');assert.equal(await page.locator('#agent-credential').inputValue(),'');
+  let release,entered;const held=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+  await page.route('**/auth/state',async route=>{const response=await route.fetch();entered();await held;await route.fulfill({response});});
+  await page.goto(base);await started;await page.evaluate(()=>window.secDNSAgent.clear());release();await page.locator('#agent-credential').waitFor({state:'visible'});await page.unroute('**/auth/state');
+  await signIn();assert.equal(await page.locator('#agent-credential').inputValue(),'');
+  assert.ok((await page.locator('#agent-identity').textContent()).includes('test-agent'));assert.ok((await page.locator('#agent-identity').textContent()).includes('Writable authority'));
+  const cookies=await context.cookies();assert.equal(cookies.length,1);assert.ok(cookies[0].secure&&cookies[0].httpOnly&&cookies[0].sameSite==='Strict');
+  assert.equal(await page.evaluate(()=>document.cookie),'');assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);
+  assert.ok(!(await page.content()).includes(token));
+  await stage();
+  await page.locator('#review').click();assert.ok((await page.locator('#review-description').textContent()).includes('Agent test-agent'));
+  await page.locator('#review-confirm').click();await page.locator('#status').filter({hasText:'outcome is uncertain'}).waitFor();const frozen=posts.at(-1);
+  const count=posts.length;await page.getByRole('button',{name:'Sign out agent',exact:true}).click();await page.waitForFunction(()=>!window.secDNSAgent.active);
+  await signIn();assert.equal(posts.length,count,'relogin must not submit');
+  await page.locator('#retry').click();await page.locator('#status').filter({hasText:'acknowledged'}).waitFor();assert.equal(posts.at(-1),frozen,'retry body unchanged');
+  const absolute=new Date(Date.now()+600000).toISOString(),idle=new Date(Date.now()+1200000).toISOString();
+  await page.route('**/auth/session',async route=>{const headers=await route.request().allHeaders();const response=await route.fetch({headers:{...headers,'sec-fetch-site':'same-origin'}});if(response.status()===200){const value=await response.json();value.expires_at=absolute;value.idle_expires_at=idle;await route.fulfill({response,json:value});}else await route.fulfill({response});});
+  await page.reload();await page.waitForFunction(()=>window.secDNSAgent?.active);assert.ok((await page.locator('#agent-identity').textContent()).includes(absolute));assert.ok(!(await page.locator('#agent-identity').textContent()).includes(idle));await page.unroute('**/auth/session');assert.equal(exchanges.length,2,'reload resumes cookie without bearer');
+  await page.goto(new URL('import-preview/',base).href);await page.waitForFunction(()=>window.secDNSAgent?.active);await page.locator('#source').fill('/ip dns static\nadd name=fixture.invalid type=A address=192.0.2.1 ttl=60');await page.locator('#preview').click();await page.locator('#status').filter({hasText:'Complete preview loaded'}).waitFor();
+  await page.locator('#token').fill('legacy-value');await page.locator('#preview').click();await page.locator('#status').filter({hasText:'Complete preview loaded'}).waitFor();assert.equal(await page.evaluate(()=>window.secDNSAgent.active),false);
+  const afterSwitch=await context.cookies();assert.equal(afterSwitch.filter(c=>c.name==='__Host-secdns_session').length,0,'legacy switch removes server cookie');
+  await page.reload();assert.equal(await page.evaluate(()=>window.secDNSAgent.active),false,'reload cannot restore old agent session');
+  await page.locator('#agent-credential').fill(token);await page.getByRole('button',{name:'Sign in as agent',exact:true}).click();await page.waitForFunction(()=>window.secDNSAgent.active);
+  await page.setViewportSize({width:390,height:844});assert.ok(await page.locator('#agent-identity').isVisible());
+  await page.getByRole('button',{name:'Sign out agent',exact:true}).click();await page.waitForFunction(()=>!window.secDNSAgent.active);
+  await page.goto(base);await page.locator('#agent-credential').fill(process.env.AGENT_TEST_READ_TOKEN);await page.getByRole('button',{name:'Sign in as agent',exact:true}).click();await page.waitForFunction(()=>window.secDNSAgent?.active);await page.locator('#connection').filter({hasText:'Connected'}).waitFor();
+  assert.equal(await page.locator('#stage').isDisabled(),true);assert.equal(await page.locator('#review').isDisabled(),true);
+  const denied=await page.evaluate(async url=>{const r=await fetch(url,{method:'POST',headers:window.secDNSAgent.headers('', 'POST'),body:'{}'});return r.status;},api);assert.equal(denied,403,'server rejects write even when invoked outside disabled controls');
+  assert.deepEqual(errors,[]);console.log('PASS actual HTTPS agent exchange/cookie/reload/preview/logout/immutable retry; synthetic only');
+ }catch(e){console.error('Fixture status:',await page.locator('#status').textContent());throw e;}finally{await context.close();await browser.close();}
+})().catch(e=>{console.error(e.message);process.exitCode=1;});

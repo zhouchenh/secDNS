@@ -162,7 +162,17 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		return exitStartup
 	}
 	logger.Info().Str("source", configSource).Msg("config loaded")
-	if len(stores) > 0 || len(versionedStores) > 0 || len(followerStores) > 0 {
+	authEnabled := false
+	if preparer, ok := instance.(interface{ PrepareAdminAuth() (func() error, error) }); ok {
+		cleanup, e := preparer.PrepareAdminAuth()
+		if e != nil {
+			common.ErrOutput("admin auth: startup failed")
+			return exitStartup
+		}
+		defer cleanup()
+		authEnabled = true
+	}
+	if len(stores) > 0 || len(versionedStores) > 0 || len(followerStores) > 0 || authEnabled {
 		cleanup, err := recordstore.PrepareBindingsWithFollowers(stores, versionedStores, config.FollowerBindings(followerStores))
 		if err != nil {
 			common.ErrOutput(common.Concatenate("record stores: startup failed: ", err))

@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RouterOS import preview · SecDNS</title><link rel="stylesheet" href="style.css"><script defer src="state.js"></script><script defer src="app.js"></script></head>
-<body><header><strong>SecDNS</strong><span>Operations</span><span id="authentication">Token not verified</span></header><main>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RouterOS import preview · secDNS</title><link rel="stylesheet" href="style.css"><script defer src="../../auth/agent.js"></script><script defer src="state.js"></script><script defer src="app.js"></script></head>
+<body><header><strong>secDNS</strong><span>Operations</span><span id="authentication">Token not verified</span></header><main>
 <p class="eyebrow">DNS-STATIC EXPORT</p><h1>Review before migration</h1><p class="intro">Inspect a RouterOS DNS-static export as data, including unsupported and disabled entries.</p>
 <p class="banner"><strong>Preview only — nothing applied.</strong> This page cannot import records or change a store.</p>
 <div class="workspace"><section class="card"><h2>Choose a source</h2><form id="preview-form">
-<label for="token">Admin access token</label><input id="token" type="password" autocomplete="off" spellcheck="false"><p id="endpoint" class="hint"></p>
+<label for="token">Legacy admin access token</label><input id="token" type="password" autocomplete="off" spellcheck="false"><p id="endpoint" class="hint"></p>
 <label for="operation">Review mode</label><select id="operation"><option value="preview">Parser preview</option><option value="exact">Strict exact conversion</option></select>
 <div id="ruleset-source" hidden><label for="ruleset">Candidate ruleset ID</label><input id="ruleset" type="text" maxlength="128" autocomplete="off" spellcheck="false" placeholder="routeros.review"><p class="hint">Required for strict conversion. Allowed characters: letters, digits, dot, underscore and hyphen.</p></div>
 <label for="mode">Source</label><select id="mode"><option value="paste">Paste export text</option><option value="file">Choose export file</option></select>

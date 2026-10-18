@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-//go:embed ui/* versioned_ui/* preview_ui/*
+//go:embed ui/* versioned_ui/* preview_ui/* auth_ui/*
 var editorAssets embed.FS
 
 const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -18,6 +18,12 @@ func editorHeaders(w http.ResponseWriter) {
 }
 
 func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
+	data, _ := editorAssets.ReadFile("auth_ui/agent.js")
+	mux.HandleFunc("GET "+base+"/auth/agent.js", func(w http.ResponseWriter, r *http.Request) {
+		editorHeaders(w)
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(data)
+	})
 	mux.HandleFunc("GET "+base+"/ui", func(w http.ResponseWriter, r *http.Request) {
 		editorHeaders(w)
 		http.Redirect(w, r, base+"/ui/", http.StatusSeeOther)

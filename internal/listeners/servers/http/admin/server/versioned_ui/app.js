@@ -63,7 +63,7 @@
     editor_unavailable:"Exact candidate not transferred. Wait for current work to finish, or connect and fetch a fresh snapshot first."
   };
   const message = e => messages[e.message] || "Unexpected response or connection failure. Local work is preserved.";
-  const locked = () => busy || !connected || !!model.pending || model.identityBlocked;
+  const locked = () => (window.secDNSAgent && !window.secDNSAgent.allows("records:write")) || busy || !connected || !!model.pending || model.identityBlocked;
   function controls() {
     for (const c of $("editor").querySelectorAll("input, select, textarea, button")) c.disabled = locked();
     $("name").disabled = $("type").disabled = locked() || !!selected;
@@ -72,7 +72,7 @@
     for (const b of $("rows").querySelectorAll("button")) b.disabled = locked();
     $("review").disabled = locked() || !model.fresh || !model.dirty() || model.formDirty;
     $("retry").hidden = !model.pending || model.pending.status !== "uncertain";
-    $("retry").disabled = busy || !connected || model.identityBlocked;
+    $("retry").disabled = (window.secDNSAgent && !window.secDNSAgent.allows("records:write")) || busy || !connected || model.identityBlocked;
     $("adopt").disabled = busy || !connected || !model.current || !model.fresh || model.identityBlocked || ["sending","uncertain"].includes(model.pending?.status);
     $("refresh").disabled = busy || !connected;
     $("connect").disabled = busy;
@@ -124,7 +124,7 @@
   async function request(method, body) {
     const captured=epoch, controller=new AbortController();requests.add(controller);const timeout=setTimeout(()=>controller.abort(),30000);
     try {
-      const response=await fetch(endpoint.href,{method,headers:{Authorization:"Bearer "+token,...(body?{"Content-Type":"application/json"}:{})},body,credentials:"omit",cache:"no-store",redirect:"error",signal:controller.signal});
+      const response=await fetch(endpoint.href,{method,headers:{...(window.secDNSAgent?.headers(token,method)||{Authorization:"Bearer "+token}),...(body?{"Content-Type":"application/json"}:{})},body,credentials:window.secDNSAgent?.credentials()||"omit",cache:"no-store",redirect:"error",signal:controller.signal});
       if(captured!==epoch)throw new DOMException("Disconnected","AbortError");
       // Authentication status is authoritative even if the response body is broken.
       if(response.status===401||response.status===403){const error=new Error("authentication");error.status=response.status;throw error;}
@@ -147,13 +147,15 @@
     token="";$("token").value="";connected=false;busy=false;model.fresh=false;$("review-dialog").close();render();if(show)status("Disconnected. Local draft and operation recovery remain in this page.");
   }
   $("connect-form").addEventListener("submit",async e=>{
-    e.preventDefault();if(busy)return;token=$("token").value.trim();$("token").value="";if(!token)return;
+    e.preventDefault();if(busy)return;const entered=$("token").value.trim();$("token").value="";if(!entered)return;try{await window.secDNSAgent?.switchToLegacy();}catch{status("Could not end the agent session. Legacy access was not started.","error");return;}token=entered;
     const captured=epoch;busy=true;controls();status("Loading current snapshot…");
     try{await fetchCurrent();if(captured!==epoch)return;connected=true;status(model.pending?"Reconnected. Pending operation retained; no automatic submission.":"Snapshot loaded.","success");}
     catch(error){if(captured===epoch){token="";connected=false;status(message(error),"error");}}
     finally{if(captured===epoch){busy=false;render();}}
   });
-  $("disconnect").addEventListener("click",()=>disconnect());
+  $("disconnect").addEventListener("click",()=>{if(window.secDNSAgent?.active)void window.secDNSAgent.logout().catch(()=>{});disconnect();});
+ window.addEventListener("agentexpired",()=>{disconnect(false);status("Agent session ended. Local draft and pending recovery are preserved.","error");});
+ window.addEventListener("agentconnected",async()=>{if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;status("Agent session connected. No pending operation was submitted.","success");}catch(e){status(message(e),"error");}finally{render();}});
   function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
   $("open-import").addEventListener("click",event=>{
     if(typeof BroadcastChannel!=="function"||!globalThis.crypto?.getRandomValues)return;
@@ -185,11 +187,11 @@
   $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Current snapshot fetched. The operation outcome is still uncertain; retry the same operation.":model.pending?.status==="acknowledged"?"Saved; newer local edits require reconciliation.":"Current snapshot fetched. Your staged and unfinished edits were preserved.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
   $("clear").addEventListener("click",()=>{if(confirm("Clear all local drafts, pending request identity and receipt, then disconnect? This cannot cancel or undo any server operation. Closing or reloading also loses this recovery information.")){disconnect(false);model.clear();edit(null,true);render();status("Local work cleared. Reconnect explicitly to load a server snapshot.");}});
-  $("review").addEventListener("click",()=>{if($("review").disabled)return;reviewedEdit=model.edits;const d=S.changes(model.base.records,model.draft);$("review-description").textContent=`Base revision ${model.base.revision}: ${d.added} added, ${d.changed} changed, ${d.removed} removed. ${model.draft.length} total record sets will be submitted.`;$("review-dialog").showModal();});
+  $("review").addEventListener("click",()=>{if($("review").disabled)return;reviewedEdit=model.edits;const d=S.changes(model.base.records,model.draft);$("review-description").textContent=`${window.secDNSAgent?.active ? "Agent " + window.secDNSAgent.name + ": " : "Legacy administrator: "}Base revision ${model.base.revision}: ${d.added} added, ${d.changed} changed, ${d.removed} removed. ${model.draft.length} total record sets will be submitted.`;$("review-dialog").showModal();});
   $("review-cancel").addEventListener("click",()=>$("review-dialog").close());
   $("review-dialog").addEventListener("cancel",e=>{if(busy)e.preventDefault();});
   async function send(retry) {
-    if(busy||!connected)return;
+    if(busy||!connected||(window.secDNSAgent && !window.secDNSAgent.allows("records:write")))return;
     if(!retry){if(reviewedEdit!==model.edits){status("The draft changed. Review it again.","error");return;}try{if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));const id=Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");model.freeze(id,endpoint.href);}catch(e){status(message(e),"error");return;}}
     else if(model.pending?.status!=="uncertain")return;
     const pending=model.pending,captured=epoch;pending.status="sending";getID++;busy=true;controls();$("review-dialog").close();status("Submitting the frozen replacement…");
