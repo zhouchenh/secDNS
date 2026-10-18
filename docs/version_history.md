@@ -1,5 +1,37 @@
 # Version History
 
+## v1.7.0 - 2026.10.18
+
+Opt-in Client Source Resolver Selection
+
+* listeners: allow UDP and TCP DNS listeners to opt into resolver selection from the
+  directly connected socket peer. The top-level source policy uses exact CIDR members,
+  optional expiry, ordered rules for each listener role, and a required explicit default.
+  Selection runs before resolution and cache lookup; missing peer identity, unknown roles,
+  partial configuration, and invalid references fail closed. Configurations that omit the
+  feature retain their existing listener behavior.
+* configuration: validate every selected resolver graph and reject cycles, unsupported
+  dependency shapes, and concrete cache objects shared by distinct selected resolver names.
+  This keeps final-answer caches isolated without changing the legacy cache-key format.
+* admin: optionally expose a bearer-authenticated source-policy explanation endpoint. Its
+  strict request is limited to 4 KiB and requires an explicit listener role, synthetic client
+  address, and evaluation instant. The response reports the immutable policy fingerprint and
+  selection reason without resolving a name, reading a cache or store, contacting a network,
+  or revealing source-set members.
+
+Source identity is limited to the UDP or TCP socket peer. The feature does not reconstruct an
+original client from EDNS Client Subnet, proxy headers, or address translation; authenticate a
+source inventory; reload policy dynamically; synchronize policy between instances; import
+router or client inventory; or change interfaces, routes, or egress. The explanation endpoint
+is diagnostic only and this release does not add a browser form for it. See
+[listener resolution policies](listener-resolution-policies.md) and the
+[admin listener](listeners/http_admin_server.md).
+
+The release workflow continues to publish the 46 existing `secDNS` platform binaries, which
+include the source selector, listener integration, and optional admin diagnostic. The
+`cmd/routeros-dns-preview` command remains a source-tree tool and is not published as a
+separate release asset.
+
 ## v1.6.4 - 2026.10.18
 
 Operator Provenance and Aggregate Import Coverage
