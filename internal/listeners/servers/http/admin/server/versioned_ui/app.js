@@ -47,6 +47,7 @@
     revision_conflict:"The server changed since your base revision. Compare snapshots, then explicitly discard/reload and manually re-enter desired edits.",
     identity_conflict:"The server identity or lineage differs. Writing is blocked. Clear local work only after reviewing it, then reconnect explicitly.",
     operation_conflict:"This operation ID conflicts with another request. The frozen attempt is preserved; no replacement ID was generated.",
+    operator_provenance_unavailable:"This store has not been explicitly migrated for operator-supplied provenance. Nothing was changed.",
     receipt_capacity:"The operation receipt ledger is full. Operator intervention is required.",
     revision_exhausted:"The revision range is exhausted. Operator intervention is required.",
     snapshot_unavailable:"The store is unavailable. Local work is preserved.",
@@ -103,7 +104,7 @@
     const diff = S.changes(model.base?.records || [], model.draft);
     $("change-count").textContent = `${diff.added} added · ${diff.changed} changed · ${diff.removed} removed`;
     $("receipt").textContent = model.receipt ? "Acknowledged operation " + model.receipt.operation_id + " at revision " + model.receipt.revision + " · " + model.receipt.committed_at + ". This receipt is not a current-state snapshot." : "";
-    const origin=model.draftProvenance;$("draft-provenance").textContent=origin?"Imported strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"not edited after transfer":"locally edited after transfer")+".":"";
+    const origin=model.draftProvenance;$("draft-provenance").textContent=origin?"Operator-supplied strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"unchanged after transfer; the tuple will be submitted":"locally edited; the original tuple will not be submitted")+". The source and profile are not authenticated by the snapshot server.":"";
     $("count").textContent = String(model.draft.length); $("rows").replaceChildren();
     const filter = $("filter").value.toLowerCase(); let count = 0;
     for (const record of model.draft) {
@@ -129,13 +130,15 @@
       if(response.status===401||response.status===403){const error=new Error("authentication");error.status=response.status;throw error;}
       let data;try{data=await response.json();}catch{throw new Error("unexpected_response");}
       if(captured!==epoch)throw new DOMException("Disconnected","AbortError");
-      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
-      return data;
+      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
+      const names=["SecDNS-Operator-Provenance-Profile","SecDNS-Operator-Provenance-Source-SHA256","SecDNS-Operator-Provenance-Content-SHA256"],present=names.map(name=>response.headers.has(name));
+      let provenance=null;if(present.some(Boolean)){if(!present.every(Boolean))throw new Error("unexpected_response");provenance={profile:response.headers.get(names[0]),source_sha256:response.headers.get(names[1]),content_sha256:response.headers.get(names[2])};if(!S.operatorProvenance(provenance))throw new Error("unexpected_response");}
+      return {data,provenance};
     } finally {clearTimeout(timeout);requests.delete(controller); }
   }
   async function fetchCurrent() {
     const id=++getID, captured=epoch;
-    try{const data=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(data);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
+    try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(result.data,result.provenance);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
     catch(e){if(captured===epoch&&id===getID){model.fresh=false;if(e.message==="authentication"){disconnect(false);status(message(e),"error");}render();throw e;}return false;}
   }
   function disconnect(show=true) {
@@ -191,7 +194,7 @@
     else if(model.pending?.status!=="uncertain")return;
     const pending=model.pending,captured=epoch;pending.status="sending";getID++;busy=true;controls();$("review-dialog").close();status("Submitting the frozen replacement…");
     try{
-      const result=await request("POST",pending.body);if(captured!==epoch)return;model.acknowledge(result);render();
+      const result=await request("POST",pending.body);if(captured!==epoch)return;model.acknowledge(result.data,result.provenance);render();
       try{await fetchCurrent();if(captured===epoch)status(model.pending?"Saved; newer local edits require reconciliation.":"Replacement acknowledged and latest saved records loaded.","success");}
       catch(e){if(captured===epoch)status("Saved; current state could not be loaded. The receipt and draft are retained. Fetch current before another proposal.","error");}
     }catch(e){if(captured!==epoch)return;if(e.definitive){pending.status="rejected";model.fresh=false;if(e.message==="identity_conflict")model.identityBlocked=true;status(message(e),"error");}else{model.uncertain();status(message(e)+" "+messages.uncertain,"error");}if(e.message==="authentication")disconnect(false);}

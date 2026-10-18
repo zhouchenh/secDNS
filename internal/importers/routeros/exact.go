@@ -9,7 +9,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/recordset"
 )
 
-const ExactProfile = "secdns.routeros-exact-explicit.v1"
+const ExactProfile = recordset.RouterOSExactExplicitProfile
 const MaxCompileBlockers = 2*MaxEntries + 1
 const validationLineage = "compiler-validation" // Private scratch identity, never published.
 

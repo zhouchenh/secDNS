@@ -188,6 +188,14 @@ replacement. The editor shows both hashes and whether the imported draft was edi
 then uses its existing complete comparison, revision check, confirmation and explicit
 apply flow if the operator later chooses to submit it.
 
+If the transferred draft remains unchanged, that later explicit replacement includes
+the fixed profile/source/content tuple as **operator-supplied provenance**. The snapshot
+server verifies that the content hash matches the canonical candidate; it cannot prove
+that the source bytes were a genuine RouterOS export or that the named profile produced
+them. Any local edit, including edit then revert, omits the original tuple. Existing
+schema-2 stores continue to accept legacy replacements but refuse this optional tuple
+until a separately authorized schema migration.
+
 The selected source is sent to the same-origin authenticated
 `POST <base>/import/routeros/preview` route, available only when `ui` is enabled.
 It accepts exactly one `Content-Type: application/octet-stream` header, with no

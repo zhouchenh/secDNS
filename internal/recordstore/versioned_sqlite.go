@@ -15,8 +15,10 @@ import (
 	"github.com/zhouchenh/secDNS/internal/recordset"
 )
 
-const snapshotTableSQL = "CREATE TABLE snapshot_state (id INTEGER PRIMARY KEY CHECK(id=1), envelope BLOB NOT NULL)"
-const receiptTableSQL = "CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL)"
+const snapshotTableSQLV2 = "CREATE TABLE snapshot_state (id INTEGER PRIMARY KEY CHECK(id=1), envelope BLOB NOT NULL)"
+const receiptTableSQLV2 = "CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL)"
+const snapshotTableSQLV3 = "CREATE TABLE snapshot_state (id INTEGER PRIMARY KEY CHECK(id=1), envelope BLOB NOT NULL, operator_provenance BLOB)"
+const receiptTableSQLV3 = "CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL, operator_provenance BLOB)"
 
 var ErrMigrationIncompatible = errors.New("legacy records cannot form an exact snapshot")
 
@@ -70,9 +72,10 @@ func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHook
 	}
 	switch {
 	case version == 0 && id == 0 && len(schemas) == 0:
-		if err = createVersionedSchema(tx, s.current.Load()); err != nil {
+		if err = createVersionedSchema(tx, s.current.Load().snapshot); err != nil {
 			return nil, err
 		}
+		s.schemaVersion = 3
 	case version == 1 && id == applicationID && len(schemas) == 1 && schemas["records"] == tableSQL:
 		if !enrollment.AllowSchema1Migration {
 			return nil, ErrMigrationRequired
@@ -91,14 +94,36 @@ func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHook
 		if _, err = tx.Exec("DROP TABLE records"); err != nil {
 			return nil, err
 		}
-		s.current.Store(snapshot)
-	case version == 2 && id == applicationID && len(schemas) == 2 && schemas["snapshot_state"] == snapshotTableSQL && schemas["operation_receipts"] == receiptTableSQL:
-		snapshot, receipts, e := loadVersioned(tx, enrollment)
+		s.current.Store(&versionedGeneration{snapshot: snapshot})
+		s.schemaVersion = 3
+	case version == 2 && id == applicationID && len(schemas) == 2 && schemas["snapshot_state"] == snapshotTableSQLV2 && schemas["operation_receipts"] == receiptTableSQLV2:
+		generation, receipts, e := loadVersioned(tx, enrollment, false)
 		if e != nil {
 			return nil, e
 		}
-		s.current.Store(snapshot)
+		s.current.Store(generation)
 		s.receipts = receipts
+		s.schemaVersion = 2
+		if enrollment.AllowSchema2Migration {
+			if _, err = tx.Exec("ALTER TABLE snapshot_state ADD COLUMN operator_provenance BLOB"); err != nil {
+				return nil, err
+			}
+			if _, err = tx.Exec("ALTER TABLE operation_receipts ADD COLUMN operator_provenance BLOB"); err != nil {
+				return nil, err
+			}
+			if _, err = tx.Exec("PRAGMA user_version=3"); err != nil {
+				return nil, err
+			}
+			s.schemaVersion = 3
+		}
+	case version == 3 && id == applicationID && len(schemas) == 2 && schemas["snapshot_state"] == snapshotTableSQLV3 && schemas["operation_receipts"] == receiptTableSQLV3:
+		generation, receipts, e := loadVersioned(tx, enrollment, true)
+		if e != nil {
+			return nil, e
+		}
+		s.current.Store(generation)
+		s.receipts = receipts
+		s.schemaVersion = 3
 	default:
 		return nil, ErrVersionedSchema
 	}
@@ -143,7 +168,7 @@ func readSchema(tx *sql.Tx) (map[string]string, error) {
 	return m, rows.Err()
 }
 func createVersionedSchema(tx *sql.Tx, snapshot *recordset.Snapshot) error {
-	for _, statement := range []string{snapshotTableSQL, receiptTableSQL, fmt.Sprintf("PRAGMA application_id=%d", applicationID), "PRAGMA user_version=2"} {
+	for _, statement := range []string{snapshotTableSQLV3, receiptTableSQLV3, fmt.Sprintf("PRAGMA application_id=%d", applicationID), "PRAGMA user_version=3"} {
 		if _, err := tx.Exec(statement); err != nil {
 			return err
 		}
@@ -163,23 +188,57 @@ func validDigest(raw string) bool {
 	_, err := hex.DecodeString(raw)
 	return err == nil
 }
-func loadVersioned(tx *sql.Tx, e Enrollment) (*recordset.Snapshot, map[string]Receipt, error) {
-	var count, size int
-	if err := tx.QueryRow("SELECT count(*),coalesce(max(length(CAST(envelope AS BLOB))),0) FROM snapshot_state").Scan(&count, &size); err != nil {
+func decodeStoredOperatorSuppliedProvenance(present int, raw []byte) (recordset.OperatorSuppliedProvenance, bool, error) {
+	if present == 0 {
+		if raw != nil {
+			return recordset.OperatorSuppliedProvenance{}, false, ErrVersionedSchema
+		}
+		return recordset.OperatorSuppliedProvenance{}, false, nil
+	}
+	if present != 1 || len(raw) == 0 || len(raw) > recordset.MaxOperatorSuppliedProvenanceBytes {
+		return recordset.OperatorSuppliedProvenance{}, false, ErrVersionedSchema
+	}
+	p, err := recordset.ParseOperatorSuppliedProvenance(raw)
+	if err != nil {
+		return recordset.OperatorSuppliedProvenance{}, false, ErrVersionedSchema
+	}
+	canonical, _ := p.MarshalJSON()
+	if !bytes.Equal(raw, canonical) {
+		return recordset.OperatorSuppliedProvenance{}, false, ErrVersionedSchema
+	}
+	return p, true, nil
+}
+
+func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGeneration, map[string]Receipt, error) {
+	var count, size, provenanceSize int
+	if withProvenance {
+		if err := tx.QueryRow("SELECT count(*),coalesce(max(length(CAST(envelope AS BLOB))),0),coalesce(max(length(CAST(operator_provenance AS BLOB))),0) FROM snapshot_state").Scan(&count, &size, &provenanceSize); err != nil {
+			return nil, nil, err
+		}
+	} else if err := tx.QueryRow("SELECT count(*),coalesce(max(length(CAST(envelope AS BLOB))),0) FROM snapshot_state").Scan(&count, &size); err != nil {
 		return nil, nil, err
 	}
-	if count != 1 || size < 1 || size > recordset.MaxBytes {
+	if count != 1 || size < 1 || size > recordset.MaxBytes || provenanceSize > recordset.MaxOperatorSuppliedProvenanceBytes {
 		return nil, nil, ErrVersionedSchema
 	}
 	var wrong int
-	if err := tx.QueryRow("SELECT count(*) FROM snapshot_state WHERE typeof(id)!='integer' OR typeof(envelope)!='blob'").Scan(&wrong); err != nil {
+	snapshotTypes := "SELECT count(*) FROM snapshot_state WHERE typeof(id)!='integer' OR typeof(envelope)!='blob'"
+	if withProvenance {
+		snapshotTypes += " OR (operator_provenance IS NOT NULL AND typeof(operator_provenance)!='blob')"
+	}
+	if err := tx.QueryRow(snapshotTypes).Scan(&wrong); err != nil {
 		return nil, nil, err
 	}
 	if wrong != 0 {
 		return nil, nil, ErrVersionedSchema
 	}
-	var wire []byte
-	if err := tx.QueryRow("SELECT envelope FROM snapshot_state WHERE id=1").Scan(&wire); err != nil {
+	var wire, provenanceRaw []byte
+	var provenancePresent int
+	if withProvenance {
+		if err := tx.QueryRow("SELECT envelope,operator_provenance IS NOT NULL,operator_provenance FROM snapshot_state WHERE id=1").Scan(&wire, &provenancePresent, &provenanceRaw); err != nil {
+			return nil, nil, ErrVersionedSchema
+		}
+	} else if err := tx.QueryRow("SELECT envelope FROM snapshot_state WHERE id=1").Scan(&wire); err != nil {
 		return nil, nil, ErrVersionedSchema
 	}
 	snapshot, err := recordset.Parse(wire)
@@ -194,30 +253,64 @@ func loadVersioned(tx *sql.Tx, e Enrollment) (*recordset.Snapshot, map[string]Re
 	if meta.RulesetID != e.RulesetID || meta.LineageID != e.LineageID {
 		return nil, nil, ErrIdentity
 	}
-	var maxLength int
-	if err = tx.QueryRow("SELECT count(*),coalesce(max(length(CAST(operation_id AS BLOB))+length(CAST(request_sha256 AS BLOB))+length(CAST(committed_revision AS BLOB))+length(CAST(content_sha256 AS BLOB))+length(CAST(committed_at AS BLOB))),0) FROM operation_receipts").Scan(&count, &maxLength); err != nil {
-		return nil, nil, err
+	generation := &versionedGeneration{snapshot: snapshot}
+	if withProvenance {
+		generation.operatorSuppliedProvenance, generation.hasOperatorSuppliedProvenance, err = decodeStoredOperatorSuppliedProvenance(provenancePresent, provenanceRaw)
+		if err != nil || generation.hasOperatorSuppliedProvenance && generation.operatorSuppliedProvenance.ContentSHA256() != meta.ContentSHA256 {
+			return nil, nil, ErrVersionedSchema
+		}
 	}
-	if count > MaxOperationReceipts || maxLength > 310 || meta.Revision != uint64(count)+1 {
+	if meta.Revision == 1 && generation.hasOperatorSuppliedProvenance {
 		return nil, nil, ErrVersionedSchema
 	}
-	if err = tx.QueryRow("SELECT count(*) FROM operation_receipts WHERE typeof(operation_id)!='text' OR typeof(request_sha256)!='text' OR typeof(committed_revision)!='text' OR typeof(content_sha256)!='text' OR typeof(committed_at)!='text'").Scan(&wrong); err != nil {
+	var maxLength int
+	receiptBounds := "SELECT count(*),coalesce(max(length(CAST(operation_id AS BLOB))+length(CAST(request_sha256 AS BLOB))+length(CAST(committed_revision AS BLOB))+length(CAST(content_sha256 AS BLOB))+length(CAST(committed_at AS BLOB))),0) FROM operation_receipts"
+	if withProvenance {
+		receiptBounds = "SELECT count(*),coalesce(max(length(CAST(operation_id AS BLOB))+length(CAST(request_sha256 AS BLOB))+length(CAST(committed_revision AS BLOB))+length(CAST(content_sha256 AS BLOB))+length(CAST(committed_at AS BLOB))+coalesce(length(CAST(operator_provenance AS BLOB)),0)),0) FROM operation_receipts"
+	}
+	if err = tx.QueryRow(receiptBounds).Scan(&count, &maxLength); err != nil {
+		return nil, nil, err
+	}
+	maxReceiptLength := 310
+	if withProvenance {
+		maxReceiptLength += recordset.MaxOperatorSuppliedProvenanceBytes
+	}
+	if count > MaxOperationReceipts || maxLength > maxReceiptLength || meta.Revision != uint64(count)+1 {
+		return nil, nil, ErrVersionedSchema
+	}
+	receiptTypes := "SELECT count(*) FROM operation_receipts WHERE typeof(operation_id)!='text' OR typeof(request_sha256)!='text' OR typeof(committed_revision)!='text' OR typeof(content_sha256)!='text' OR typeof(committed_at)!='text'"
+	if withProvenance {
+		receiptTypes += " OR (operator_provenance IS NOT NULL AND typeof(operator_provenance)!='blob')"
+	}
+	if err = tx.QueryRow(receiptTypes).Scan(&wrong); err != nil {
 		return nil, nil, err
 	}
 	if wrong != 0 {
 		return nil, nil, ErrVersionedSchema
 	}
-	rows, err := tx.Query("SELECT operation_id,request_sha256,committed_revision,content_sha256,committed_at FROM operation_receipts")
+	receiptQuery := "SELECT operation_id,request_sha256,committed_revision,content_sha256,committed_at FROM operation_receipts"
+	if withProvenance {
+		receiptQuery = "SELECT operation_id,request_sha256,committed_revision,content_sha256,committed_at,operator_provenance IS NOT NULL,operator_provenance FROM operation_receipts"
+	}
+	rows, err := tx.Query(receiptQuery)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer rows.Close()
 	receipts := map[string]Receipt{}
 	revisions := map[uint64]bool{}
+	latestSeen := meta.Revision == 1
 	for rows.Next() {
 		var r Receipt
 		var revision, at string
-		if err = rows.Scan(&r.OperationID, &r.RequestSHA256, &revision, &r.ContentSHA256, &at); err != nil {
+		var raw []byte
+		var present int
+		if withProvenance {
+			err = rows.Scan(&r.OperationID, &r.RequestSHA256, &revision, &r.ContentSHA256, &at, &present, &raw)
+		} else {
+			err = rows.Scan(&r.OperationID, &r.RequestSHA256, &revision, &r.ContentSHA256, &at)
+		}
+		if err != nil {
 			return nil, nil, ErrVersionedSchema
 		}
 		n, ok := canonicalRevision(revision)
@@ -229,8 +322,25 @@ func loadVersioned(tx *sql.Tx, e Enrollment) (*recordset.Snapshot, map[string]Re
 		if err != nil || r.CommittedAt.IsZero() || r.CommittedAt.Year() < 1 || r.CommittedAt.Year() > 9999 || r.CommittedAt.UTC().Format(time.RFC3339Nano) != at {
 			return nil, nil, ErrVersionedSchema
 		}
-		if n == meta.Revision && r.ContentSHA256 != meta.ContentSHA256 {
+		if withProvenance {
+			r.operatorSuppliedProvenance, r.hasOperatorSuppliedProvenance, err = decodeStoredOperatorSuppliedProvenance(present, raw)
+			if err != nil || r.hasOperatorSuppliedProvenance && r.operatorSuppliedProvenance.ContentSHA256() != r.ContentSHA256 {
+				return nil, nil, ErrVersionedSchema
+			}
+		}
+		expected := Expected{RulesetID: e.RulesetID, LineageID: e.LineageID, Revision: n - 1}
+		digest := requestDigest(expected, r.ContentSHA256)
+		if r.hasOperatorSuppliedProvenance {
+			digest = requestDigestWithOperatorSuppliedProvenance(expected, r.ContentSHA256, r.operatorSuppliedProvenance)
+		}
+		if r.RequestSHA256 != digest {
 			return nil, nil, ErrVersionedSchema
+		}
+		if n == meta.Revision {
+			if r.ContentSHA256 != meta.ContentSHA256 || r.hasOperatorSuppliedProvenance != generation.hasOperatorSuppliedProvenance || r.hasOperatorSuppliedProvenance && r.operatorSuppliedProvenance != generation.operatorSuppliedProvenance {
+				return nil, nil, ErrVersionedSchema
+			}
+			latestSeen = true
 		}
 		revisions[n] = true
 		receipts[r.OperationID] = r
@@ -238,7 +348,10 @@ func loadVersioned(tx *sql.Tx, e Enrollment) (*recordset.Snapshot, map[string]Re
 	if err = rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	return snapshot, receipts, nil
+	if !latestSeen {
+		return nil, nil, ErrVersionedSchema
+	}
+	return generation, receipts, nil
 }
 func readLegacyExact(tx *sql.Tx) ([]recordset.Record, error) {
 	var count, size int
@@ -327,14 +440,32 @@ func readLegacyExact(tx *sql.Tx) ([]recordset.Record, error) {
 	}
 	return records, nil
 }
-func (s *VersionedStore) persistReplacement(snapshot *recordset.Snapshot, r Receipt) error {
+func (s *VersionedStore) persistReplacement(generation *versionedGeneration, r Receipt) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	wire, _ := snapshot.MarshalJSON()
-	result, err := tx.Exec("UPDATE snapshot_state SET envelope=? WHERE id=1", wire)
+	wire, _ := generation.snapshot.MarshalJSON()
+	var provenance any
+	if generation.hasOperatorSuppliedProvenance {
+		provenance, err = generation.operatorSuppliedProvenance.MarshalJSON()
+		if err != nil {
+			return ErrVersionedSchema
+		}
+	}
+	var result sql.Result
+	switch s.schemaVersion {
+	case 2:
+		if generation.hasOperatorSuppliedProvenance {
+			return ErrOperatorProvenanceUnavailable
+		}
+		result, err = tx.Exec("UPDATE snapshot_state SET envelope=? WHERE id=1", wire)
+	case 3:
+		result, err = tx.Exec("UPDATE snapshot_state SET envelope=?,operator_provenance=? WHERE id=1", wire, provenance)
+	default:
+		return ErrVersionedSchema
+	}
 	if err != nil {
 		return err
 	}
@@ -342,7 +473,13 @@ func (s *VersionedStore) persistReplacement(snapshot *recordset.Snapshot, r Rece
 	if err != nil || n != 1 {
 		return ErrVersionedSchema
 	}
-	if _, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at) VALUES(?,?,?,?,?)", r.OperationID, r.RequestSHA256, strconv.FormatUint(r.Revision, 10), r.ContentSHA256, r.CommittedAt.UTC().Format(time.RFC3339Nano)); err != nil {
+	switch s.schemaVersion {
+	case 2:
+		_, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at) VALUES(?,?,?,?,?)", r.OperationID, r.RequestSHA256, strconv.FormatUint(r.Revision, 10), r.ContentSHA256, r.CommittedAt.UTC().Format(time.RFC3339Nano))
+	case 3:
+		_, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at,operator_provenance) VALUES(?,?,?,?,?,?)", r.OperationID, r.RequestSHA256, strconv.FormatUint(r.Revision, 10), r.ContentSHA256, r.CommittedAt.UTC().Format(time.RFC3339Nano), provenance)
+	}
+	if err != nil {
 		return err
 	}
 	if s.hooks.beforeCommit != nil {

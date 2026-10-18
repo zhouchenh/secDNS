@@ -17,7 +17,7 @@ Versioned stores are optional. Existing `recordStores`, authoritative resolvers,
 
 For volatile tests, use `backend: "memory"` and omit `sqlitePath`. Both identity fields remain required. Existing authoritative and admin components select this mode through `store: "pilot"`; there is no second component-level mode switch. An omitted store name means `default`, which may itself be explicitly enrolled. Unconfigured names retain legacy lazy memory stores.
 
-Names and paths cannot overlap legacy stores or one another. Startup validates configuration without filesystem writes in `-test` mode, opens all requested stores before publishing any bindings, and starts listeners only afterward. New SQLite files begin with an empty revision 1; existing schema 2 files must match their enrollment identity. Schema 1 files are refused: runtime startup never performs migration. There are no JSON seeds, automatic enrollment, hot reload or concurrent process writers. Closed versioned names remain reserved for the process lifetime, so shutdown cannot silently replace them with empty legacy stores.
+Names and paths cannot overlap legacy stores or one another. Startup validates configuration without filesystem writes in `-test` mode, opens all requested stores before publishing any bindings, and starts listeners only afterward. New SQLite files begin with an empty schema-3 revision 1; existing schema-2 and schema-3 files must match their enrollment identity. Schema 2 remains in legacy-compatible mode and schema 1 is refused: runtime startup never performs migration. There are no JSON seeds, automatic enrollment, hot reload or concurrent process writers. Closed versioned names remain reserved for the process lifetime, so shutdown cannot silently replace them with empty legacy stores.
 
 Each authoritative invocation pins one immutable generation and one expiry instant, including every same-store CNAME hop. TTL zero and TXT chunk order are retained. Expired records remain in canonical snapshots but are filtered from answers without a new revision. This is not a multi-store transaction or a guarantee across an entire resolver graph. Existing negative SOA placeholders and CNAME completion limitations still apply. Closed stores return local SERVFAIL, not an error that permits default upstream fallback.
 
@@ -37,11 +37,26 @@ POST replaces the entire exact record set atomically:
 }
 ```
 
+An unchanged strict RouterOS candidate may add this fixed optional member:
+
+```json
+"operator_supplied_provenance": {
+  "profile": "secdns.routeros-exact-explicit.v1",
+  "source_sha256": "<lowercase SHA-256 supplied by the operator workflow>",
+  "content_sha256": "<lowercase canonical candidate SHA-256>"
+}
+```
+
+The server recomputes and verifies only the candidate content hash. It cannot prove
+that the source hash came from genuine RouterOS export bytes or that the named profile
+produced them. The tuple is therefore operator-supplied provenance, not authenticity,
+attestation, apply authorization or RouterOS behavior parity.
+
 The body is limited to 4 MiB. Field spelling is exact; unknown or duplicate fields, nulls and malformed Unicode are rejected. Existing exact snapshot record limits and validation apply. Absolute `expires_at` values use RFC3339Nano, including past timestamps for lossless snapshot transfer; relative expiry is not accepted. TTL zero is preserved. The server assigns the next revision.
 
-Success returns `operation_id`, decimal-string `revision`, `content_sha256` and `committed_at`. Durable commit precedes success and publication. Retrying an identical operation returns its original receipt, even after another edit; reusing its ID for different content fails. Clients must retain the exact expected revision, operation ID and payload when retrying an uncertain result. A digest is not authentication or a signature.
+Success returns the unchanged `operation_id`, decimal-string `revision`, `content_sha256` and `committed_at` body. GET keeps the unchanged canonical snapshot body. When the pinned generation or receipt has provenance, both endpoints add all three `SecDNS-Operator-Provenance-Profile`, `SecDNS-Operator-Provenance-Source-SHA256` and `SecDNS-Operator-Provenance-Content-SHA256` headers; otherwise all are absent. Durable commit precedes success and publication. Retrying an identical operation returns its original receipt, even after another edit; reusing its ID for different content or provenance fails. Clients must retain the exact expected revision, operation ID and payload when retrying an uncertain result. A digest is not authentication or a signature.
 
-Errors have a fixed `error` code: malformed input is 400, oversized body 413; identity, revision and operation conflicts are 409 (`identity_conflict`, `revision_conflict`, `operation_conflict`). Receipt capacity and revision exhaustion are also 409 and require operator intervention. Storage or closed-state failure is 503 `snapshot_unavailable`. Authentication remains 401/403. Failed writes publish no new generation.
+Errors have a fixed `error` code: malformed input is 400, oversized body 413; identity, revision and operation conflicts are 409 (`identity_conflict`, `revision_conflict`, `operation_conflict`). Receipt capacity and revision exhaustion are also 409 and require operator intervention. A provenance request against an unmigrated schema-2 store is 409 `operator_provenance_unavailable`; runtime does not migrate it. Storage or closed-state failure is 503 `snapshot_unavailable`. Authentication remains 401/403. Failed writes publish no new generation.
 
 Versioned mode refuses legacy per-record CRUD with 409 `versioned_batch_required`. Legacy stores do not expose snapshot routes. With the existing `ui: true` admin option, versioned stores serve a separate snapshot editor; legacy stores keep their single-record editor. The default remains off. Automatic cluster synchronization is not included. This surface represents exact records only, not ordered RouterOS regex, forwarding or subdomain policy.
 
@@ -62,6 +77,6 @@ Drafts and pending recovery exist only in this page's memory. Closing or reloadi
 
 The editor's RouterOS review link opens a separate `noopener` tab and creates a random memory-only same-origin handoff channel. A complete strict exact conversion can be transferred only by an explicit button in that tab. The editor independently checks the random channel, expected source and target paths, 30-second message age, 4 MiB payload bound, exact-record shape and matching ruleset ID. It accepts records only while connected to a fresh snapshot with a clean draft, no unfinished form and no pending operation. Refused or unsupported sources never expose the action; dirty or mismatched editors preserve their current work and reject the transfer.
 
-An accepted transfer only replaces the local browser draft and displays the strict profile plus source/content hashes. It never copies a bearer token, posts to the snapshot API, changes a store or bypasses the existing comparison and revision-aware confirmation. Any later apply still freezes the complete draft against the editor's loaded base and uses the normal explicit replacement dialog. The random fragment capability is removed from the child address after startup; no cookie or browser storage is used.
+An accepted transfer only replaces the local browser draft and displays the strict profile plus source/content hashes. It never copies a bearer token, posts to the snapshot API, changes a store or bypasses the existing comparison and revision-aware confirmation. A later apply includes the operator-supplied tuple only when the transferred draft has not been locally edited. Any edit, including edit then revert, omits the original tuple rather than falsely attributing changed work to the source. The editor labels both cases and states that the server does not authenticate the source/profile assertion. The complete frozen body remains identical on retry. The random fragment capability is removed from the child address after startup; no cookie or browser storage is used.
 
 Validation uses `node scripts/test-versioned-editor-state.cjs` and `scripts/test-versioned-editor-browser.cjs`; the RouterOS preview browser suite exercises the cross-tab candidate handoff. The browser suites require an existing Playwright installation and a dedicated synthetic localhost memory server with the snapshot editor enabled. They may replace that test store's contents; never point them at an operational admin instance. `PLAYWRIGHT_MODULE`, `EDITOR_TEST_URL`, `EDITOR_SCREENSHOT` and `EDITOR_MOBILE_SCREENSHOT` optionally select installed tooling, the localhost test endpoint and output images. No dependency download is required.
