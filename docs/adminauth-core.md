@@ -83,7 +83,7 @@ credential IDs, never token material, operator labels, passwords or DNS data.
 Bootstrap creation/cancellation, issuance and revocation commit with audit;
 audit failure rolls back the action. Public errors are fixed categories.
 
-Password/TOTP, recovery, rate limits and encrypted enrollment are documented in [Human owner sign-in](human-admin-access.md). Passkeys remain unimplemented. Opt-in agent browser sessions, cookies, CSRF,
+Password/TOTP, recovery, rate limits and encrypted enrollment are documented in [Human owner sign-in](human-admin-access.md). Optional node-local passkeys require explicit offline schema 4 enablement; see [Human passkeys](passkey-admin-access.md). Opt-in agent browser sessions, cookies, CSRF,
 HTTPS-origin checks, offline CLI and HTTP authorization are now supplied by
 [Scoped agent access](agent-admin-access.md).
 No auth state

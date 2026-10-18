@@ -1,5 +1,49 @@
 # Version History
 
+## v1.9.0 - 2026.10.18
+
+Opt-in Human and Agent Administration
+
+This release adds node-local authentication stores and browser sign-in while preserving
+legacy-token access and the behavior of configurations without an auth binding.
+
+* scoped agents: dedicated credentials have exact realm/node audiences and explicit scopes.
+  Agents can use the API and exchange credentials for bounded browser sessions, but cannot
+  issue credentials or gain human authority. Cookie sessions use exact origin, CSRF and
+  durable credential checks; ambiguous bearer/cookie requests refuse.
+* human sign-in: password plus TOTP, ten one-use recovery codes, local QR enrollment,
+  recent-authentication controls and explicit local recovery. Passwords use Argon2id;
+  authenticator seeds are encrypted under the separate auth key. Agent and human sessions
+  remain distinct, and recovery does not grant an agent human authority.
+* optional passkeys: discoverable, user-verified WebAuthn enrollment, login and
+  reauthentication for one exact configured HTTPS origin/RP. Nonzero counter regression
+  denies and records a warning without claiming a clone. No hardware/attestation assurance
+  or shared-node identity is implied. Password/authenticator recovery remains available.
+* dependencies: update `golang.org/x/crypto` from v0.51.0 to v0.52.0, without claiming that
+  the affected SSH code paths were reachable in prior secDNS behavior.
+
+The built-in admin listener still does not terminate TLS. Network access needs a separately
+protected HTTPS endpoint; this release does not provision certificates, DNS, or a portal.
+Auth state is not replicated between nodes, and these changes do not deploy or initialize
+any running instance.
+
+Authentication schemas are separate from record-store schemas and never migrate at runtime.
+With the owning process stopped, `migrate-schema1` advances auth schema 1 to 2; `enable-human`
+advances schema 2 to 3; after initializing the human owner, `enable-passkeys` advances schema
+3 to 4 and binds the exact origin/RP. Before each migration, preserve the auth database and
+its matching key together as a private offline backup. Older binaries cannot open later
+schemas. Reconcile uncertain outcomes before retrying; never blindly replay a migration.
+Record databases, user DNS records and snapshot synchronization are outside these migrations.
+
+The release publishes 49 assets: the unchanged 46 `secDNS` daemon binaries plus
+`secdns-adminauth-linux-amd64`, `secdns-adminauth-linux-arm64`, and
+`secdns-adminauth-windows-amd64.exe`. The helper is local/offline administration tooling,
+not an HTTP service or remote credential-management endpoint. Other helper platforms can
+be built from the tagged source.
+
+See [scoped agent access](agent-admin-access.md), [human owner sign-in](human-admin-access.md),
+[passkeys](passkey-admin-access.md), and the [auth-store contract](adminauth-core.md).
+
 ## v1.8.0 - 2026.10.18
 
 Direct Exact-Record Synchronization
