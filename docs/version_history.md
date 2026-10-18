@@ -1,5 +1,33 @@
 # Version History
 
+## v1.6.3 - 2026.10.18
+
+Exact Import Draft Handoff and Address Resolver Options
+
+* admin: add strict exact conversion to the authenticated RouterOS import page. It requires
+  an explicit ruleset ID and either returns the complete canonical A, AAAA, and CNAME
+  candidate or refuses the complete source with blockers and no candidate content.
+* admin: allow an operator to explicitly transfer a successful exact candidate into the
+  originating versioned editor's clean local draft. The same-origin memory channel carries no
+  credential and performs no store request. The editor records source and content hashes,
+  preserves dirty or busy work, and retains its existing complete-snapshot review, revision
+  check, explicit confirmation, and exact-retry behavior. Nothing is applied automatically.
+* resolver: let the static `address` resolver use an optional uint32 TTL and opt-in
+  fallthrough for unsupported query types or an absent address family. Existing string/list
+  forms and object defaults retain TTL 60 and the previous empty-response behavior.
+
+The release workflow continues to publish the 46 existing `secDNS` platform binaries. The
+embedded authenticated pages and address-resolver behavior are included in those binaries.
+The `cmd/routeros-dns-preview` command remains a source-tree tool and is not published as a
+separate release asset.
+
+Strict conversion still supports literal static DNS records only. It does not prove that a
+pasted source is a complete router export, translate the full RouterOS policy surface, contact
+a router, or bypass the versioned editor's review and revision-aware replacement flow. See the
+[RouterOS import preview](routeros-import-preview.md),
+[versioned records editor](versioned-authority-api.md#optional-snapshot-editor), and
+[address resolver](resolvers/address.md).
+
 ## v1.6.2 - 2026.10.18
 
 RouterOS Import Review and Exact Conversion
