@@ -1,5 +1,45 @@
 # Version History
 
+## v1.8.0 - 2026.10.18
+
+Direct Exact-Record Synchronization
+
+This release adds an opt-in path for copying a complete exact-record snapshot from one
+explicitly trusted HTTPS publisher into a durable follower store, then serving changing
+owner sets without regenerating static routing rules. Existing configurations retain their
+previous behavior unless these stores, credentials, workers, and resolvers are configured.
+
+* snapshot API: return a strong representation ETag on authenticated full-snapshot reads
+  and honor standard `If-None-Match` list, wildcard, and weak-comparison semantics after
+  authentication. A match returns an empty `304 Not Modified`; every `200` remains a full
+  canonical envelope that the client must validate and durably accept.
+* revision events: expose an authenticated, bounded Server-Sent Events stream of `advanced`
+  and `resync` hints. Streams carry only identity and revision metadata, last at most 30
+  seconds, and use finite subscription and buffer limits. Events are hints to fetch a full
+  snapshot, never authoritative content or durable-write acknowledgements.
+* direct followers: allow a configured follower store to fetch from one fixed HTTPS origin
+  with a distinct read-only per-node credential and immutable enrollment tuple. Startup
+  performs an unconditional full fetch before using an ETag. Later failures leave the last
+  durably accepted generation serving, while an empty or invalid store fails closed.
+* resolver: add `exactStoreOverlay` to answer owners present in one pinned writer or follower
+  store generation and invoke an existing fallback graph once only when the original owner is
+  absent. Startup rejects caches above the overlay and fallback caches shared across distinct
+  source-policy roots, so accepted additions and removals are not hidden by stale final-answer
+  cache entries.
+
+Synchronization copies exact `A`, `AAAA`, `CNAME`, and `TXT` snapshots only. It does not copy
+listeners, resolver graphs, source policy, DNS64 policy, routing, credentials, or general node
+configuration. This is a direct trusted-publisher mode using ordinary Go TLS verification; it
+does not integrate signed-snapshot verification, the separate durable trust/mirror design,
+writer election, discovery, redirect following, CA provisioning, deployment, or automatic
+upgrade of existing instances. The built-in admin listener does not terminate TLS, so a
+separately configured protected HTTPS management endpoint is required for network use.
+
+The release workflow continues to publish the 46 existing `secDNS` platform binaries. See the
+[versioned authority API](versioned-authority-api.md),
+[direct follower synchronization](direct-follower-sync.md), and
+[`exactStoreOverlay` resolver](resolvers/exact_store_overlay.md).
+
 ## v1.7.0 - 2026.10.18
 
 Opt-in Client Source Resolver Selection
