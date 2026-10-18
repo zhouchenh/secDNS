@@ -50,12 +50,12 @@ func (s *Store) enableHumanSchema() error {
 func (s *Store) HumanEnabled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.healthy() && s.version == 3
+	return s.healthy() && s.version >= 3
 }
 func (s *Store) HumanReady() (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.healthy() || s.version != 3 {
+	if !s.healthy() || s.version < 3 {
 		return false, ErrUnavailable
 	}
 	var n int
@@ -150,7 +150,7 @@ func (s *Store) CreateHumanGrant(recovery bool, now time.Time) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.version != 3 {
+	if s.version < 3 {
 		return "", ErrUnavailable
 	}
 	d := s.digest(token)
@@ -179,7 +179,7 @@ func (s *Store) CreateHumanGrant(recovery bool, now time.Time) (string, error) {
 func (s *Store) CancelHumanGrant(now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.version != 3 || !validNow(now) {
+	if s.version < 3 || !validNow(now) {
 		return ErrInvalid
 	}
 	return s.write(func(tx *sql.Tx) error {
@@ -218,7 +218,7 @@ func (s *Store) rateAttempt(source string, now time.Time) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.version != 3 {
+	if s.version < 3 {
 		return ErrUnavailable
 	}
 	denied := false

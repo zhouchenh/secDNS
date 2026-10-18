@@ -20,6 +20,7 @@ type agentBinding struct {
 	origin   string
 	now      func() time.Time
 	human    *adminauth.HumanAuth
+	passkeys *adminauth.PasskeyAuth
 }
 type actorKey struct{}
 
@@ -29,6 +30,9 @@ func (h *HTTPAdminServer) BindAgentAuth(store *adminauth.Store, origin string) {
 }
 func (h *HTTPAdminServer) ClearAgentAuth() {
 	if h.agent != nil {
+		if h.agent.passkeys != nil {
+			h.agent.passkeys.Close()
+		}
 		h.agent.human.Close()
 		h.agent.sessions.Close()
 	}
@@ -202,7 +206,7 @@ func (h *HTTPAdminServer) agentRoutes(mux *http.ServeMux, base string) {
 		w.Header().Set("Cache-Control", "no-store")
 		enabled := h.agent != nil
 		secure := enabled && h.agent.origin != ""
-		out := map[string]any{"agent_access": secure, "human_access": false}
+		out := map[string]any{"agent_access": secure, "human_access": false, "passkey_access": secure && h.agent != nil && h.agent.passkeys != nil}
 		if enabled {
 			id := h.agent.store.Identity()
 			out["public_origin"] = h.agent.origin
@@ -222,6 +226,7 @@ func (h *HTTPAdminServer) agentRoutes(mux *http.ServeMux, base string) {
 		return
 	}
 	h.humanRoutes(mux, base)
+	h.passkeyRoutes(mux, base)
 	mux.HandleFunc("POST "+base+"/auth/agent-session", func(w http.ResponseWriter, r *http.Request) {
 		if h.agent == nil {
 			agentError(w, 503, "auth_unavailable")

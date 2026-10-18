@@ -18,7 +18,7 @@ func editorHeaders(w http.ResponseWriter) {
 }
 
 func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
-	for _, name := range []string{"agent.js", "human.js", "auth.css"} {
+	for _, name := range []string{"agent.js", "human.js", "passkey.js", "auth.css"} {
 		data, _ := editorAssets.ReadFile("auth_ui/" + name)
 		mux.HandleFunc("GET "+base+"/auth/"+name, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
