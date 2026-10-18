@@ -1,11 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"embed"
 	"net/http"
 )
 
-//go:embed ui/* versioned_ui/* preview_ui/* auth_ui/*
+//go:embed ui/* versioned_ui/* preview_ui/* auth_ui/* follower_ui/*
 var editorAssets embed.FS
 
 const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -18,6 +19,9 @@ func editorHeaders(w http.ResponseWriter) {
 }
 
 func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
+	if len(h.followerStatusNames) > 0 {
+		h.followerUIRoutes(mux, base)
+	}
 	for _, name := range []string{"agent.js", "human.js", "passkey.js", "auth.css"} {
 		data, _ := editorAssets.ReadFile("auth_ui/" + name)
 		mux.HandleFunc("GET "+base+"/auth/"+name, func(w http.ResponseWriter, r *http.Request) {
@@ -48,6 +52,13 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 		if err != nil {
 			panic(err)
 		} // Embedded assets are verified at build time.
+		if asset.file == "index.html" {
+			link := []byte(nil)
+			if len(h.followerStatusNames) > 0 {
+				link = []byte(`<p><a href="followers/" target="_blank" rel="noopener noreferrer">Local follower status</a> opens a separate read-only page.</p>`)
+			}
+			data = bytes.ReplaceAll(data, []byte("<!-- follower-status-link -->"), link)
+		}
 		mux.HandleFunc("GET "+base+"/ui"+asset.route, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
 			w.Header().Set("Content-Type", asset.contentType)

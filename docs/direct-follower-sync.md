@@ -114,5 +114,7 @@ The worker uses ordinary Go TLS verification, one request at a time, bounded tim
 bounded snapshot bodies, and bounded SSE lines/events/streams. Its in-process status
 contains only fixed state/error categories and enrolled identifiers; it excludes the
 token, source URL, records, raw errors, response bodies, and TLS peer details. This
-slice adds no network status endpoint, credential issuance, CA provisioning, automatic
-membership, writer election, or deployment behavior.
+worker adds no credential issuance, CA provisioning, automatic membership, writer
+election, or deployment behavior. An existing admin listener can explicitly expose
+an allowlisted [read-only local worker status page](local-follower-status.md).
+This does not query remote node health or change synchronization behavior.

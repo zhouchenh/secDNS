@@ -69,6 +69,7 @@ func (w *Worker) fetch(parent context.Context, etag string, initialized bool) (s
 			return etag, initialized, errorProtocol
 		}
 		w.update(func(status *Status) {
+			status.LastContact = w.now().UTC()
 			status.ConnectionState = "current"
 			status.ErrorCategory = ""
 		})
@@ -101,6 +102,7 @@ func (w *Worker) fetch(parent context.Context, etag string, initialized bool) (s
 			status.Revision = meta.Revision
 			status.ContentSHA256 = meta.ContentSHA256
 			status.LastSuccess = w.now().UTC()
+			status.LastContact = status.LastSuccess
 			status.ConnectionState = "current"
 			status.ErrorCategory = ""
 		})

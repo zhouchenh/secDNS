@@ -51,6 +51,8 @@ type Status struct {
 	Revision        uint64
 	ContentSHA256   string
 	LastSuccess     time.Time
+	LastContact     time.Time
+	StoreState      string
 	ConnectionState string
 	ErrorCategory   string
 }
@@ -193,8 +195,16 @@ func newWithClient(config Config, store *recordstore.FollowerStore, client *http
 
 func (w *Worker) Status() Status {
 	w.statusMu.RLock()
-	defer w.statusMu.RUnlock()
-	return w.status
+	status := w.status
+	w.statusMu.RUnlock()
+	status.StoreState = "available"
+	if _, err := w.store.Acquire(); err != nil {
+		status.StoreState = "unavailable"
+		if errors.Is(err, recordstore.ErrFollowerNotReady) {
+			status.StoreState = "not_ready"
+		}
+	}
+	return status
 }
 
 func (w *Worker) update(mutator func(*Status)) {

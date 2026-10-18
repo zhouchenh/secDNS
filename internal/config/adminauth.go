@@ -22,7 +22,8 @@ type authBinding struct {
 }
 type authInstance struct {
 	core.Instance
-	bindings []authBinding
+	bindings       []authBinding
+	followerStatus []followerStatusBinding
 }
 
 func (i *authInstance) PrepareAdminAuth() (func() error, error) {

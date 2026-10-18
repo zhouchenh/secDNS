@@ -55,6 +55,8 @@ type HTTPAdminServer struct {
 	store                *recordstore.Store
 	versioned            *recordstore.VersionedStore
 	sourcePolicySelector sourcepolicy.Explainer
+	followerStatusNames  []string
+	followerStatus       func() []followerObservation
 }
 
 type SnapshotReader struct {
@@ -155,6 +157,7 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
 	h.agentRoutes(mux, base)
+	h.followerRoutes(mux, base)
 	if h.SourcePolicyExplain {
 		h.sourcePolicyExplainRoutes(mux, base)
 	}
