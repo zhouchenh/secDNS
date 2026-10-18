@@ -2,9 +2,11 @@
   "use strict";
   const S = globalThis.SnapshotEditor, model = new S.Model(), $ = id => document.getElementById(id);
   const endpoint = new URL("../snapshot", document.currentScript.src);
+  const previewURL = new URL("import-preview/", document.currentScript.src);
   if (endpoint.origin !== location.origin) throw new Error("Invalid editor origin");
+  if (previewURL.origin !== location.origin) throw new Error("Invalid preview origin");
   $("endpoint").textContent = endpoint.origin + endpoint.pathname;
-  let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null;
+  let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null, importChannel = null, importChannelID = "";
   const requests = new Set();
   function status(text, kind = "") { $("status").textContent = text; $("status").className = kind; }
   function comparisonVersion(title, record, unavailable = false) {
@@ -53,7 +55,11 @@
     duplicate_record:"That name and type already exist in the draft. Edit the existing row.",
     reconciliation_required:"Stage unfinished fields and reconcile current state before preparing another replacement.",
     uncertain:"The operation outcome is uncertain. Retry only the same frozen operation; disconnecting does not roll it back.",
-    invalid_snapshot_response:"The server returned an invalid snapshot. Local work is preserved."
+    invalid_snapshot_response:"The server returned an invalid snapshot. Local work is preserved.",
+    handoff_reconciliation_required:"Exact candidate not transferred. Finish, apply or explicitly discard existing local work first.",
+    handoff_identity_conflict:"Exact candidate not transferred. Its ruleset ID does not match this editor.",
+    invalid_draft_handoff:"Exact candidate transfer was invalid or stale. Nothing changed.",
+    editor_unavailable:"Exact candidate not transferred. Wait for current work to finish, or connect and fetch a fresh snapshot first."
   };
   const message = e => messages[e.message] || "Unexpected response or connection failure. Local work is preserved.";
   const locked = () => busy || !connected || !!model.pending || model.identityBlocked;
@@ -97,6 +103,7 @@
     const diff = S.changes(model.base?.records || [], model.draft);
     $("change-count").textContent = `${diff.added} added · ${diff.changed} changed · ${diff.removed} removed`;
     $("receipt").textContent = model.receipt ? "Acknowledged operation " + model.receipt.operation_id + " at revision " + model.receipt.revision + " · " + model.receipt.committed_at + ". This receipt is not a current-state snapshot." : "";
+    const origin=model.draftProvenance;$("draft-provenance").textContent=origin?"Imported strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"not edited after transfer":"locally edited after transfer")+".":"";
     $("count").textContent = String(model.draft.length); $("rows").replaceChildren();
     const filter = $("filter").value.toLowerCase(); let count = 0;
     for (const record of model.draft) {
@@ -144,7 +151,21 @@
     finally{if(captured===epoch){busy=false;render();}}
   });
   $("disconnect").addEventListener("click",()=>disconnect());
-  window.addEventListener("pagehide",()=>disconnect(false));
+  function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
+  $("open-import").addEventListener("click",event=>{
+    if(typeof BroadcastChannel!=="function"||!globalThis.crypto?.getRandomValues)return;
+    event.preventDefault();importChannel?.close();importChannelID=randomID();importChannel=new BroadcastChannel("secdns-routeros-draft-"+importChannelID);
+    const channel=importChannel,channelID=importChannelID,targetPath=location.pathname,sourcePath=previewURL.pathname;
+    channel.addEventListener("message",event=>{
+      if(channel!==importChannel||channelID!==importChannelID||!S.exactDraftHandoff(event.data,channelID,sourcePath,targetPath,Date.now()))return;
+      let accepted=false,error="";
+      try{if(!connected||busy||requests.size)throw new Error("editor_unavailable");model.importCandidate(event.data,channelID,sourcePath,targetPath,Date.now());edit(null,true);render();status("Exact candidate loaded into the local draft. Review every change before any replacement.","success");accepted=true;}
+      catch(e){error=["handoff_reconciliation_required","handoff_identity_conflict","invalid_draft_handoff"].includes(e.message)?e.message:"editor_unavailable";status(message(new Error(error)),"error");}
+      channel.postMessage({kind:"secdns.routeros-exact-draft-result.v1",channel_id:channelID,request_id:event.data.request_id,accepted,...(accepted?{}:{error})});
+    });
+    const target=new URL(previewURL.href);target.hash=new URLSearchParams({draft_handoff:channelID,target:targetPath}).toString();window.open(target.href,"_blank","noopener,noreferrer");
+  });
+  window.addEventListener("pagehide",()=>{importChannel?.close();importChannel=null;importChannelID="";disconnect(false);});
   window.addEventListener("pageshow",e=>{if(e.persisted)disconnect();});
   window.addEventListener("beforeunload",e=>{if(model.dirty()||model.pending){e.preventDefault();e.returnValue="";}});
   $("filter").addEventListener("input",render);

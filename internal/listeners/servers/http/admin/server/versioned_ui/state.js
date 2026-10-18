@@ -1,7 +1,8 @@
 /* Pure snapshot/editor state; credentials and network operations live elsewhere. */
 (function (root) {
   "use strict";
-  const MAX = "18446744073709551615", LIMIT = 4 * 1024 * 1024;
+  const MAX = "18446744073709551615", LIMIT = 4 * 1024 * 1024, HANDOFF_AGE_MS = 30000;
+  const HANDOFF_KIND = "secdns.routeros-exact-draft.v1", HANDOFF_PROFILE = "secdns.routeros-exact-explicit.v1";
   const clone = value => JSON.parse(JSON.stringify(value));
   const compare = (a, b) => a.length === b.length ? (a < b ? -1 : a > b ? 1 : 0) : (a.length < b.length ? -1 : 1);
   const revision = x => typeof x === "string" && /^[1-9][0-9]*$/.test(x) && compare(x, MAX) <= 0;
@@ -15,6 +16,7 @@
   const exactKeys = (obj, required, optional = []) => obj && typeof obj === "object" && !Array.isArray(obj) && required.every(k => Object.hasOwn(obj, k)) && Object.keys(obj).every(k => required.includes(k) || optional.includes(k));
   const stamp = s => typeof s === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(s) && Number.isFinite(Date.parse(s));
   const bytes = s => new TextEncoder().encode(s).length;
+  function boundedJSON(value) { try { return bytes(JSON.stringify(value)) <= LIMIT; } catch { return false; } }
   function recordsValid(records) {
     let values = 0;
     return Array.isArray(records) && records.length <= 10000 && records.every(r => {
@@ -25,7 +27,13 @@
   }
   const idValid = s => typeof s === "string" && /^[A-Za-z0-9._-]{1,128}$/.test(s);
   const hashValid = s => typeof s === "string" && /^[a-f0-9]{64}$/.test(s);
+  const handoffID = s => typeof s === "string" && /^[a-f0-9]{48}$/.test(s);
   function envelope(s) { return exactKeys(s, ["schema", "ruleset_id", "lineage_id", "revision", "content_sha256", "records"]) && s.schema === "secdns.exact-record-set.v1" && idValid(s.ruleset_id) && idValid(s.lineage_id) && revision(s.revision) && hashValid(s.content_sha256) && recordsValid(s.records) && bytes(JSON.stringify(s)) <= LIMIT; }
+  function exactDraftHandoff(x, channelID, sourcePath, targetPath, now) {
+    if (!exactKeys(x,["kind","channel_id","request_id","issued_at_ms","source_path","target_path","profile","source_sha256","content_sha256","content"]) || x.kind !== HANDOFF_KIND || x.channel_id !== channelID || !handoffID(channelID) || !handoffID(x.request_id) || !Number.isSafeInteger(x.issued_at_ms) || x.issued_at_ms > now + 5000 || now - x.issued_at_ms > HANDOFF_AGE_MS || x.source_path !== sourcePath || x.target_path !== targetPath || !sourcePath.startsWith("/") || !targetPath.startsWith("/") || x.profile !== HANDOFF_PROFILE || !hashValid(x.source_sha256) || !hashValid(x.content_sha256)) return false;
+    const c=x.content;
+    return exactKeys(c,["schema","ruleset_id","records"]) && c.schema === "secdns.exact-record-set.v1" && idValid(c.ruleset_id) && Array.isArray(c.records) && c.records.length > 0 && c.records.length <= 4096 && recordsValid(c.records) && c.records.every(r=>["A","AAAA","CNAME"].includes(r.type)&&r.values.length===1&&!Object.hasOwn(r,"expires_at")) && boundedJSON(x);
+  }
   const key = r => r.name.toLowerCase().replace(/\.$/, "") + "/" + r.type;
   function changes(before, after) {
     const a = new Map(before.map(r => [key(r), r])), b = new Map(after.map(r => [key(r), r]));
@@ -47,7 +55,7 @@
   }
   class Model {
     constructor() { this.clear(); }
-    clear() { this.base = this.current = this.pending = this.receipt = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
+    clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
     dirty() { const d = this.base && changes(this.base.records, this.draft); return this.formDirty || !!(d && (d.added || d.changed || d.removed)); }
     touch() { this.edits++; this.formDirty = true; }
     stage(record, oldKey = null) {
@@ -59,6 +67,13 @@
       this.edits++; this.formDirty = false;
     }
     remove(k) { if (this.pending) throw new Error("pending_operation"); this.draft = this.draft.filter(r => key(r) !== k); this.edits++; }
+    importCandidate(handoff, channelID, sourcePath, targetPath, now) {
+      if (!exactDraftHandoff(handoff,channelID,sourcePath,targetPath,now)) throw new Error("invalid_draft_handoff");
+      if (!this.base || !this.current || !this.fresh || this.pending || this.identityBlocked || this.dirty()) throw new Error("handoff_reconciliation_required");
+      if (handoff.content.ruleset_id !== this.base.ruleset_id) throw new Error("handoff_identity_conflict");
+      this.draft = clone(handoff.content.records); this.formDirty = false; this.edits++;
+      this.draftProvenance = Object.freeze({profile:handoff.profile,rulesetID:handoff.content.ruleset_id,sourceSHA256:handoff.source_sha256,contentSHA256:handoff.content_sha256,transferredAt:handoff.issued_at_ms,editCounter:this.edits});
+    }
     accept(s) {
       if (!envelope(s)) throw new Error("invalid_snapshot_response");
       if (this.base && identity(s) !== identity(this.base)) { this.identityBlocked = true; this.fresh = false; throw new Error("identity_conflict"); }
@@ -70,7 +85,7 @@
     }
     adopt() {
       if (!this.current || this.identityBlocked || this.pending && ["sending", "uncertain"].includes(this.pending.status)) throw new Error("reconciliation_required");
-      this.base = clone(this.current); this.draft = clone(this.current.records); this.pending = null; this.formDirty = false; this.edits++; this.fresh = true;
+      this.base = clone(this.current); this.draft = clone(this.current.records); this.pending = this.draftProvenance = null; this.formDirty = false; this.edits++; this.fresh = true;
     }
     freeze(operationID, endpoint) {
       if (!this.base || !this.fresh || this.identityBlocked || this.pending || this.formDirty || !this.dirty() || !idValid(operationID)) throw new Error("reconciliation_required");
@@ -92,6 +107,6 @@
     }
     uncertain() { if (this.pending && this.pending.status !== "acknowledged") this.pending.status = "uncertain"; this.fresh = false; }
   }
-  const api = {Model, compare, revision, increment, recordsValid, envelope, changes, comparisonRows, key, clone, bytes, LIMIT};
+  const api = {Model, compare, revision, increment, recordsValid, envelope, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.SnapshotEditor = api;
 })(globalThis);

@@ -149,6 +149,26 @@ in browser memory only after an explicit click. It is review data, not an apply 
 There is no supported-subset conversion, apply action, store read/write or current-state
 comparison. Missing type, TTL, enabled state or exact-matching flags are never guessed.
 
+When the versioned snapshot editor opens this page, it creates a random per-preview tab
+channel in memory. After a complete strict success, **Transfer candidate to editor
+draft** explicitly copies only the canonical records and their profile/source/content
+hash provenance into that originating editor's local draft. The preview token is never
+sent or shared. Standalone previews, parser previews and refused strict conversions have
+no transfer action.
+
+The editor accepts a transfer only from its current random same-origin channel with the
+expected preview and editor paths, a message no more than 30 seconds old, a matching
+ruleset ID and a payload within 4 MiB. It must already hold a fresh snapshot and a clean
+draft with no unfinished form or pending operation. Existing local work is refused and
+preserved; it is never silently replaced. The fragment capability is removed from the
+preview address after startup, both tabs keep `noopener` isolation, and neither cookies
+nor browser storage are used. Closing either page loses its channel state.
+
+Transfer changes browser memory only. It does not POST a snapshot or authorize a
+replacement. The editor shows both hashes and whether the imported draft was edited,
+then uses its existing complete comparison, revision check, confirmation and explicit
+apply flow if the operator later chooses to submit it.
+
 The selected source is sent to the same-origin authenticated
 `POST <base>/import/routeros/preview` route, available only when `ui` is enabled.
 It accepts exactly one `Content-Type: application/octet-stream` header, with no
@@ -189,8 +209,8 @@ Run `go test ./cmd/routeros-dns-preview` for the command's unchanged default pre
 golden, strict success/refusal reports, option/configuration admission, fixed malformed
 input diagnostics and output-error handling.
 
-`node scripts/test-routeros-preview-state.cjs` tests bounded preview/exact response
-validation and request generations. `scripts/test-routeros-preview-browser.cjs` requires an existing
+`node scripts/test-routeros-preview-state.cjs` tests bounded preview/exact response,
+handoff envelope/result validation and request generations. `scripts/test-routeros-preview-browser.cjs` requires an existing
 Playwright/Chromium installation and a dedicated synthetic localhost memory admin
 listener with `ui: true` and token `local-browser-test-only`. It uses synthetic
 exports and mocked editor failures; never point it at an operational admin instance.
@@ -198,7 +218,9 @@ exports and mocked editor failures; never point it at an operational admin insta
 `PREVIEW_MOBILE_SCREENSHOT` select installed tooling, test endpoint and screenshots.
 No dependency download is required. Handler tests also cover auth-before-read,
 parser parity, strict success/whole-source refusal, exact option admission,
-size/media limits, output buffering and no store mutation.
+size/media limits, output buffering and no store mutation. The actual browser suite also
+checks clean-draft transfer, separate credentials, refused-source exclusion, dirty-draft
+preservation, same-origin tab isolation and unchanged snapshot state.
 
 The grammar subset follows the official [RouterOS scripting documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/47579229/Scripting).
 Field names and semantic distinctions come from [DNS-static documentation](https://help.mikrotik.com/docs/spaces/ROS/pages/37748767/DNS).
