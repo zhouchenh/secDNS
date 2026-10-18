@@ -131,6 +131,83 @@ func TestRunExactMixedRefusalHasNoCandidate(t *testing.T) {
 	}
 }
 
+func TestRunExactCoverageOnlyRefusalIsAggregateAndDeterministic(t *testing.T) {
+	source := testSection +
+		"add name=do-not-emit.invalid type=A address=192.0.2.44 ttl=1m disabled=no match-subdomain=no comment=do-not-emit-comment\n" +
+		"add regexp=\"^do-not-emit-regexp\" type=A address=192.0.2.45 ttl=1m disabled=no match-subdomain=no\n"
+	args := []string{"--compile-exact", "--coverage-only", "--ruleset-id=coverage.test"}
+	var first, second, firstErr, secondErr bytes.Buffer
+	if code := run(args, strings.NewReader(source), &first, &firstErr); code != 1 || firstErr.String() != routeros.ErrNotExact.Error()+"\n" {
+		t.Fatalf("first exit/stderr: %d %q", code, firstErr.String())
+	}
+	if code := run(args, strings.NewReader(source), &second, &secondErr); code != 1 || secondErr.String() != routeros.ErrNotExact.Error()+"\n" {
+		t.Fatalf("second exit/stderr: %d %q", code, secondErr.String())
+	}
+	if !bytes.Equal(first.Bytes(), second.Bytes()) {
+		t.Fatalf("coverage report is nondeterministic\nfirst: %s\nsecond: %s", first.Bytes(), second.Bytes())
+	}
+	for _, forbidden := range []string{"do-not-emit.invalid", "192.0.2.44", "do-not-emit-comment", "do-not-emit-regexp", "192.0.2.45"} {
+		if bytes.Contains(first.Bytes(), []byte(forbidden)) {
+			t.Fatalf("coverage report exposed source value %q: %s", forbidden, first.Bytes())
+		}
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(first.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"source", "blockers", "content", "content_sha256", "bindings"} {
+		if _, ok := raw[absent]; ok {
+			t.Fatalf("coverage refusal exposed %s", absent)
+		}
+	}
+	var report exactReport
+	if err := json.Unmarshal(first.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	wantDiagnostics := []exactCoverageCount{{"preview_only_no_apply", 1}, {"regexp_semantics_not_compiled", 1}}
+	wantBlockers := []exactCoverageCount{{"matching_policy_not_exact", 1}}
+	want := &exactCoverage{
+		SourceEntries:               2,
+		ParserExactRecordCandidates: 1,
+		ParserUnsupportedEntries:    1,
+		CompilerBlockedEntries:      1,
+		DiagnosticCounts:            wantDiagnostics,
+		BlockerCounts:               wantBlockers,
+	}
+	if report.Profile != routeros.ExactProfile || report.RulesetID != "coverage.test" || report.Compiled || report.CanApply || report.SourceSHA256 == "" || !reflect.DeepEqual(report.Coverage, want) {
+		t.Fatalf("coverage report: %#v", report)
+	}
+}
+
+func TestRunExactCoverageOnlySuccessBindsContentWithoutSource(t *testing.T) {
+	source := testSection + "add name=do-not-emit.invalid type=A address=192.0.2.44 ttl=1m disabled=no match-subdomain=no comment=do-not-emit-comment\n"
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--compile-exact", "--coverage-only", "--ruleset-id=coverage.test"}, strings.NewReader(source), &stdout, &stderr); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit/stderr: %d %q", code, stderr.String())
+	}
+	for _, forbidden := range []string{"do-not-emit.invalid", "192.0.2.44", "do-not-emit-comment"} {
+		if bytes.Contains(stdout.Bytes(), []byte(forbidden)) {
+			t.Fatalf("coverage report exposed source value %q: %s", forbidden, stdout.Bytes())
+		}
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, absent := range []string{"source", "blockers", "content", "bindings"} {
+		if _, ok := raw[absent]; ok {
+			t.Fatalf("coverage success exposed %s", absent)
+		}
+	}
+	var report exactReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if !report.Compiled || report.CanApply || report.ContentSHA256 == "" || report.Coverage == nil || report.Coverage.SourceEntries != 1 || report.Coverage.ParserExactRecordCandidates != 1 || report.Coverage.ParserUnsupportedEntries != 0 || report.Coverage.CompilerBlockedEntries != 0 || report.Coverage.CompilerGlobalBlockers != 0 || len(report.Coverage.DiagnosticCounts) != 1 || report.Coverage.DiagnosticCounts[0] != (exactCoverageCount{"preview_only_no_apply", 1}) || len(report.Coverage.BlockerCounts) != 0 {
+		t.Fatalf("coverage success report: %#v", report)
+	}
+}
+
 type readCounter struct{ reads int }
 
 func (r *readCounter) Read([]byte) (int, error) {
@@ -147,6 +224,7 @@ func TestRunRejectsInvalidOptionsAndConfigurationBeforeRead(t *testing.T) {
 		{"unknown", []string{"--unknown=private"}, invalidOptionsMessage + "\n"},
 		{"positional", []string{"private-file.rsc"}, invalidOptionsMessage + "\n"},
 		{"ruleset-without-mode", []string{"--ruleset-id", "private"}, invalidOptionsMessage + "\n"},
+		{"coverage-without-mode", []string{"--coverage-only"}, invalidOptionsMessage + "\n"},
 		{"missing-ruleset", []string{"--compile-exact"}, invalidConfigMessage + "\n"},
 		{"invalid-ruleset", []string{"--compile-exact", "--ruleset-id", "contains space"}, invalidConfigMessage + "\n"},
 	}
