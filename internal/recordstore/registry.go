@@ -18,6 +18,7 @@ var (
 	registryMu        sync.Mutex
 	registry          = map[string]*Store{}
 	versionedRegistry = map[string]*VersionedStore{}
+	followerRegistry  = map[string]*FollowerStore{}
 )
 
 // GetOrCreate returns the shared store for name, creating it (and starting its
@@ -32,6 +33,9 @@ func GetOrCreate(name string) *Store {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	if _, reserved := versionedRegistry[name]; reserved {
+		return nil
+	}
+	if _, reserved := followerRegistry[name]; reserved {
 		return nil
 	}
 	if s, ok := registry[name]; ok {
@@ -78,6 +82,9 @@ func Binding(name string) (*Store, *VersionedStore) {
 	if v, ok := versionedRegistry[name]; ok {
 		return nil, v
 	}
+	if _, ok := followerRegistry[name]; ok {
+		return nil, nil
+	}
 	if s := registry[name]; s != nil {
 		return s, nil
 	}
@@ -85,4 +92,16 @@ func Binding(name string) (*Store, *VersionedStore) {
 	registry[name] = s
 	s.startGC()
 	return s, nil
+}
+
+// FollowerBinding resolves a logical name only when startup reserved it as a
+// follower store. Closed follower handles remain reserved for process lifetime,
+// preventing a shutdown race from silently creating a mutable legacy store.
+func FollowerBinding(name string) *FollowerStore {
+	if name == "" {
+		name = DefaultName
+	}
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	return followerRegistry[name]
 }

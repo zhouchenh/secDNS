@@ -58,6 +58,9 @@ func Prepare(paths map[string]string) (func() error, error) {
 		if _, exists := versionedRegistry[name]; exists {
 			return nil, errors.New("record store already initialized")
 		}
+		if _, exists := followerRegistry[name]; exists {
+			return nil, errors.New("record store already initialized")
+		}
 		info, err := os.Lstat(paths[name])
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err

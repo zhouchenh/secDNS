@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/config"
@@ -9,11 +10,14 @@ import (
 	_ "github.com/zhouchenh/secDNS/internal/features"
 	"github.com/zhouchenh/secDNS/internal/logger"
 	"github.com/zhouchenh/secDNS/internal/recordstore"
+	"github.com/zhouchenh/secDNS/internal/snapshotfollower"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"sync"
 	"syscall"
 )
 
@@ -131,6 +135,15 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		common.ErrOutput("config: invalid versioned record stores")
 		return exitStartup
 	}
+	followerStores, err := config.ParseFollowerRecordStores(raw, stores, versionedStores)
+	if err != nil {
+		common.ErrOutput("config: invalid follower record stores")
+		return exitStartup
+	}
+	if err = config.ValidateStoreListenerTopology(raw, versionedStores, followerStores); err != nil {
+		common.ErrOutput("config: invalid record store listener topology")
+		return exitStartup
+	}
 	if testOnly {
 		if err := config.ValidateConfig(bytes.NewReader(raw)); err != nil {
 			common.ErrOutput(common.Concatenate("config: Validation failed: ", err))
@@ -145,8 +158,8 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		return exitStartup
 	}
 	logger.Info().Str("source", configSource).Msg("config loaded")
-	if len(stores) > 0 || len(versionedStores) > 0 {
-		cleanup, err := recordstore.PrepareBindings(stores, versionedStores)
+	if len(stores) > 0 || len(versionedStores) > 0 || len(followerStores) > 0 {
+		cleanup, err := recordstore.PrepareBindingsWithFollowers(stores, versionedStores, config.FollowerBindings(followerStores))
 		if err != nil {
 			common.ErrOutput(common.Concatenate("record stores: startup failed: ", err))
 			return exitStartup
@@ -156,6 +169,30 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 				common.ErrOutput("record stores: close failed")
 			}
 		}()
+		workerContext, cancelWorkers := context.WithCancel(context.Background())
+		var workers []*snapshotfollower.Worker
+		followerNames := make([]string, 0, len(followerStores))
+		for name := range followerStores {
+			followerNames = append(followerNames, name)
+		}
+		sort.Strings(followerNames)
+		for _, name := range followerNames {
+			worker, workerErr := snapshotfollower.New(followerStores[name], recordstore.FollowerBinding(name))
+			if workerErr != nil {
+				cancelWorkers()
+				common.ErrOutput("snapshot follower: startup failed")
+				return exitStartup
+			}
+			workers = append(workers, worker)
+		}
+		var workerGroup sync.WaitGroup
+		for _, worker := range workers {
+			workerGroup.Add(1)
+			go func(worker *snapshotfollower.Worker) {
+				defer workerGroup.Done()
+				worker.Run(workerContext)
+			}(worker)
+		}
 		// Existing listeners have no drain API. A signal ends this process-owned run;
 		// Close serializes with mutations, and main then exits the process.
 		signals := make(chan os.Signal, 1)
@@ -170,6 +207,8 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		case <-done:
 		case <-signals:
 		}
+		cancelWorkers()
+		workerGroup.Wait()
 		return exitOK
 	}
 	runtime.GC()

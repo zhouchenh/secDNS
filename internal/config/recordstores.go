@@ -23,7 +23,7 @@ func objectFields(raw []byte, strict bool) (map[string]json.RawMessage, error) {
 			return nil, err
 		}
 		name := token.(string)
-		if _, ok := out[name]; ok && (strict || name == "recordStores" || name == "versionedRecordStores") {
+		if _, ok := out[name]; ok && (strict || name == "recordStores" || name == "versionedRecordStores" || name == "followerRecordStores") {
 			return nil, errors.New("duplicate record store configuration field")
 		}
 		var value json.RawMessage

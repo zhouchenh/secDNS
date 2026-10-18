@@ -5,7 +5,9 @@ import "errors"
 var (
 	// ErrMissingToken makes the admin listener fail closed: it refuses to serve without a
 	// configured bearer token, so the mutating API can never run unauthenticated.
-	ErrMissingToken = errors.New("listeners/servers/http/admin/server: no bearer token configured; refusing to serve")
+	ErrMissingToken    = errors.New("listeners/servers/http/admin/server: no bearer token configured; refusing to serve")
+	ErrSnapshotReaders = errors.New("listeners/servers/http/admin/server: invalid snapshot reader configuration")
+	ErrStoreMode       = errors.New("listeners/servers/http/admin/server: incompatible record store mode")
 
 	errMissingBearer = errors.New("missing or malformed Authorization: Bearer header")
 	errInvalidBearer = errors.New("invalid bearer token")

@@ -30,6 +30,7 @@ type Authoritative struct {
 	initOnce  sync.Once
 	store     *recordstore.Store
 	versioned *recordstore.VersionedStore
+	follower  *recordstore.FollowerStore
 }
 
 var typeOfAuthoritative = descriptor.TypeOfNew(new(*Authoritative))
@@ -44,6 +45,7 @@ func (a *Authoritative) TypeName() string {
 
 func (a *Authoritative) init() {
 	a.store, a.versioned = recordstore.Binding(a.Store)
+	a.follower = recordstore.FollowerBinding(a.Store)
 	if a.NegativeTTL == 0 {
 		a.NegativeTTL = 60
 	}
@@ -77,6 +79,20 @@ func (a *Authoritative) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 			return resp, nil
 		}
 		reader = viewReader{view}
+	} else if a.follower != nil {
+		view, err := a.follower.Acquire()
+		if err != nil {
+			resp := new(dns.Msg)
+			resp.SetReply(query)
+			resp.Rcode = dns.RcodeServerFailure
+			return resp, nil
+		}
+		reader = followerViewReader{view}
+	} else if a.store == nil {
+		resp := new(dns.Msg)
+		resp.SetReply(query)
+		resp.Rcode = dns.RcodeServerFailure
+		return resp, nil
 	}
 	q := query.Question[0]
 	resp := new(dns.Msg)

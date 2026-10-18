@@ -46,6 +46,25 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	if root, ok := data.(map[string]interface{}); ok {
+		legacy, parseErr := ParseRecordStores(rawData)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		versioned, parseErr := ParseVersionedRecordStores(rawData, legacy)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		followers, parseErr := ParseFollowerRecordStores(rawData, legacy, versioned)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if _, listenersAreArray := root["listeners"].([]interface{}); listenersAreArray {
+			if parseErr = ValidateStoreListenerTopology(rawData, versioned, followers); parseErr != nil {
+				return nil, parseErr
+			}
+		}
+	}
 	if strict {
 		if root, ok := data.(map[string]interface{}); ok {
 			if rawRules, present := root["rules"]; present {

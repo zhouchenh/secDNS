@@ -34,6 +34,9 @@ out of scope.
 
 Name of the shared record store to answer from. An empty value joins the `default` store.
 Use the same value on the `httpAdminServer` listener that populates it.
+The name may instead identify a durable `followerRecordStores` entry. In that mode
+the resolver serves one pinned accepted generation and returns `SERVFAIL` until the
+first generation is available; see [direct follower synchronization](../direct-follower-sync.md).
 
 Default: `""` (the `default` store)
 
