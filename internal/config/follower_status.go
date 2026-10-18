@@ -35,8 +35,40 @@ func parseFollowerStatusBindings(raw []byte, c *Config) ([]followerStatusBinding
 		if e != nil {
 			return nil, errFollowerStatus
 		}
+
+		// The new mode is parsed strictly even when its allowlist is missing.
+		cfg := map[string]json.RawMessage{}
+		if rawConfig, exists := fields["config"]; exists {
+			cfg, e = authObject(rawConfig, map[string]bool{"followerStatusOnly": true})
+			if e != nil {
+				return nil, errFollowerStatus
+			}
+		}
+		statusOnly := false
+		if rawMode, exists := cfg["followerStatusOnly"]; exists {
+			if string(rawMode) != "true" && string(rawMode) != "false" {
+				return nil, errFollowerStatus
+			}
+			statusOnly = string(rawMode) == "true"
+			if index >= len(c.Listeners) {
+				return nil, errFollowerStatus
+			}
+			if _, ok := c.Listeners[index].(*admin.HTTPAdminServer); !ok {
+				return nil, errFollowerStatus
+			}
+		}
+		if statusOnly {
+			for _, key := range []string{"store", "snapshotReaders", "sourcePolicyExplain"} {
+				if _, exists := cfg[key]; exists {
+					return nil, errFollowerStatus
+				}
+			}
+		}
 		v, present := fields["followerStatusStores"]
 		if !present {
+			if statusOnly {
+				return nil, errFollowerStatus
+			}
 			continue
 		}
 		var names []string
@@ -55,6 +87,9 @@ func parseFollowerStatusBindings(raw []byte, c *Config) ([]followerStatusBinding
 			seen[name] = true
 		}
 		h.ConfigureFollowerStatus(names)
+		if h.ValidateFollowerStatusOnly() != nil {
+			return nil, errFollowerStatus
+		}
 		result = append(result, followerStatusBinding{h, append([]string(nil), names...)})
 	}
 	return result, nil

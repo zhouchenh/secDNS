@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"github.com/zhouchenh/secDNS/internal/adminauth"
 	"github.com/zhouchenh/secDNS/internal/snapshotfollower"
@@ -88,6 +89,12 @@ func (h *HTTPAdminServer) followerUIRoutes(mux *http.ServeMux, base string) {
 		if e != nil {
 			panic(e)
 		}
+		if asset.name == "index.html" && h.FollowerStatusOnly {
+			data = bytes.ReplaceAll(data, []byte(followerAuthAssets), nil)
+			data = bytes.ReplaceAll(data, []byte(`<a href="../">Record workspace</a>`), []byte(`<span>Read-only local status</span>`))
+			data = bytes.ReplaceAll(data, []byte("Legacy token access"), []byte("Token access"))
+			data = bytes.ReplaceAll(data, []byte("Legacy admin access token"), []byte("Admin or scoped access token"))
+		}
 		route := asset.name
 		if route == "index.html" {
 			route = "{$}"
@@ -99,3 +106,5 @@ func (h *HTTPAdminServer) followerUIRoutes(mux *http.ServeMux, base string) {
 		})
 	}
 }
+
+const followerAuthAssets = `<link rel="stylesheet" href="../../auth/auth.css"><script defer src="../../auth/agent.js"></script><script defer src="../../auth/human.js"></script><script defer src="../../auth/passkey.js"></script>`

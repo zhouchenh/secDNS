@@ -46,7 +46,8 @@ type HTTPAdminServer struct {
 	Path                string
 	Store               string // shared store name; empty joins recordstore.DefaultName
 	Token               string // bearer token; required (the listener fails closed without it)
-	UI                  bool   // optional embedded records editor; disabled by default
+	UI                  bool   // optional embedded UI; disabled by default
+	FollowerStatusOnly  bool   // explicit status-only listener; never binds a record store
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
 	SourcePolicyExplain bool
@@ -134,9 +135,8 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 		handleIfError(err, errorHandler)
 		return
 	}
-	h.store, h.versioned = recordstore.Binding(h.Store)
-	if recordstore.FollowerBinding(h.Store) != nil || len(h.SnapshotReaders) > 0 && h.versioned == nil {
-		handleIfError(ErrStoreMode, errorHandler)
+	if err := h.prepareRecordBinding(); err != nil {
+		handleIfError(err, errorHandler)
 		return
 	}
 	srv := &http.Server{
@@ -156,6 +156,16 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
+	if h.FollowerStatusOnly {
+		if h.ValidateFollowerStatusOnly() != nil {
+			return mux
+		}
+		h.followerRoutes(mux, base)
+		if h.UI {
+			h.followerOnlyUIRoutes(mux, base)
+		}
+		return mux
+	}
 	h.agentRoutes(mux, base)
 	h.followerRoutes(mux, base)
 	if h.SourcePolicyExplain {
@@ -511,6 +521,13 @@ func init() {
 				ObjectPath: descriptor.Path{"UI"},
 				ValueSource: descriptor.ValueSources{
 					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"ui"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"FollowerStatusOnly"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"followerStatusOnly"}, AssignableKind: descriptor.KindBool},
 					descriptor.DefaultValue{Value: false},
 				},
 			},
