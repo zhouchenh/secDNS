@@ -6,6 +6,9 @@ const fixture='/ip dns static\r\n'+
  'add name=duplicate.invalid address=192.0.2.2 comment="  retained spaces  "\r\n'+
  'add regexp="^host\\\\.invalid\\$" type=FWD forward-to=forward.invalid ttl=1h disabled=no match-subdomain=yes\r\n'+
  'add name=negative.invalid type=NXDOMAIN ttl=1m disabled=no match-subdomain=no\r\n';
+const exactFixture='/ip dns static\r\n'+
+ 'add name=one.example.invalid type=A address=192.0.2.10 ttl=5m disabled=no match-subdomain=no\r\n'+
+ 'add name=alias.example.invalid type=CNAME cname=one.example.invalid ttl=5m disabled=no match-subdomain=no\r\n';
 const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 (async()=>{
  const base=process.env.PREVIEW_TEST_URL||'http://127.0.0.1:19086/test-admin/ui/import-preview/';assert.equal(new URL(base).hostname,'127.0.0.1');
@@ -13,16 +16,25 @@ const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
  const browser=await chromium.launch({headless:true}), context=await browser.newContext({viewport:{width:1440,height:1100}}), page=await context.newPage(), errors=[], requests=[];
  context.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));page.on('pageerror',e=>errors.push(e.message));
  page.on('request',r=>{requests.push({url:r.url(),method:r.method(),body:r.postDataBuffer()});assert.ok(!r.url().includes(token));assert.equal(new URL(r.url()).hostname,'127.0.0.1');});
- const status=async text=>page.locator('#status').filter({hasText:text}).waitFor(), preview=async()=>{await page.locator('#preview').click();await status('Complete preview loaded');};
+ const status=async text=>page.locator('#status').filter({hasText:text}).waitFor(), preview=async()=>{await page.locator('#preview').click();await status('Complete preview loaded');}, exactReview=async text=>{await page.locator('#preview').click();await status(text);};
  const source=async text=>{await page.locator('#mode').selectOption('paste');await page.locator('#source').fill(text);};
  const authorize=async()=>page.locator('#token').fill(token);
- const previewPosts=()=>requests.filter(r=>r.url===endpoint&&r.method==='POST');
+ const previewPath=new URL(endpoint).pathname,previewPosts=()=>requests.filter(r=>new URL(r.url).pathname===previewPath&&r.method==='POST');
  try{
   await page.goto(base);assert.equal(previewPosts().length,0);await authorize();await source(fixture);assert.equal(previewPosts().length,0);await preview();
   assert.equal(await page.locator('.entry').count(),4);assert.equal(await page.locator('#results img').count(),0);assert.ok((await page.locator('#entries').textContent()).includes('<img src=x onerror=alert(1)>'));
   assert.ok((await page.locator('#entries').textContent()).includes('disabled_entry_retained'));assert.ok((await page.locator('#entries').textContent()).includes('source defaults not established'));assert.ok((await page.locator('#entries').textContent()).includes('forward_semantics_not_compiled'));
   assert.deepEqual(await page.locator('.entry').evaluateAll(nodes=>nodes.map(n=>n.dataset.ordinal)),['1','2','3','4']);
   assert.ok((await page.locator('#provenance').textContent()).includes('submitted UTF-8'));
+  // Strict mode is explicit, requires a ruleset, and returns a complete review only.
+  await page.locator('#operation').selectOption('exact');await source(exactFixture);const beforeInvalidRuleset=previewPosts().length;await page.locator('#ruleset').fill('bad ruleset');await page.locator('#preview').click();await status('valid ruleset ID');assert.equal(previewPosts().length,beforeInvalidRuleset);
+  await page.locator('#ruleset').fill('browser.review');await exactReview('Exact conversion review loaded');const exactRequest=new URL(previewPosts().at(-1).url);assert.equal(exactRequest.searchParams.get('profile'),'exact');assert.equal(exactRequest.searchParams.get('ruleset_id'),'browser.review');assert.deepEqual(previewPosts().at(-1).body,Buffer.from(exactFixture.replaceAll('\r\n','\n')));
+  assert.ok((await page.locator('#exact-title').textContent()).includes('Complete exact candidate'));assert.ok((await page.locator('#exact-hash').textContent()).includes('Canonical content SHA-256'));assert.equal(await page.locator('#candidate').isHidden(),false);assert.ok((await page.locator('#candidate').textContent()).includes('"bindings"'));assert.equal(await page.getByRole('button',{name:/apply/i}).count(),0);
+  let candidateLayout=await page.locator('#candidate').evaluate(e=>{const s=getComputedStyle(e);return {whiteSpace:s.whiteSpace,maxHeight:s.maxHeight,overflowY:s.overflowY,scrolls:e.scrollHeight>e.clientHeight};});assert.equal(candidateLayout.whiteSpace,'pre-wrap');assert.notEqual(candidateLayout.maxHeight,'none');assert.equal(candidateLayout.overflowY,'auto');assert.equal(candidateLayout.scrolls,true);await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'visible exact candidate must not overflow mobile page');candidateLayout=await page.locator('#candidate').evaluate(e=>{const s=getComputedStyle(e);return {whiteSpace:s.whiteSpace,maxHeight:s.maxHeight,overflowY:s.overflowY,scrolls:e.scrollHeight>e.clientHeight};});assert.equal(candidateLayout.whiteSpace,'pre-wrap');assert.notEqual(candidateLayout.maxHeight,'none');assert.equal(candidateLayout.overflowY,'auto');assert.equal(candidateLayout.scrolls,true);await page.setViewportSize({width:1440,height:1100});
+  let downloadPromise=page.waitForEvent('download');await page.locator('#download').click();let download=await downloadPromise,stream=await download.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);let review=JSON.parse(Buffer.concat(chunks));assert.equal(review.compiled,true);assert.equal(review.can_apply,false);assert.equal(review.ruleset_id,'browser.review');assert.equal(review.content.ruleset_id,'browser.review');assert.ok(!Object.hasOwn(review,'revision'));assert.ok(!Object.hasOwn(review,'lineage'));
+  await source(exactFixture+'add regexp="^mixed" type=FWD forward-to=forward.invalid ttl=5m disabled=no match-subdomain=no\r\n');await exactReview('Exact conversion refused');assert.ok((await page.locator('#blockers').textContent()).includes('unsupported_type'));assert.equal(await page.locator('#candidate').isHidden(),true);assert.ok((await page.locator('#exact-hash').textContent()).includes('No candidate content'));
+  downloadPromise=page.waitForEvent('download');await page.locator('#download').click();download=await downloadPromise;stream=await download.createReadStream();chunks=[];for await(const chunk of stream)chunks.push(chunk);review=JSON.parse(Buffer.concat(chunks));assert.equal(review.compiled,false);assert.equal(review.can_apply,false);assert.ok(review.blockers.length>0);for(const key of ['content','content_sha256','bindings'])assert.equal(Object.hasOwn(review,key),false);
+  await page.locator('#operation').selectOption('preview');await source(fixture);
   // Original file bytes (including CRLF) are sent only on explicit submission.
   await page.locator('#mode').selectOption('file');const beforeFile=previewPosts().length, raw=Buffer.from(fixture);
   await page.locator('#file').setInputFiles({name:'<literal-name>.rsc',mimeType:'text/plain',buffer:raw});assert.equal(previewPosts().length,beforeFile);await preview();
@@ -72,7 +84,7 @@ const hash=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
   await source(fixture.replace('retained spaces','x'.repeat(200)));await preview();
   if(process.env.PREVIEW_SCREENSHOT)await page.screenshot({path:process.env.PREVIEW_SCREENSHOT,fullPage:true});await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'mobile page must not overflow');await page.locator('#preview').focus();await page.keyboard.press('Tab');await page.keyboard.press('Shift+Tab');assert.equal(await page.locator('#preview').evaluate(e=>e.matches(':focus-visible')),true,'keyboard navigation shows focus');
   if(process.env.PREVIEW_MOBILE_SCREENSHOT)await page.screenshot({path:process.env.PREVIEW_MOBILE_SCREENSHOT,fullPage:true});
-  assert.equal(requests.filter(r=>r.method!=='GET'&&r.url!==endpoint).length,0,'preview page never writes records/snapshots');
+  assert.equal(requests.filter(r=>r.method!=='GET'&&new URL(r.url).pathname!==previewPath).length,0,'preview page never writes records/snapshots');
   // Opening the separate page preserves both an unfinished form and a pending exact retry.
   const editor=await context.newPage();editor.on('dialog',d=>d.accept());await editor.goto(editorURL);await editor.locator('#token').fill(token);await editor.locator('#connect').click();await editor.waitForFunction(()=>document.querySelector('#connection').textContent.startsWith('Connected'));
   await editor.locator('#name').fill('unfinished.invalid.');const oldURL=editor.url();
