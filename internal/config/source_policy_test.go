@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
@@ -31,6 +32,60 @@ const sourceSelectedConfig = `{
   "rules":[],
   "defaultResolver":"ordinary-cache"
 }`
+
+const sourceExplainOnlyConfig = `{
+  "listeners":[{"type":"httpAdminServer","config":{"listen":"127.0.0.1","port":19053,"token":"synthetic-token","sourcePolicyExplain":true}}],
+  "resolvers":{"address":{
+    "ordinary":{"addresses":"192.0.2.10"},
+    "regional":{"addresses":"192.0.2.20"}
+  }},
+  "sourcePolicy":{
+    "sourceSets":[{"id":"regional-clients","members":[{"prefix":"192.0.2.0/24","expiresAt":"2099-01-01T00:00:00Z"}]}],
+    "rules":[{"listenerRole":"normal","sourceSet":"regional-clients","resolver":"regional"}],
+    "defaults":[{"listenerRole":"normal","resolver":"ordinary"}]
+  },
+  "rules":[],
+  "defaultResolver":"ordinary"
+}`
+
+func TestSourcePolicyExplainOnlyConfigBindsWithoutDNSActivation(t *testing.T) {
+	configured, err := LoadConfig(strings.NewReader(sourceExplainOnlyConfig))
+	if err != nil || configured == nil {
+		t.Fatal(err)
+	}
+	if err := ValidateConfig(strings.NewReader(sourceExplainOnlyConfig)); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(sourceExplainOnlyConfig), &raw); err != nil {
+		t.Fatal(err)
+	}
+	delete(raw, "sourcePolicy")
+	withoutPolicy, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := LoadConfig(strings.NewReader(string(withoutPolicy))); !errors.Is(err, ErrSourcePolicyConfig) || configured != nil {
+		t.Fatalf("enabled explain without policy admitted: %v", err)
+	}
+
+	listeners := raw["listeners"].([]interface{})
+	listener := listeners[0].(map[string]interface{})
+	listener["config"].(map[string]interface{})["sourcePolicyExplain"] = false
+	disabled, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured, err := LoadConfig(strings.NewReader(string(disabled))); err != nil || configured == nil {
+		t.Fatalf("disabled explain changed legacy config: %v", err)
+	}
+
+	invalidType := strings.Replace(sourceExplainOnlyConfig, `"sourcePolicyExplain":true`, `"sourcePolicyExplain":"true"`, 1)
+	if configured, err := LoadConfig(strings.NewReader(invalidType)); err == nil || configured != nil {
+		t.Fatal("non-boolean sourcePolicyExplain admitted")
+	}
+}
 
 func TestSourcePolicyConfigOptInAndLegacyOmission(t *testing.T) {
 	configured, err := LoadConfig(strings.NewReader(sourceSelectedConfig))

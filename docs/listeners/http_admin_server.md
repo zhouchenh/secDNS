@@ -57,6 +57,15 @@ Default: `""` (the `default` store)
 Bearer token required on every API request. The listener refuses to serve if this is empty.
 Use a long, random value and transport it over loopback or TLS-terminating infrastructure.
 
+> `sourcePolicyExplain`: Boolean _(Optional)_
+
+Expose the authenticated, read-only source-policy diagnostic endpoint described below.
+The default is `false`. Enabling it requires a valid top-level `sourcePolicy`; startup
+fails if the policy is absent or invalid. It does not enable source selection on a DNS
+listener by itself.
+
+Default: `false`
+
 ## Authentication
 
 Every API endpoint requires `Authorization: Bearer <token>`. The token is compared in constant
@@ -64,6 +73,54 @@ time. A missing or malformed header returns **401**; a present but incorrect tok
 **403**.
 
 ## Endpoints
+
+> `POST {path}/source-policy/explain`
+
+Available only when `sourcePolicyExplain` is true. Evaluate the compiled source selector
+for a synthetic client address, listener role, and explicit RFC3339Nano instant:
+
+```json
+{
+  "listener_role": "normal",
+  "client_ip": "192.0.2.10",
+  "at": "2026-10-18T00:00:00Z"
+}
+```
+
+The request is limited to 4 KiB and is strict: all three fields are required; unknown,
+duplicate, null, malformed, or trailing values are rejected. Zone-qualified addresses
+and instants outside Go's normalized years 1 through 9999 are invalid. IPv4-mapped
+addresses are reported as IPv4.
+
+The response identifies the immutable selector and its deterministic decision:
+
+```json
+{
+  "schema": "secdns.source-policy-explain.v1",
+  "evaluation": "diagnostic_preview",
+  "policy_fingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "listener_role": "normal",
+  "client_ip": "192.0.2.10",
+  "evaluated_at": "2026-10-18T00:00:00Z",
+  "resolver": "regional",
+  "source_set": "regional-clients",
+  "rule_index": 0,
+  "reason": "matched_rule"
+}
+```
+
+An unmatched valid address reports `reason` as `explicit_default`, omits `source_set`,
+and uses `rule_index: -1`. The fingerprint is a content diagnostic, not an authority
+signature. The supplied `at` is a hypothetical preview instant; this response is never
+evidence of a runtime request or network reachability. The endpoint does not resolve a
+name, call any selected resolver, inspect a cache, contact an upstream/router, mutate a
+store, or reveal source-set members. Source selection does not depend on a DNS name or
+record type, so they are deliberately absent from this request.
+
+Errors are stable codes: invalid requests and unknown roles return **400**,
+oversized requests return **413**, and an enabled but unbound selector returns **503**.
+The existing bearer guard runs before the body is read. When the option is disabled the
+route is absent.
 
 > `POST {path}/records`
 

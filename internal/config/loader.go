@@ -163,6 +163,11 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 				}
 			}
 		}
+		if config.sourcePolicy != nil {
+			for _, id := range config.sourcePolicy.resolverIDs {
+				roots = append(roots, config.sourcePolicy.resolvers[id])
+			}
+		}
 		if err := validateResolverGraph(roots); err != nil {
 			return nil, err
 		}

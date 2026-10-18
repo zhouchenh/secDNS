@@ -60,6 +60,14 @@ type sourcePeerResolver struct {
 	role   string
 }
 
+// sourcePolicyExplainBinder is implemented by an opt-in management listener.
+// Passing only the immutable selector keeps the explain path unable to call a
+// resolver, cache, transport, or store.
+type sourcePolicyExplainBinder interface {
+	SourcePolicyExplainEnabled() bool
+	BindSourcePolicySelector(sourcepolicy.Explainer) bool
+}
+
 func (s *sourcePeerResolver) ResolverFor(peer netip.Addr, now time.Time) (resolver.Resolver, error) {
 	if s == nil || s.policy == nil || !peer.IsValid() || peer.Zone() != "" {
 		return nil, server.ErrPeerUnavailable
