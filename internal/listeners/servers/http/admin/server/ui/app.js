@@ -12,10 +12,10 @@
   function controls() {
     for (const input of $("editor").querySelectorAll("input, select, textarea, button")) input.disabled = busy;
     $("name").disabled = $("type").disabled = busy || !!selected;
-    $("save").disabled = busy || !ready;
+    $("save").disabled = busy || !ready || (window.secDNSAgent && !window.secDNSAgent.allows("records:write"));
     $("refresh").disabled = busy;
     $("new-record").disabled = busy;
-    $("delete-confirm").disabled = busy;
+    $("delete-confirm").disabled = busy || (window.secDNSAgent && !window.secDNSAgent.allows("records:write"));
     $("delete-cancel").disabled = busy;
     for (const b of $("rows").querySelectorAll("button")) b.disabled = busy || !ready;
   }
@@ -74,7 +74,7 @@
   async function request(method = "GET", payload, suffix = "") {
     const current = generation, controller = new AbortController(); requests.add(controller);
     try {
-      const response = await fetch(endpoint.href + suffix, {method, headers:{Authorization:"Bearer " + token, ...(payload ? {"Content-Type":"application/json"} : {})}, body:payload ? JSON.stringify(payload) : undefined, credentials:"omit", cache:"no-store", redirect:"error", signal:controller.signal});
+      const response = await fetch(endpoint.href + suffix, {method, headers:{...(window.secDNSAgent?.headers(token,method)||{Authorization:"Bearer "+token}), ...(payload ? {"Content-Type":"application/json"} : {})}, body:payload ? JSON.stringify(payload) : undefined, credentials:window.secDNSAgent?.credentials()||"omit", cache:"no-store", redirect:"error", signal:controller.signal});
       if (current !== generation) throw new DOMException("Disconnected", "AbortError");
       if (!response.ok) { const error = new Error("Request rejected"); error.status = response.status; throw error; }
       const result = await response.json();
@@ -97,14 +97,16 @@
   }
   $("connect-form").addEventListener("submit", async event => {
     event.preventDefault(); if (busy) return;
-    token = $("token").value.trim(); $("token").value = ""; if (!token) return;
+    const entered=$("token").value.trim();$("token").value="";if(!entered)return;try{await window.secDNSAgent?.switchToLegacy();}catch{status("Could not end the agent session. Legacy access was not started.","error");return;}token=entered;
     const current = generation; busy = true; status("Connecting…");
     try { await refresh(); if (current !== generation) return; $("login").hidden = true; $("workspace").hidden = $("disconnect").hidden = false; $("connection").textContent = "Connected · " + endpoint.pathname; status("Connected.", "success"); }
     catch (e) { if (current === generation) { token = ""; status(messageFor(e), "error"); } }
     finally { if (current === generation) { busy = false; controls(); } }
   });
-  $("disconnect").addEventListener("click", () => { if (!dirty || window.confirm("Disconnect and discard the unsaved draft?")) disconnect(); });
-  window.addEventListener("pagehide", disconnect);
+  $("disconnect").addEventListener("click", () => { if(window.secDNSAgent?.active){void window.secDNSAgent.logout().catch(()=>{});return;} if (!dirty || window.confirm("Disconnect and discard the unsaved draft?")) disconnect(); });
+  window.addEventListener("agentexpired",()=>{generation++;for(const c of requests)c.abort();requests.clear();token="";ready=false;busy=false;$("login").hidden=false;$("connection").textContent="Sign-in required  -  draft preserved";controls();});
+ window.addEventListener("agentconnected",async()=>{token="";try{await refresh();$("login").hidden=true;$("workspace").hidden=$("disconnect").hidden=false;$("connection").textContent="Agent session";status("Agent connected; draft preserved.","success");}catch(e){status(messageFor(e),"error");}controls();});
+ window.addEventListener("pagehide", disconnect);
   $("filter").addEventListener("input", render);
   $("new-record").addEventListener("click", () => edit());
   $("add-value").addEventListener("click", () => { valueRow(""); dirty = true; });

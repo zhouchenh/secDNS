@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/zhouchenh/secDNS/internal/adminauth"
 	"io"
 	"mime"
 	"net/http"
@@ -300,7 +301,7 @@ func (h *HTTPAdminServer) handleRouterOSPreview(w http.ResponseWriter, r *http.R
 }
 
 func (h *HTTPAdminServer) routerOSPreviewRoutes(mux *http.ServeMux, base string) {
-	authenticated := h.auth(h.handleRouterOSPreview)
+	authenticated := h.withScopes(h.handleRouterOSPreview, false, adminauth.RouterOSPreview)
 	mux.HandleFunc("POST "+base+"/import/routeros/preview", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		authenticated(w, r)

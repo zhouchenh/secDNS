@@ -1,5 +1,5 @@
 // Package adminauth implements node-local administrative identity storage.
-// It is not registered with any listener or configuration constructor.
+// Runtime bindings are explicitly opt-in and never create stores.
 package adminauth
 
 import (
@@ -119,6 +119,16 @@ type CredentialRequest struct {
 	Scopes        []Scope
 	ExpiresAt     time.Time
 }
+
+// Validate is a pure preflight check; it grants no issuance authority.
+func (r CredentialRequest) Validate(now time.Time) error {
+	_, e := scopes(r.Scopes)
+	if e != nil || !label(r.Name, 128) || (r.Purpose != "" && !label(r.Purpose, 256)) || !validNow(now) || (!r.ExpiresAt.IsZero() && (!validNow(r.ExpiresAt) || unix(r.ExpiresAt) <= now.Unix())) {
+		return ErrInvalid
+	}
+	return nil
+}
+
 type Credential struct {
 	ID, Name, Purpose                           string
 	Scopes                                      []Scope

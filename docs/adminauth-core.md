@@ -1,9 +1,11 @@
+> The original internal-only core described below is now optionally integrated by [Scoped agent access](agent-admin-access.md). New auth stores use schema 2; schema 1 requires explicit offline migration. Human authentication remains unavailable.
+
 # Node-local administration authentication core
 
-`internal/adminauth` is an unwired library. Existing listener configuration,
+`internal/adminauth` is an opt-in authentication library. When no auth binding is configured, existing listener configuration,
 legacy bearer authentication, editors, record databases and running previews
 are unchanged. This is a bounded first part of the human/agent authentication
-contract, not a working human login or a new GUI authentication flow.
+contract. Agent API and GUI session integration is documented separately; human login is not implemented.
 
 ## Local ownership and durable identity
 
@@ -84,10 +86,11 @@ credential IDs, never token material, operator labels, passwords or DNS data.
 Bootstrap creation/cancellation, issuance and revocation commit with audit;
 audit failure rolls back the action. Public errors are fixed categories.
 
-The package does not implement user/password guessing limits, Argon2, TOTP,
-passkeys, encrypted authenticator enrollment, browser sessions, cookies, CSRF,
-HTTPS-origin checks, CLI bootstrap wiring or HTTP authorization adapters. Those
-are required before claiming human login or agent GUI readiness. No auth state
+User/password guessing limits, Argon2, TOTP, passkeys and encrypted authenticator
+enrollment remain unimplemented. Opt-in agent browser sessions, cookies, CSRF,
+HTTPS-origin checks, offline CLI and HTTP authorization are now supplied by
+[Scoped agent access](agent-admin-access.md); they do not provide human login.
+No auth state
 is replicated with DNS snapshots. Database/key backup restoration can resurrect
 old credentials and revocations; no rollback-resistant external authority is
 claimed.

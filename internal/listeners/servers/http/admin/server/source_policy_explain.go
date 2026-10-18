@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/zhouchenh/secDNS/internal/adminauth"
 	"io"
 	"net/http"
 	"net/netip"
@@ -104,7 +105,7 @@ func (h *HTTPAdminServer) BindSourcePolicySelector(selector sourcepolicy.Explain
 }
 
 func (h *HTTPAdminServer) sourcePolicyExplainRoutes(mux *http.ServeMux, base string) {
-	mux.HandleFunc("POST "+base+"/source-policy/explain", h.auth(h.handleSourcePolicyExplain))
+	mux.HandleFunc("POST "+base+"/source-policy/explain", h.withScopes(h.handleSourcePolicyExplain, false, adminauth.SourcePolicyExplain))
 }
 
 func (h *HTTPAdminServer) handleSourcePolicyExplain(w http.ResponseWriter, r *http.Request) {

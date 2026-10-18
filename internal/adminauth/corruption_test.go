@@ -11,7 +11,7 @@ import (
 
 func TestStrictReopenCorruption(t *testing.T) {
 	cases := map[string]string{
-		"version":     "PRAGMA user_version=2",
+		"version":     "PRAGMA user_version=3",
 		"application": "PRAGMA application_id=0",
 		"trigger":     "CREATE TRIGGER unexpected AFTER INSERT ON audit BEGIN SELECT 1; END",
 		"scope":       "UPDATE credentials SET scopes='[\"auth:manage\"]'",

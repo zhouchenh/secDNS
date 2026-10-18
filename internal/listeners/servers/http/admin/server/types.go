@@ -20,6 +20,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
+	"github.com/zhouchenh/secDNS/internal/adminauth"
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/internal/recordstore"
 	"github.com/zhouchenh/secDNS/internal/sourcepolicy"
@@ -38,12 +39,14 @@ var allowedTypes = map[uint16]bool{
 }
 
 type HTTPAdminServer struct {
-	Listen net.IP
-	Port   uint16
-	Path   string
-	Store  string // shared store name; empty joins recordstore.DefaultName
-	Token  string // bearer token; required (the listener fails closed without it)
-	UI     bool   // optional embedded records editor; disabled by default
+	AgentAuthConfigured bool
+	agent               *agentBinding
+	Listen              net.IP
+	Port                uint16
+	Path                string
+	Store               string // shared store name; empty joins recordstore.DefaultName
+	Token               string // bearer token; required (the listener fails closed without it)
+	UI                  bool   // optional embedded records editor; disabled by default
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
 	SourcePolicyExplain bool
@@ -151,6 +154,7 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
+	h.agentRoutes(mux, base)
 	if h.SourcePolicyExplain {
 		h.sourcePolicyExplainRoutes(mux, base)
 	}
@@ -158,24 +162,24 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		h.routerOSPreviewRoutes(mux, base)
 	}
 	if h.versioned != nil {
-		mux.HandleFunc("GET "+base+"/snapshot", h.readAuth(h.handleSnapshot))
-		mux.HandleFunc("GET "+base+"/snapshot/events", h.readAuth(h.handleSnapshotEvents))
-		mux.HandleFunc("POST "+base+"/snapshot", h.auth(h.handleReplace))
-		blocked := h.auth(func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET "+base+"/snapshot", h.withScopes(h.handleSnapshot, true, adminauth.RecordsRead))
+		mux.HandleFunc("GET "+base+"/snapshot/events", h.withScopes(h.handleSnapshotEvents, true, adminauth.RecordsRead, adminauth.SnapshotEvents))
+		mux.HandleFunc("POST "+base+"/snapshot", h.withScopes(h.handleReplace, false, adminauth.RecordsWrite))
+		blocked := func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "versioned_batch_required"})
-		})
-		mux.HandleFunc("GET "+base+"/records", blocked)
-		mux.HandleFunc("POST "+base+"/records", blocked)
-		mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", blocked)
+		}
+		mux.HandleFunc("GET "+base+"/records", h.withScopes(blocked, false, adminauth.RecordsRead))
+		mux.HandleFunc("POST "+base+"/records", h.withScopes(blocked, false, adminauth.RecordsWrite))
+		mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", h.withScopes(blocked, false, adminauth.RecordsWrite))
 		if h.UI {
 			h.editorRoutes(mux, base)
 		}
 		return mux
 	}
 
-	mux.HandleFunc("GET "+base+"/records", h.auth(h.handleList))
-	mux.HandleFunc("POST "+base+"/records", h.auth(h.handleSet))
-	mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", h.auth(h.handleDelete))
+	mux.HandleFunc("GET "+base+"/records", h.withScopes(h.handleList, false, adminauth.RecordsRead))
+	mux.HandleFunc("POST "+base+"/records", h.withScopes(h.handleSet, false, adminauth.RecordsWrite))
+	mux.HandleFunc("DELETE "+base+"/records/{name}/{type}", h.withScopes(h.handleDelete, false, adminauth.RecordsWrite))
 	if h.UI {
 		h.editorRoutes(mux, base)
 	}
