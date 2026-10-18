@@ -144,6 +144,10 @@ func run(configFilePath string, showVersion, testOnly bool, logLevelValue string
 		common.ErrOutput("config: invalid record store listener topology")
 		return exitStartup
 	}
+	if err = config.ValidateExactStoreOverlayTopology(raw, stores, versionedStores, followerStores); err != nil {
+		common.ErrOutput("config: invalid exact store overlay")
+		return exitStartup
+	}
 	if testOnly {
 		if err := config.ValidateConfig(bytes.NewReader(raw)); err != nil {
 			common.ErrOutput(common.Concatenate("config: Validation failed: ", err))

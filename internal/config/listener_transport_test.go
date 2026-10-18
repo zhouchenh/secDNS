@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/miekg/dns"
+	"github.com/zhouchenh/secDNS/internal/recordstore"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -26,12 +28,176 @@ func TestListenerPolicyTransportHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacy, err := ParseRecordStores([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	versioned, err := ParseVersionedRecordStores([]byte(raw), legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	followers, err := ParseFollowerRecordStores([]byte(raw), legacy, versioned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) > 0 || len(versioned) > 0 || len(followers) > 0 {
+		cleanup, prepareErr := recordstore.PrepareBindingsWithFollowers(legacy, versioned, FollowerBindings(followers))
+		if prepareErr != nil {
+			t.Fatal(prepareErr)
+		}
+		defer cleanup()
+	}
 	failure := func(q *dns.Msg) *dns.Msg { r := new(dns.Msg); r.SetRcode(q, dns.RcodeServerFailure); return r }
 	i.Listen(failure, failure, func(err error) {
 		if err != nil {
 			os.Exit(2)
 		}
 	})
+}
+
+func TestExactStoreOverlaySourcePolicyTransportAndCacheIsolation(t *testing.T) {
+	for _, protocol := range []string{"udp", "tcp"} {
+		t.Run(protocol, func(t *testing.T) {
+			dnsPort := freeTransportPort(t, protocol)
+			adminPort := freeTransportPort(t, "tcp")
+			for protocol == "tcp" && adminPort == dnsPort {
+				adminPort = freeTransportPort(t, "tcp")
+			}
+			config := map[string]any{
+				"versionedRecordStores": map[string]any{"owned": map[string]any{
+					"backend": "memory", "rulesetId": "rules", "lineageId": "lineage",
+				}},
+				"listeners": []any{
+					map[string]any{
+						"type": "dnsServer", "sourcePolicyRole": "normal",
+						"config": map[string]any{"listen": "127.0.0.1", "port": dnsPort, "protocol": protocol},
+					},
+					map[string]any{
+						"type":   "httpAdminServer",
+						"config": map[string]any{"listen": "127.0.0.1", "port": adminPort, "token": "synthetic-admin-token", "store": "owned"},
+					},
+				},
+				"resolvers": map[string]any{
+					"cache": map[string]any{
+						"ordinary-cache": map[string]any{"resolver": map[string]any{"type": "address", "config": "192.0.2.10"}, "maxEntries": 32},
+						"special-cache":  map[string]any{"resolver": map[string]any{"type": "address", "config": "192.0.2.20"}, "maxEntries": 32},
+					},
+					"exactStoreOverlay": map[string]any{
+						"ordinary-overlay": map[string]any{"store": "owned", "fallback": "ordinary-cache"},
+						"special-overlay":  map[string]any{"store": "owned", "fallback": "special-cache"},
+					},
+				},
+				"sourcePolicy": map[string]any{
+					"sourceSets": []any{map[string]any{
+						"id": "special-clients", "members": []any{map[string]any{"prefix": "127.0.0.2/32", "expiresAt": "2099-01-01T00:00:00Z"}},
+					}},
+					"rules":    []any{map[string]any{"listenerRole": "normal", "sourceSet": "special-clients", "resolver": "special-overlay"}},
+					"defaults": []any{map[string]any{"listenerRole": "normal", "resolver": "ordinary-overlay"}},
+				},
+				"rules":           []any{},
+				"defaultResolver": "ordinary-overlay",
+			}
+			raw, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(executable, "-test.run=^TestListenerPolicyTransportHelper$")
+			cmd.Env = append(os.Environ(), "SECDNS_POLICY_TEST_CONFIG="+string(raw))
+			if err = cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+
+			endpoint := net.JoinHostPort("127.0.0.1", strconv.Itoa(dnsPort))
+			assertAddress := func(source, want string) {
+				t.Helper()
+				var local net.Addr
+				if protocol == "udp" {
+					local = &net.UDPAddr{IP: net.ParseIP(source)}
+				} else {
+					local = &net.TCPAddr{IP: net.ParseIP(source)}
+				}
+				client := &dns.Client{Net: protocol, Timeout: 300 * time.Millisecond, Dialer: &net.Dialer{LocalAddr: local}}
+				query := new(dns.Msg)
+				query.SetQuestion("same.invalid.", dns.TypeA)
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					answer, _, exchangeErr := client.Exchange(query, endpoint)
+					if exchangeErr == nil {
+						if answer.Rcode != dns.RcodeSuccess || len(answer.Answer) != 1 {
+							t.Fatalf("source %s: %v", source, answer)
+						}
+						record, ok := answer.Answer[0].(*dns.A)
+						if !ok || record.A.String() != want {
+							t.Fatalf("source %s: %v", source, answer.Answer)
+						}
+						return
+					}
+					if time.Now().After(deadline) {
+						t.Fatal(exchangeErr)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+			postSnapshot := func(body string) {
+				t.Helper()
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					request, requestErr := http.NewRequest(http.MethodPost, "http://"+net.JoinHostPort("127.0.0.1", strconv.Itoa(adminPort))+"/admin/snapshot", strings.NewReader(body))
+					if requestErr != nil {
+						t.Fatal(requestErr)
+					}
+					request.Header.Set("Authorization", "Bearer synthetic-admin-token")
+					response, requestErr := (&http.Client{Timeout: time.Second}).Do(request)
+					if requestErr == nil {
+						response.Body.Close()
+						if response.StatusCode != http.StatusOK {
+							t.Fatalf("snapshot replace: %s", response.Status)
+						}
+						return
+					}
+					if time.Now().After(deadline) {
+						t.Fatal(requestErr)
+					}
+					time.Sleep(20 * time.Millisecond)
+				}
+			}
+
+			// Prime two independent fallback caches with the identical question.
+			assertAddress("127.0.0.1", "192.0.2.10")
+			assertAddress("127.0.0.2", "192.0.2.20")
+			postSnapshot(`{"expected":{"ruleset_id":"rules","lineage_id":"lineage","revision":"1"},"operation_id":"add-owner","records":[{"name":"same.invalid.","type":"A","values":["203.0.113.30"],"ttl_seconds":45}]}`)
+			for _, source := range []string{"127.0.0.2", "127.0.0.1"} {
+				assertAddress(source, "203.0.113.30")
+			}
+			postSnapshot(`{"expected":{"ruleset_id":"rules","lineage_id":"lineage","revision":"2"},"operation_id":"remove-owner","records":[]}`)
+			// Removal exposes the still-partitioned fallback caches again.
+			assertAddress("127.0.0.2", "192.0.2.20")
+			assertAddress("127.0.0.1", "192.0.2.10")
+		})
+	}
+}
+
+func freeTransportPort(t *testing.T, protocol string) int {
+	t.Helper()
+	if protocol == "udp" {
+		listener, err := net.ListenPacket("udp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		return listener.LocalAddr().(*net.UDPAddr).Port
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
 }
 
 func TestListenerPolicyDualStackTransports(t *testing.T) {
