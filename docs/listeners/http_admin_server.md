@@ -21,7 +21,8 @@ store by `store` name, so a record written here is immediately answered by the r
   "port": 9053,
   "path": "/admin",
   "store": "acme",
-  "token": "a-long-random-secret"
+  "token": "a-long-random-secret",
+  "snapshotReaders": []
 }
 ```
 
@@ -66,11 +67,21 @@ listener by itself.
 
 Default: `false`
 
+> `snapshotReaders`: Array _(Optional)_
+
+Up to 64 per-node read-only credentials for the snapshot and revision-event GET
+routes of a writer-versioned store. Omission preserves the existing admin-only
+behavior. See [direct follower snapshot synchronization](../direct-follower-sync.md)
+for the strict identity/token rules and transport boundary.
+
+Default: `[]`
+
 ## Authentication
 
 Every API endpoint requires `Authorization: Bearer <token>`. The token is compared in constant
 time. A missing or malformed header returns **401**; a present but incorrect token returns
-**403**.
+**403**. A configured snapshot-reader token is accepted only on `GET {path}/snapshot`
+and `GET {path}/snapshot/events`; all other endpoints still require the admin token.
 
 ## Endpoints
 

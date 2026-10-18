@@ -65,6 +65,11 @@ func bindListeners(raw interface{}, config *Config) (bool, error) {
 	}
 	explainBinders := make([]sourcePolicyExplainBinder, 0, 1)
 	for _, listener := range config.Listeners {
+		if validator, ok := listener.(interface{ ValidateSnapshotReaders() error }); ok {
+			if err := validator.ValidateSnapshotReaders(); err != nil {
+				return false, ErrListenerBinding
+			}
+		}
 		if binder, ok := listener.(sourcePolicyExplainBinder); ok && binder.SourcePolicyExplainEnabled() {
 			explainBinders = append(explainBinders, binder)
 		}

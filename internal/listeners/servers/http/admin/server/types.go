@@ -6,6 +6,8 @@
 package server
 
 import (
+	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -45,10 +47,65 @@ type HTTPAdminServer struct {
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
 	SourcePolicyExplain bool
+	SnapshotReaders     []SnapshotReader
 
 	store                *recordstore.Store
 	versioned            *recordstore.VersionedStore
 	sourcePolicySelector sourcepolicy.Explainer
+}
+
+type SnapshotReader struct {
+	NodeID string
+	Token  string
+}
+
+type snapshotReaderContextKey struct{}
+
+func SnapshotReaderNodeID(ctx context.Context) (string, bool) {
+	value, ok := ctx.Value(snapshotReaderContextKey{}).(string)
+	return value, ok && value != ""
+}
+
+func validSnapshotReaderIdentity(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func validSnapshotReaderToken(value string) bool {
+	if len(value) < 32 || len(value) > 512 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range []byte(value) {
+		if character < 0x21 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *HTTPAdminServer) ValidateSnapshotReaders() error {
+	if len(h.SnapshotReaders) > 64 {
+		return ErrSnapshotReaders
+	}
+	ids := map[string]bool{}
+	tokens := map[[sha256.Size]byte]bool{}
+	admin := sha256.Sum256([]byte(h.Token))
+	for _, reader := range h.SnapshotReaders {
+		digest := sha256.Sum256([]byte(reader.Token))
+		if !validSnapshotReaderIdentity(reader.NodeID) || !validSnapshotReaderToken(reader.Token) || ids[reader.NodeID] || tokens[digest] || subtle.ConstantTimeCompare(digest[:], admin[:]) == 1 {
+			return ErrSnapshotReaders
+		}
+		ids[reader.NodeID] = true
+		tokens[digest] = true
+	}
+	return nil
 }
 
 var typeOfHTTPAdminServer = descriptor.TypeOfNew(new(*HTTPAdminServer))
@@ -68,7 +125,15 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 		handleIfError(ErrMissingToken, errorHandler)
 		return
 	}
+	if err := h.ValidateSnapshotReaders(); err != nil {
+		handleIfError(err, errorHandler)
+		return
+	}
 	h.store, h.versioned = recordstore.Binding(h.Store)
+	if recordstore.FollowerBinding(h.Store) != nil || len(h.SnapshotReaders) > 0 && h.versioned == nil {
+		handleIfError(ErrStoreMode, errorHandler)
+		return
+	}
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(h.Listen.String(), strconv.Itoa(int(h.Port))),
 		Handler:           h.routes(),
@@ -93,8 +158,8 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		h.routerOSPreviewRoutes(mux, base)
 	}
 	if h.versioned != nil {
-		mux.HandleFunc("GET "+base+"/snapshot", h.auth(h.handleSnapshot))
-		mux.HandleFunc("GET "+base+"/snapshot/events", h.auth(h.handleSnapshotEvents))
+		mux.HandleFunc("GET "+base+"/snapshot", h.readAuth(h.handleSnapshot))
+		mux.HandleFunc("GET "+base+"/snapshot/events", h.readAuth(h.handleSnapshotEvents))
 		mux.HandleFunc("POST "+base+"/snapshot", h.auth(h.handleReplace))
 		blocked := h.auth(func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "versioned_batch_required"})
@@ -115,6 +180,40 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		h.editorRoutes(mux, base)
 	}
 	return mux
+}
+
+// readAuth admits the existing admin token or one configured read-only token.
+// Every configured digest is compared on every request; request data never
+// selects or overrides the configured reader identity.
+func (h *HTTPAdminServer) readAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, ok := bearerToken(r)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, errMissingBearer)
+			return
+		}
+		presented := sha256.Sum256([]byte(token))
+		admin := sha256.Sum256([]byte(h.Token))
+		adminMatch := subtle.ConstantTimeCompare(presented[:], admin[:])
+		readerMatch := 0
+		nodeID := ""
+		for _, reader := range h.SnapshotReaders {
+			digest := sha256.Sum256([]byte(reader.Token))
+			match := subtle.ConstantTimeCompare(presented[:], digest[:])
+			readerMatch |= match
+			if match == 1 {
+				nodeID = reader.NodeID
+			}
+		}
+		if adminMatch|readerMatch != 1 {
+			writeError(w, http.StatusForbidden, errInvalidBearer)
+			return
+		}
+		if adminMatch != 1 {
+			r = r.WithContext(context.WithValue(r.Context(), snapshotReaderContextKey{}, nodeID))
+		}
+		next(w, r)
+	}
 }
 
 func (h *HTTPAdminServer) basePath() string {
@@ -423,6 +522,43 @@ func init() {
 						AssignableKind: descriptor.KindString,
 					},
 					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"SnapshotReaders"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{
+						ObjectPath: descriptor.Path{"snapshotReaders"},
+						AssignableKind: descriptor.ConvertibleKind{
+							Kind: descriptor.KindSlice,
+							ConvertFunction: func(original interface{}) (interface{}, bool) {
+								values, ok := original.([]interface{})
+								if !ok || len(values) > 64 {
+									return nil, false
+								}
+								readers := make([]SnapshotReader, 0, len(values))
+								ids := map[string]bool{}
+								tokens := map[[sha256.Size]byte]bool{}
+								for _, value := range values {
+									object, ok := value.(map[string]interface{})
+									if !ok || len(object) != 2 {
+										return nil, false
+									}
+									nodeID, nodeOK := object["nodeId"].(string)
+									token, tokenOK := object["token"].(string)
+									digest := sha256.Sum256([]byte(token))
+									if !nodeOK || !tokenOK || !validSnapshotReaderIdentity(nodeID) || !validSnapshotReaderToken(token) || ids[nodeID] || tokens[digest] {
+										return nil, false
+									}
+									ids[nodeID] = true
+									tokens[digest] = true
+									readers = append(readers, SnapshotReader{NodeID: nodeID, Token: token})
+								}
+								return readers, true
+							},
+						},
+					},
+					descriptor.DefaultValue{Value: []SnapshotReader(nil)},
 				},
 			},
 		},
