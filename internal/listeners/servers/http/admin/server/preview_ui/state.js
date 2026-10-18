@@ -1,7 +1,8 @@
 /* Bounded preview validation and request identity; no credentials or network destinations. */
 (function(root){
   "use strict";
-  const INPUT=1<<20, OUTPUT=32<<20, ENTRIES=4096, VALUE=16<<10, PAGE=50, EXACT_PROFILE="secdns.routeros-exact-explicit.v1";
+  const INPUT=1<<20, OUTPUT=32<<20, HANDOFF=4<<20, ENTRIES=4096, VALUE=16<<10, PAGE=50, EXACT_PROFILE="secdns.routeros-exact-explicit.v1";
+  const HANDOFF_KIND="secdns.routeros-exact-draft.v1", HANDOFF_RESULT_KIND="secdns.routeros-exact-draft-result.v1";
   const fields=new Set(["name","address","cname","type","ttl","disabled","comment","regexp","match-subdomain","forward-to","address-list","mx-exchange","mx-preference","ns","srv-port","srv-priority","srv-target","srv-weight","text"]);
   const semantic=new Set(["unsupported_property","invalid_boolean","unsupported_ttl","omitted_ttl_requires_source_defaults","regexp_semantics_not_compiled","subdomain_semantics_not_compiled","omitted_disabled_requires_source_defaults","omitted_match_subdomain_requires_source_defaults","omitted_type_requires_source_defaults","conflicting_record_fields","invalid_address_family","missing_match","missing_cname_fields","forward_semantics_not_compiled","negative_semantics_not_compiled","unsupported_record_type","disabled_entry_retained"]);
   const syntax=new Set(["input_read_failed","input_limit","invalid_text","dns_static_section_required","unsupported_command","entry_limit","invalid_property","duplicate_property","unknown_property","invalid_decoded_text","logical_line_limit","invalid_continuation","invalid_quoted_value","unterminated_string","interpolation_not_allowed","unterminated_escape","unsupported_escape","value_limit","expression_not_allowed","value_concatenation_not_allowed","empty_token"]);
@@ -22,6 +23,12 @@
   }
   function parseDiagnostic(d){return diagnostic(d,syntax);}
   function validRulesetID(s){return typeof s==="string"&&s.length>0&&s.length<=128&&/^[A-Za-z0-9._-]+$/.test(s);}
+  const handoffID=s=>typeof s==="string"&&/^[a-f0-9]{48}$/.test(s);
+  function handoffConfig(hash,expectedTarget){
+    if(typeof hash!=="string"||!hash.startsWith("#"))return null;let p;try{p=new URLSearchParams(hash.slice(1));}catch{return null;}
+    if([...p.keys()].length!==2||p.getAll("draft_handoff").length!==1||p.getAll("target").length!==1||!handoffID(p.get("draft_handoff"))||p.get("target")!==expectedTarget)return null;
+    return Object.freeze({channelID:p.get("draft_handoff"),targetPath:expectedTarget});
+  }
   function exactBlocker(b,entries){return keys(b,["ordinal","line","code"],["related_ordinal"])&&blockerCodes.has(b.code)&&whole(b.ordinal,0,entries)&&whole(b.line,b.ordinal===0?0:1,INPUT+1)&&(b.ordinal!==0||b.line===0)&&(!Object.hasOwn(b,"related_ordinal")||whole(b.related_ordinal,1,entries));}
   function exactRecord(r){return keys(r,["name","type","values","ttl_seconds"])&&typeof r.name==="string"&&wellFormed(r.name)&&!r.name.includes("\0")&&r.name.length>0&&r.name.length<=255&&["A","AAAA","CNAME"].includes(r.type)&&Array.isArray(r.values)&&r.values.length>0&&r.values.length<=64&&r.values.every(v=>typeof v==="string"&&wellFormed(v)&&!v.includes("\0")&&v.length>0&&v.length<=255)&&whole(r.ttl_seconds,0,0xffffffff);}
   function exactContent(c,ruleset){return keys(c,["schema","ruleset_id","records"])&&c.schema==="secdns.exact-record-set.v1"&&c.ruleset_id===ruleset&&Array.isArray(c.records)&&c.records.length<=ENTRIES&&c.records.every(exactRecord);}
@@ -33,6 +40,12 @@
     if(!x.compiled)return blockers.length>0&&!Object.hasOwn(x,"content_sha256")&&!Object.hasOwn(x,"bindings")&&!Object.hasOwn(x,"content");
     return blockers.length===0&&x.source.entries.every(e=>e.classification==="exact_record_candidate"&&!Object.hasOwn(e,"diagnostics")&&["A","AAAA","CNAME"].includes(e.fields.type)&&Object.hasOwn(e.fields,"ttl")&&e.fields.disabled==="no"&&e.fields["match-subdomain"]==="no")&&typeof x.content_sha256==="string"&&/^[a-f0-9]{64}$/.test(x.content_sha256)&&Array.isArray(x.bindings)&&exactContent(x.content,x.ruleset_id)&&x.content.records.length===x.source.entries.length&&x.bindings.length===x.content.records.length&&x.bindings.every((b,i)=>exactBinding(b,x.source.entries.length)&&b.name===x.content.records[i].name&&b.type===x.content.records[i].type)&&new Set(x.bindings.map(b=>b.ordinal)).size===x.bindings.length;
   }
+  function draftHandoffMessage(result,config,requestID,sourcePath,now){
+    if(!config||!handoffID(config.channelID)||!handoffID(requestID)||typeof sourcePath!=="string"||!sourcePath.startsWith("/")||!Number.isSafeInteger(now)||!validExact(result,result?.ruleset_id)||!result.compiled)throw new Error("invalid_handoff");
+    const message={kind:HANDOFF_KIND,channel_id:config.channelID,request_id:requestID,issued_at_ms:now,source_path:sourcePath,target_path:config.targetPath,profile:result.profile,source_sha256:result.source_sha256,content_sha256:result.content_sha256,content:result.content};
+    if(new TextEncoder().encode(JSON.stringify(message)).length>HANDOFF)throw new Error("handoff_limit");return message;
+  }
+  function validHandoffResult(x,config,requestID){return keys(x,["kind","channel_id","request_id","accepted"],["error"])&&x.kind===HANDOFF_RESULT_KIND&&x.channel_id===config?.channelID&&x.request_id===requestID&&typeof x.accepted==="boolean"&&(x.accepted?!Object.hasOwn(x,"error"):new Set(["handoff_reconciliation_required","handoff_identity_conflict","invalid_draft_handoff","editor_unavailable"]).has(x.error));}
   async function readJSON(response,limit=OUTPUT){
     const length=response.headers.get("content-length");if(length!==null&&(!/^\d+$/.test(length)||Number(length)>limit)){await response.body?.cancel();throw new Error("response_limit");}
     if(!response.body)throw new Error("invalid_response");
@@ -50,6 +63,6 @@
     current(c){return c.generation===this.generation&&c.epoch===this.epoch;}
     finish(c){if(this.current(c))this.busy=false;}
   }
-  const api={INPUT,OUTPUT,ENTRIES,VALUE,PAGE,EXACT_PROFILE,encodeText,fileSize,validPreview,validRulesetID,validExact,parseDiagnostic,readJSON,Gate};
+  const api={INPUT,OUTPUT,HANDOFF,ENTRIES,VALUE,PAGE,EXACT_PROFILE,HANDOFF_KIND,HANDOFF_RESULT_KIND,encodeText,fileSize,validPreview,validRulesetID,validExact,handoffConfig,draftHandoffMessage,validHandoffResult,parseDiagnostic,readJSON,Gate};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;else root.RouterOSPreview=api;
 })(globalThis);

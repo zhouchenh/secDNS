@@ -2,13 +2,17 @@
   "use strict";
   const S=globalThis.RouterOSPreview, $=id=>document.getElementById(id), gate=new S.Gate();
   const endpoint=new URL("../../import/routeros/preview",document.currentScript.src);
+  const editorPath=new URL("../",location.href).pathname,handoff=S.handoffConfig(location.hash,editorPath);
   if(endpoint.origin!==location.origin)throw new Error("Invalid preview origin");
+  if(location.hash)history.replaceState(null,"",location.pathname+location.search);
   $("endpoint").textContent=endpoint.origin+endpoint.pathname;
-  let token="",verified=false,controller=null,result=null,resultOperation="",page=0,provenance="";
+  const handoffChannel=handoff&&typeof BroadcastChannel==="function"?new BroadcastChannel("secdns-routeros-draft-"+handoff.channelID):null;
+  let token="",verified=false,controller=null,result=null,resultOperation="",page=0,provenance="",transferRequest="",transferTimer=null;
   const status=(text,kind="")=>{$("status").textContent=text;$("status").className=kind;};
   const bytes=n=>n>=1024?(n/1024).toFixed(2)+" KiB":n+" B";
   function controls(){
     $("preview").disabled=gate.busy;
+    $("transfer").disabled=gate.busy||!!transferRequest;
     $("authentication").textContent=verified?"Last preview authenticated":token?"Token held · not verified":"Token not verified";
     $("ruleset-source").hidden=$("operation").value!=="exact";$("preview").textContent=$("operation").value==="exact"?"Review exact conversion":"Preview export";
     $("paste-source").hidden=$("mode").value!=="paste";$("file-source").hidden=$("mode").value!=="file";
@@ -17,7 +21,7 @@
     }catch{$("source-info").textContent="Source exceeds 1 MiB or contains invalid text. It cannot be submitted.";}
   }
   function invalidate(session=false){
-    if(session)gate.session();else gate.change();controller?.abort();controller=null;result=null;resultOperation="";provenance="";page=0;render();controls();
+    if(session)gate.session();else gate.change();controller?.abort();controller=null;if(transferTimer)clearTimeout(transferTimer);transferTimer=null;transferRequest="";$("transfer-status").textContent="";result=null;resultOperation="";provenance="";page=0;render();controls();
   }
   function disconnect(show=true){token="";verified=false;$("token").value="";invalidate(true);if(show)status("Disconnected. Source retained locally; no automatic submission.");}
   function diagnostics(items){
@@ -30,7 +34,7 @@
   }
   function render(){
     $("results").hidden=!result;$("entries").replaceChildren();$("global-diagnostics").replaceChildren();$("blockers").replaceChildren();$("candidate").textContent="";
-    if(!result){$("summary").textContent=$("provenance").textContent=$("hash").textContent=$("exact-title").textContent=$("exact-hash").textContent="";$("exact-result").hidden=true;return;}
+    if(!result){$("summary").textContent=$("provenance").textContent=$("hash").textContent=$("exact-title").textContent=$("exact-hash").textContent="";$("exact-result").hidden=true;$("transfer").hidden=true;return;}
     const preview=resultOperation==="exact"?result.source:result,candidates=preview.entries.filter(e=>e.classification==="exact_record_candidate").length;
     $("summary").textContent="Entries: "+preview.entries.length+" · Structural candidates: "+candidates+" · Unsupported semantics: "+(preview.entries.length-candidates)+". No entries can be applied here.";
     $("provenance").textContent=provenance;$("hash").textContent="Submitted bytes SHA-256 · "+preview.source_sha256;
@@ -39,7 +43,7 @@
       $("exact-title").textContent=result.compiled?"Complete exact candidate":"Complete source refused";
       $("exact-hash").textContent=result.compiled?"Canonical content SHA-256 · "+result.content_sha256:"No candidate content was produced.";
       if(result.blockers?.length)$("blockers").append(blockerList(result.blockers));
-      if(result.compiled){$("candidate").hidden=false;$("candidate").textContent=JSON.stringify({bindings:result.bindings,content:result.content},null,2);}else $("candidate").hidden=true;
+      if(result.compiled){$("candidate").hidden=false;$("candidate").textContent=JSON.stringify({bindings:result.bindings,content:result.content},null,2);$("transfer").hidden=!handoffChannel;}else{$("candidate").hidden=true;$("transfer").hidden=true;}
     }
     $("global-diagnostics").append(diagnostics(preview.diagnostics));
     const start=page*S.PAGE,end=Math.min(start+S.PAGE,preview.entries.length);
@@ -98,8 +102,11 @@
   $("clear").addEventListener("click",()=>{$("source").value="";$("file").value="";invalidate();status("Source and preview cleared from this page.");});
   $("disconnect").addEventListener("click",()=>disconnect());
   $("download").addEventListener("click",()=>{if(!result||resultOperation!=="exact")return;const blob=new Blob([JSON.stringify(result,null,2)+"\n"],{type:"application/json"}),href=URL.createObjectURL(blob),a=document.createElement("a");a.href=href;a.download="routeros-exact-"+result.ruleset_id+".json";a.click();setTimeout(()=>URL.revokeObjectURL(href),0);});
+  function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
+  handoffChannel?.addEventListener("message",event=>{if(!transferRequest||!S.validHandoffResult(event.data,handoff,transferRequest))return;if(transferTimer)clearTimeout(transferTimer);transferTimer=null;const accepted=event.data.accepted;transferRequest="";$("transfer-status").textContent=accepted?"Candidate copied into the editor's local draft. Review it there before any replacement.":({handoff_reconciliation_required:"Editor kept its existing local work; explicitly clear or finish it before another transfer.",handoff_identity_conflict:"Editor refused the candidate because its ruleset ID differs.",invalid_draft_handoff:"Editor rejected an invalid or stale transfer. Nothing changed.",editor_unavailable:"Editor is busy or not connected to a fresh snapshot. Nothing changed."})[event.data.error];controls();});
+  $("transfer").addEventListener("click",()=>{if(!handoffChannel||transferRequest||!result||resultOperation!=="exact"||!result.compiled)return;try{transferRequest=randomID();handoffChannel.postMessage(S.draftHandoffMessage(result,handoff,transferRequest,location.pathname,Date.now()));$("transfer-status").textContent="Waiting for the originating editor to accept this candidate…";transferTimer=setTimeout(()=>{if(!transferRequest)return;transferRequest="";transferTimer=null;$("transfer-status").textContent="Transfer outcome unconfirmed. Inspect the originating editor draft before trying again.";controls();},5000);controls();}catch{$("transfer-status").textContent="Candidate could not be transferred. Nothing changed.";transferRequest="";controls();}});
   $("previous").addEventListener("click",()=>{if(result&&page>0){page--;render();}});$("next").addEventListener("click",()=>{const preview=resultOperation==="exact"?result?.source:result;if(preview&&(page+1)*S.PAGE<preview.entries.length){page++;render();}});
-  window.addEventListener("pagehide",()=>{disconnect(false);$("source").value="";$("file").value="";});
+  window.addEventListener("pagehide",()=>{handoffChannel?.close();disconnect(false);$("source").value="";$("file").value="";});
   window.addEventListener("pageshow",event=>{if(event.persisted)disconnect();});
   render();controls();
 })();
