@@ -38,6 +38,54 @@ Applying the exact-record subset of a mixed export would lose policy and is deli
 not offered here. The exact-record cluster snapshot model is a separate, narrower
 namespace; this preview is not convertible to a complete snapshot by discarding entries.
 
+## Internal exact compiler
+
+`routeros.CompileExact(reader, rulesetID)` is a pure internal API with profile
+`secdns.routeros-exact-explicit.v1`. It compiles the entire submitted source or exposes
+no candidate. The CLI, admin preview endpoint and page still call the original parser;
+there is no compiler endpoint, apply button or record-store mutation.
+
+The strict profile requires explicit uppercase `A`, `AAAA` or `CNAME`, exact integer
+TTL seconds/components, `disabled=no` and `match-subdomain=no` on every entry. TTL0
+and the uint32 maximum are preserved. Only `name`, `type`, `ttl`, `disabled`,
+`match-subdomain`, optional `comment`, and the type's `address` or `cname` field are
+allowed. Even an empty regexp or other extra field blocks the whole source. Omitted
+defaults, disabled entries, FWD, NXDOMAIN and unsupported matching are never dropped
+or filled. An empty export does not compile to an empty replacement.
+
+The compiler reuses recordset validation for ASCII/A-label names, IP family/text and
+canonical sorting. Surrounding whitespace and wildcard owners/targets are refused.
+Repeated canonical owner/type keys are refused even with identical values; rows are
+not merged, deduplicated or assigned a winning TTL. A+AAAA at one owner is supported;
+CNAME coexistence, duplicates, self aliases and visible CNAME cycles are refused.
+External targets remain unresolved. Source order, decoded fields/comments and
+empty-versus-absent comments remain in the complete Preview.
+
+Result accessors return owned copies. Only a complete success exposes canonical
+Records, ContentJSON, ContentSHA256 and source-ordinal bindings aligned with those
+records. Records have no expiration; TTL is a cache lifetime, not an expiration time.
+No published lineage, revision, epoch or snapshot envelope is exposed. `CanApply()`
+and the retained Preview's `can_apply` remain false. The original-byte source hash
+and canonical content hash serve different purposes; neither authenticates a source
+or authorizes an import. Comments and source order affect provenance, not content hash.
+
+Invalid ruleset IDs fail with `ErrExactConfig` before reading input. Existing syntax,
+read and parser-limit failures return ParseError with no partial report. A semantic
+refusal returns `ErrNotExact` with the complete Preview and fixed source-located
+blockers. Target bounds return `ErrExactLimit`; unexpected final canonical rejection
+returns `ErrExactValidation`, with no candidate. Errors never echo source values.
+Blockers sort by ordinal/code, with at most one primary or conflict blocker per entry
+and one global blocker (bounded by `MaxCompileBlockers`, 8,193). Duplicate conflicts
+reference the first occurrence; CNAME cycle blockers identify only cycle members.
+No quadratic conflict-pair list or recursive chain walk is produced.
+
+The existing parser's byte/entry/token/command bounds and recordset's canonical output
+bounds apply. Callers own reader deadlines and concurrency limits. Success establishes
+only representation under this narrow profile, not complete export capture, RouterOS
+answer parity, policy migration or safe replacement of a live store. A mixed source
+containing even one regexp rule cannot yield a supported subset. Revision-checked
+apply and persistence of source annotations remain separate work.
+
 ## Validation
 
 ### Optional admin preview page
@@ -83,6 +131,13 @@ Run `go test ./internal/importers/routeros` for literal parsing, rejected expres
 escaping, comments, order, omissions, TTL boundaries and size limits. Run
 `go test ./internal/importers/routeros -fuzz FuzzParseNeverApplies -fuzztime 10s` for
 bounded parser fuzzing. Fixtures are synthetic and require no network or listener.
+
+The same package tests cover the exact compiler's fixed canonical golden, source
+provenance, copy ownership, whole-source refusals and maximum 4,096-entry chains,
+cycles and collisions. `go test ./internal/importers/routeros -fuzz
+FuzzCompileExactNeverReturnsPartialCandidate -fuzztime 10s` checks the compiler's
+no-partial-result invariant. The synthetic 141-entry test reproduces counts and an
+unnamed regexp only; it contains no private inventory and makes no migration claim.
 
 `node scripts/test-routeros-preview-state.cjs` tests bounded response validation and
 request generations. `scripts/test-routeros-preview-browser.cjs` requires an existing
