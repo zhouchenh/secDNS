@@ -53,6 +53,16 @@ func TestHumanSchema4Browser(t *testing.T) {
 	routes := h.routes()
 	var dropped atomic.Bool
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/__test-recovery-grant" && r.Method == "POST" {
+			grant, err := h.agent.store.CreateHumanGrant(true, time.Unix(seconds.Load(), 0))
+			if err != nil {
+				t.Error(err)
+				http.Error(w, "fixture grant failed", 500)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"grant": grant})
+			return
+		}
 		if r.URL.Path == "/__test-clock" {
 			if r.Method == "POST" {
 				if r.URL.Query().Get("expire") == "1" {

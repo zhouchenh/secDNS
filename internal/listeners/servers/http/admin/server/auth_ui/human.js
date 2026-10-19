@@ -76,7 +76,7 @@
   download.addEventListener("click",()=>{if(!recovery.value)return;const blob=new Blob([recovery.value+"\n"],{type:"text/plain"});const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download="secdns-recovery-codes.txt";a.click();setTimeout(()=>URL.revokeObjectURL(u),0);});
   const codesVisibility=new MutationObserver(()=>{download.hidden=recovery.hidden;});codesVisibility.observe(recovery,{attributes:true,attributeFilter:["hidden"]});
   card.append(security);
-  const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human)reset();humanWasActive=human;security.hidden=!human;audit.textContent="";audit.hidden=true;form.hidden=!security.hidden;title.textContent=security.hidden?"Sign in to secDNS":"Human account";currentPassword.value=currentCode.value=newPassword.value="";render();};
+  const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;audit.textContent="";audit.hidden=true;form.hidden=!security.hidden;title.textContent=security.hidden?"Sign in to secDNS":"Human account";currentPassword.value=currentCode.value=newPassword.value="";render();};
   window.addEventListener("agentconnected",sessionChanged);window.addEventListener("agentexpired",()=>{sessionChanged();if(!busy)reset();});
   window.addEventListener("pagehide",reset);
   const applyState=state=>{if(state?.human_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin){origin=state.public_origin;card.hidden=false;setupRequired=state.setup_required===true;mode.value=setupRequired?"setup":"login";render();}};
