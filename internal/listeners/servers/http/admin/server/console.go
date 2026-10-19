@@ -42,6 +42,9 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	if h.versioned != nil {
 		role = "Writer authority"
 	}
+	if h.recordGatewayEnabled() {
+		role = "Connected record authority"
+	}
 	if h.FollowerStatusOnly {
 		role = "Read-only follower"
 	}
@@ -52,6 +55,10 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><p class="console-label">ADMINISTRATION</p><nav aria-label="Administration">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>This instance only</span></div></aside>`
 	head := `<link rel="stylesheet" href="` + escaped + `/ui/console.css"><script defer src="` + escaped + `/ui/console.js"></script>`
 	data = bytes.Replace(data, []byte("</head>"), []byte(head+"</head>"), 1)
-	data = bytes.Replace(data, []byte("<body>"), []byte(`<body class="console-layout" data-console-page="`+active+`">`+sidebar), 1)
+	gateway := ""
+	if h.recordGatewayEnabled() {
+		gateway = ` data-record-gateway="true"`
+	}
+	data = bytes.Replace(data, []byte("<body>"), []byte(`<body class="console-layout" data-console-page="`+active+`"`+gateway+`>`+sidebar), 1)
 	return data
 }

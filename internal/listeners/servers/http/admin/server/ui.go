@@ -43,7 +43,7 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 		{"/style.css", "style.css", "text/css; charset=utf-8"},
 	}
 	folder := "ui/"
-	if h.versioned != nil {
+	if h.versioned != nil || h.recordGatewayEnabled() {
 		folder = "versioned_ui/"
 		assets = append(assets, struct{ route, file, contentType string }{"/state.js", "state.js", "text/javascript; charset=utf-8"})
 	}

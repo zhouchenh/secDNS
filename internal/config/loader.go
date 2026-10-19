@@ -134,6 +134,13 @@ func loadConfig(r io.Reader, strict bool) (core.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, listener := range config.Listeners {
+		if validator, ok := listener.(interface{ ValidateRecordGateway() error }); ok {
+			if err := validator.ValidateRecordGateway(); err != nil {
+				return nil, err
+			}
+		}
+	}
 	selected, err := bindListeners(data, config)
 	if err != nil {
 		return nil, err

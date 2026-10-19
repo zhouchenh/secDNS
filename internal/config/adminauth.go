@@ -173,6 +173,9 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 				return nil, adminauth.ErrInvalid
 			}
 		}
+		if h.RecordAuthorityURL != "" && origin == "" {
+			return nil, adminauth.ErrInvalid
+		}
 		used[n] = true
 		h.AgentAuthConfigured = true
 		out = append(out, authBinding{h, d, origin, rp, append([]string(nil), legacy...)})
@@ -204,8 +207,35 @@ func validateAdminAuthSyntax(raw []byte) error {
 	var listeners []json.RawMessage
 	if value, ok := root["listeners"]; ok && json.Unmarshal(value, &listeners) == nil {
 		for _, value := range listeners {
-			if _, e := authObject(value, map[string]bool{"authStore": true, "publicOrigin": true, "passkeyRPID": true}); e != nil {
+			entry, e := authObject(value, map[string]bool{"authStore": true, "publicOrigin": true, "passkeyRPID": true, "config": true})
+			if e != nil {
 				return e
+			}
+			if raw, ok := entry["config"]; ok {
+				var cfg map[string]json.RawMessage
+				if json.Unmarshal(raw, &cfg) == nil {
+					_, urlSet := cfg["recordAuthorityURL"]
+					_, tokenSet := cfg["recordAuthorityToken"]
+					_, fileSet := cfg["recordAuthorityTokenFile"]
+					if urlSet || tokenSet || fileSet {
+						if tokenSet == fileSet {
+							return adminauth.ErrInvalid
+						}
+						if _, e := authObject(raw, map[string]bool{"recordAuthorityURL": true, "recordAuthorityToken": true, "recordAuthorityTokenFile": true}); e != nil {
+							return e
+						}
+						credentialKey := "recordAuthorityToken"
+						if fileSet {
+							credentialKey = "recordAuthorityTokenFile"
+						}
+						for _, key := range []string{"recordAuthorityURL", credentialKey} {
+							var text string
+							if json.Unmarshal(cfg[key], &text) != nil || text == "" {
+								return adminauth.ErrInvalid
+							}
+						}
+					}
+				}
 			}
 		}
 	}
