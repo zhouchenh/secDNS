@@ -150,6 +150,9 @@ func (h *HTTPAdminServer) handleSnapshot(w http.ResponseWriter, r *http.Request)
 	}
 	setOperatorSuppliedProvenanceHeaders(w, provenance, hasProvenance)
 	w.Header().Set("ETag", etag)
+	if h.versioned.SupportsRRsetMutations() {
+		w.Header().Set("SecDNS-RRset-Mutations", "v1")
+	}
 	if snapshotNotModified(r.Header.Values("If-None-Match"), etag) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusNotModified)

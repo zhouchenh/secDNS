@@ -96,3 +96,25 @@ const protectedState = JSON.stringify(m);
 S.comparisonRows(m.base.records,m.draft,m.current.records).filter(r=>r.changed).reverse().forEach(r=>{if(r.draft)r.draft.values.push('display-only');});
 assert.equal(JSON.stringify(m),protectedState);
 console.log('Versioned editor state tests passed.');
+
+// Capability-driven one-RRset review and frozen transport semantics.
+for(const capability of [null,'unknown','v1']) {
+ const x=new S.Model();x.accept(snapshot('9007199254740993',[record]),null,capability);
+ x.stage({...record,values:['new','new']},S.key(record));
+ const review=x.review('http://127.0.0.1/snapshot');const p=x.freeze('single','http://127.0.0.1/snapshot',review),wire=JSON.parse(p.body);
+ assert.equal(p.mode,capability==='v1'?'rrset':'replacement');
+ if(capability==='v1'){assert.equal(p.endpoint,'http://127.0.0.1/snapshot/rrset');assert.equal(wire.action,'upsert');assert.equal(wire.record.ttl_seconds,0);assert.deepEqual(wire.record.values,['new','new']);assert.equal(wire.record.expires_at,record.expires_at);assert.equal(wire.records,undefined);}
+ x.uncertain();x.accept(snapshot('9007199254740994',[record]),null,null);assert.equal(x.pending,p);assert.equal(x.pending.body,p.body);assert.equal(x.pending.endpoint,p.endpoint);assert.equal(x.pending.operationID,'single');
+}
+for(const operation of ['add','delete','multi','zero']) {
+ const x=new S.Model();x.accept(snapshot('1',[record]),null,'v1');
+ if(operation==='add'||operation==='multi')x.stage({...record,name:'other.invalid.'});
+ if(operation==='delete'||operation==='multi')x.remove(S.key(record));
+ const proposal=x.proposal('/snapshot');assert.equal(proposal.mode,['add','delete'].includes(operation)?'rrset':'replacement');
+ if(operation==='delete')assert.deepEqual(proposal.payload,{action:'delete',key:{name:record.name,type:record.type}});
+}
+{
+ const x=new S.Model();x.accept(snapshot('1',[record]),null,'v1');x.stage({...record,values:['new']},S.key(record));const review=x.review('/snapshot');x.rrsetCapability=null;assert.throws(()=>x.freeze('reviewed','/snapshot',review),/review_changed/);assert.equal(x.pending,null);
+ x.rrsetCapability='v1';x.draftProvenance={editCounter:-1};assert.equal(x.proposal('/snapshot').mode,'replacement','edited import remains full atomic proposal');
+}
+console.log('Conditional RRset editor state tests passed.');

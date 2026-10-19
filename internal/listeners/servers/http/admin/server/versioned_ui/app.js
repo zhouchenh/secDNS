@@ -47,6 +47,8 @@
     revision_conflict:"The server changed since your base revision. Compare snapshots, then explicitly discard/reload and manually re-enter desired edits.",
     identity_conflict:"The server identity or lineage differs. Writing is blocked. Clear local work only after reviewing it, then reconnect explicitly.",
     operation_conflict:"This operation ID conflicts with another request. The frozen attempt is preserved; no replacement ID was generated.",
+    rrset_schema_required:"This store no longer supports targeted edits. Your draft is preserved; reconcile and review explicitly. No replacement was sent.",
+    review_changed:"The reviewed proposal changed. Review it again before applying.",
     operator_provenance_unavailable:"This store has not been explicitly migrated for operator-supplied provenance. Nothing was changed.",
     receipt_capacity:"The operation receipt ledger is full. Operator intervention is required.",
     revision_exhausted:"The revision range is exhausted. Operator intervention is required.",
@@ -54,7 +56,7 @@
     authentication:"Authentication failed. Reconnect with a token; local work and pending recovery are preserved.",
     stale_snapshot_response:"An older snapshot response was ignored. Fetch current state again.",
     duplicate_record:"That name and type already exist in the draft. Edit the existing row.",
-    reconciliation_required:"Stage unfinished fields and reconcile current state before preparing another replacement.",
+    reconciliation_required:"Stage unfinished fields and reconcile current state before preparing another operation.",
     uncertain:"The operation outcome is uncertain. Retry only the same frozen operation; disconnecting does not roll it back.",
     invalid_snapshot_response:"The server returned an invalid snapshot. Local work is preserved.",
     handoff_reconciliation_required:"Exact candidate not transferred. Finish, apply or explicitly discard existing local work first.",
@@ -115,30 +117,30 @@
       tr.append(info);for(const text of [record.type,record.ttl_seconds+" s"]){const td=document.createElement("td");td.textContent=text;tr.append(td);}
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";
       change.addEventListener("click",()=>{if(!locked()) edit(record);});
-      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}if(confirm("Stage deletion of "+record.name+" · "+record.type+"? Nothing is sent until the complete replacement is confirmed.")){model.remove(S.key(record));if(selected===S.key(record))edit(null,true);render();}});
+      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}if(confirm("Stage deletion of "+record.name+" · "+record.type+"? Nothing is sent until the reviewed operation is confirmed.")){model.remove(S.key(record));if(selected===S.key(record))edit(null,true);render();}});
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
     $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No draft records match this filter.":"The draft is empty.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
-  async function request(method, body) {
+  async function request(method, body, target = endpoint.href) {
     const captured=epoch, controller=new AbortController();requests.add(controller);const timeout=setTimeout(()=>controller.abort(),30000);
     try {
-      const response=await fetch(endpoint.href,{method,headers:{...(window.secDNSAgent?.headers(token,method)||{Authorization:"Bearer "+token}),...(body?{"Content-Type":"application/json"}:{})},body,credentials:window.secDNSAgent?.credentials()||"omit",cache:"no-store",redirect:"error",signal:controller.signal});
+      const response=await fetch(target,{method,headers:{...(window.secDNSAgent?.headers(token,method)||{Authorization:"Bearer "+token}),...(body?{"Content-Type":"application/json"}:{})},body,credentials:window.secDNSAgent?.credentials()||"omit",cache:"no-store",redirect:"error",signal:controller.signal});
       if(captured!==epoch)throw new DOMException("Disconnected","AbortError");
       // Authentication status is authoritative even if the response body is broken.
       if(response.status===401||response.status===403){const error=new Error("authentication");error.status=response.status;throw error;}
       let data;try{data=await response.json();}catch{throw new Error("unexpected_response");}
       if(captured!==epoch)throw new DOMException("Disconnected","AbortError");
-      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
+      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable","rrset_schema_required"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
       const names=["SecDNS-Operator-Provenance-Profile","SecDNS-Operator-Provenance-Source-SHA256","SecDNS-Operator-Provenance-Content-SHA256"],present=names.map(name=>response.headers.has(name));
       let provenance=null;if(present.some(Boolean)){if(!present.every(Boolean))throw new Error("unexpected_response");provenance={profile:response.headers.get(names[0]),source_sha256:response.headers.get(names[1]),content_sha256:response.headers.get(names[2])};if(!S.operatorProvenance(provenance))throw new Error("unexpected_response");}
-      return {data,provenance};
+      return {data,provenance,rrsetCapability:response.headers.get("SecDNS-RRset-Mutations")};
     } finally {clearTimeout(timeout);requests.delete(controller); }
   }
   async function fetchCurrent() {
     const id=++getID, captured=epoch;
-    try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(result.data,result.provenance);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
+    try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(result.data,result.provenance,result.rrsetCapability);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
     catch(e){if(captured===epoch&&id===getID){model.fresh=false;if(e.message==="authentication"){disconnect(false);status(message(e),"error");}render();throw e;}return false;}
   }
   function disconnect(show=true) {
@@ -182,22 +184,22 @@
     e.preventDefault();if(locked())return;
     const record={name:$("name").value,type:$("type").value,values:[...$("values").querySelectorAll("textarea")].map(v=>v.value),ttl_seconds:Number($("ttl").value)};
     if($("expiry-mode").value==="absolute")record.expires_at=$("expiry").value;
-    try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the complete replacement before sending.","success");}catch(error){status(message(error),"error");}
+    try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the proposal before sending.","success");}catch(error){status(message(error),"error");}
   });
   $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Current snapshot fetched. The operation outcome is still uncertain; retry the same operation.":model.pending?.status==="acknowledged"?"Saved; newer local edits require reconciliation.":"Current snapshot fetched. Your staged and unfinished edits were preserved.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
   $("clear").addEventListener("click",()=>{if(confirm("Clear all local drafts, pending request identity and receipt, then disconnect? This cannot cancel or undo any server operation. Closing or reloading also loses this recovery information.")){disconnect(false);model.clear();edit(null,true);render();status("Local work cleared. Reconnect explicitly to load a server snapshot.");}});
-  $("review").addEventListener("click",()=>{if($("review").disabled)return;reviewedEdit=model.edits;const d=S.changes(model.base.records,model.draft);$("review-description").textContent=`${window.secDNSAgent?.active ? (window.secDNSAgent.kind==="human"?"Human ":"Agent ") + window.secDNSAgent.name + ": " : "Legacy administrator: "}Base revision ${model.base.revision}: ${d.added} added, ${d.changed} changed, ${d.removed} removed. ${model.draft.length} total record sets will be submitted.`;$("review-dialog").showModal();});
+  $("review").addEventListener("click",()=>{if($("review").disabled)return;reviewedEdit=model.review(endpoint.href);const proposal=model.proposal(endpoint.href);$("review-title").textContent=proposal.mode==="rrset"?"Apply one record change?":"Replace the complete snapshot?";$("review-scope").textContent=proposal.mode==="rrset"?`${proposal.change}: ${proposal.name} / ${proposal.type}. Only this RRset changes; other records remain. A global revision conflict still requires reconciliation.`:"All records, including retained expired records, are included. The server checks the base revision before committing.";$("review-confirm").textContent=proposal.mode==="rrset"?"Apply record change":"Apply replacement";const d=S.changes(model.base.records,model.draft);$("review-description").textContent=`${window.secDNSAgent?.active ? (window.secDNSAgent.kind==="human"?"Human ":"Agent ") + window.secDNSAgent.name + ": " : "Legacy administrator: "}Base revision ${model.base.revision}: ${d.added} added, ${d.changed} changed, ${d.removed} removed. ${proposal.mode==="rrset"?"One RRset operation":model.draft.length+" total record sets"} will be submitted.`;$("review-dialog").showModal();});
   $("review-cancel").addEventListener("click",()=>$("review-dialog").close());
   $("review-dialog").addEventListener("cancel",e=>{if(busy)e.preventDefault();});
   async function send(retry) {
     if(busy||!connected||(window.secDNSAgent && !window.secDNSAgent.allows("records:write")))return;
-    if(!retry){if(reviewedEdit!==model.edits){status("The draft changed. Review it again.","error");return;}try{if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));const id=Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");model.freeze(id,endpoint.href);}catch(e){status(message(e),"error");return;}}
+    if(!retry){if(reviewedEdit!==model.review(endpoint.href)){status("The draft changed. Review it again.","error");return;}try{if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));const id=Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");model.freeze(id,endpoint.href,reviewedEdit);}catch(e){status(message(e),"error");return;}}
     else if(model.pending?.status!=="uncertain")return;
-    const pending=model.pending,captured=epoch;pending.status="sending";getID++;busy=true;controls();$("review-dialog").close();status("Submitting the frozen replacement…");
+    const pending=model.pending,captured=epoch;pending.status="sending";getID++;busy=true;controls();$("review-dialog").close();status("Submitting the frozen operation…");
     try{
-      const result=await request("POST",pending.body);if(captured!==epoch)return;model.acknowledge(result.data,result.provenance);render();
-      try{await fetchCurrent();if(captured===epoch)status(model.pending?"Saved; newer local edits require reconciliation.":"Replacement acknowledged and latest saved records loaded.","success");}
+      const result=await request("POST",pending.body,pending.endpoint);if(captured!==epoch)return;model.acknowledge(result.data,result.provenance);render();
+      try{await fetchCurrent();if(captured===epoch)status(model.pending?"Saved; newer local edits require reconciliation.":"Operation acknowledged and latest saved records loaded.","success");}
       catch(e){if(captured===epoch)status("Saved; current state could not be loaded. The receipt and draft are retained. Fetch current before another proposal.","error");}
     }catch(e){if(captured!==epoch)return;if(e.definitive){pending.status="rejected";model.fresh=false;if(e.message==="identity_conflict")model.identityBlocked=true;status(message(e),"error");}else{model.uncertain();status(message(e)+" "+messages.uncertain,"error");}if(e.message==="authentication")disconnect(false);}
     finally{if(captured===epoch){busy=false;render();}}

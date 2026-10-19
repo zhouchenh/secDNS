@@ -56,7 +56,7 @@
   }
   class Model {
     constructor() { this.clear(); }
-    clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = this.currentProvenance = this.receiptProvenance = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
+    clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = this.currentProvenance = this.receiptProvenance = null; this.rrsetCapability = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
     dirty() { const d = this.base && changes(this.base.records, this.draft); return this.formDirty || !!(d && (d.added || d.changed || d.removed)); }
     touch() { this.edits++; this.formDirty = true; }
     stage(record, oldKey = null) {
@@ -75,11 +75,11 @@
       this.draft = clone(handoff.content.records); this.formDirty = false; this.edits++;
       this.draftProvenance = Object.freeze({profile:handoff.profile,rulesetID:handoff.content.ruleset_id,sourceSHA256:handoff.source_sha256,contentSHA256:handoff.content_sha256,transferredAt:handoff.issued_at_ms,editCounter:this.edits});
     }
-    accept(s, provenance = null) {
+    accept(s, provenance = null, rrsetCapability = null) {
       if (!envelope(s) || provenance !== null && !operatorProvenance(provenance,s.content_sha256)) throw new Error("invalid_snapshot_response");
       if (this.base && identity(s) !== identity(this.base)) { this.identityBlocked = true; this.fresh = false; throw new Error("identity_conflict"); }
       if (this.observed && compare(s.revision, this.observed) < 0) throw new Error("stale_snapshot_response");
-      this.current = clone(s); this.currentProvenance = provenance === null ? null : clone(provenance); this.observed = s.revision; this.fresh = true;
+      this.rrsetCapability = rrsetCapability === "v1" ? "v1" : null; this.current = clone(s); this.currentProvenance = provenance === null ? null : clone(provenance); this.observed = s.revision; this.fresh = true;
       if (!this.base) this.adopt();
       else if (this.pending?.status === "acknowledged" && this.receipt && compare(s.revision, this.receipt.revision) >= 0 && this.edits === this.pending.editCounter) this.adopt();
       return s;
@@ -88,18 +88,33 @@
       if (!this.current || this.identityBlocked || this.pending && ["sending", "uncertain"].includes(this.pending.status)) throw new Error("reconciliation_required");
       this.base = clone(this.current); this.draft = clone(this.current.records); this.pending = this.draftProvenance = null; this.formDirty = false; this.edits++; this.fresh = true;
     }
-    freeze(operationID, endpoint) {
+    proposal(endpoint) {
+      const expected = this.base && {ruleset_id:this.base.ruleset_id,lineage_id:this.base.lineage_id,revision:this.base.revision};
+      const changed = comparisonRows(this.base?.records || [],this.draft).filter(r => r.localChange !== "unchanged");
+      if (this.rrsetCapability === "v1" && !this.draftProvenance && changed.length === 1) {
+        const row=changed[0], record=row.draft || row.base;
+        return {mode:"rrset",endpoint:endpoint+"/rrset",expected,editCounter:this.edits,change:row.localChange,name:record.name,type:record.type,
+          payload:row.draft ? {action:"upsert",record:clone(row.draft)} : {action:"delete",key:{name:row.base.name,type:row.base.type}}};
+      }
+      const payload={records:clone(this.draft)};
+      if(this.draftProvenance && this.edits===this.draftProvenance.editCounter) payload.operator_supplied_provenance={profile:this.draftProvenance.profile,source_sha256:this.draftProvenance.sourceSHA256,content_sha256:this.draftProvenance.contentSHA256};
+      return {mode:"replacement",endpoint,expected,editCounter:this.edits,payload};
+    }
+    review(endpoint) { return JSON.stringify(this.proposal(endpoint)); }
+    freeze(operationID, endpoint, reviewed = null) {
       if (!this.base || !this.fresh || this.identityBlocked || this.pending || this.formDirty || !this.dirty() || !idValid(operationID)) throw new Error("reconciliation_required");
       if (!recordsValid(this.draft)) throw new Error("invalid_snapshot_request");
       increment(this.base.revision);
-      const expected = {ruleset_id:this.base.ruleset_id, lineage_id:this.base.lineage_id, revision:this.base.revision};
-      const replacement = {expected, operation_id:operationID, records:this.draft};
-      if (this.draftProvenance && this.edits === this.draftProvenance.editCounter) replacement.operator_supplied_provenance = {profile:this.draftProvenance.profile,source_sha256:this.draftProvenance.sourceSHA256,content_sha256:this.draftProvenance.contentSHA256};
+      const proposal=this.proposal(endpoint);
+      if(reviewed !== null && reviewed !== JSON.stringify(proposal)) throw new Error("review_changed");
+      const expected=proposal.expected;
+      const replacement={expected,operation_id:operationID,...proposal.payload};
+      endpoint=proposal.endpoint;
       const body = JSON.stringify(replacement);
       if (bytes(body) > LIMIT) throw new Error("snapshot_too_large");
       this.pending = {status:"sending"};
       const submittedProvenance = replacement.operator_supplied_provenance ? Object.freeze(clone(replacement.operator_supplied_provenance)) : null;
-      for (const [k,v] of Object.entries({endpoint, expected:Object.freeze(expected), operationID, body, editCounter:this.edits,operatorSuppliedProvenance:submittedProvenance})) Object.defineProperty(this.pending,k,{value:v,enumerable:true});
+      for (const [k,v] of Object.entries({endpoint, mode:proposal.mode, expected:Object.freeze(expected), operationID, body, editCounter:this.edits,operatorSuppliedProvenance:submittedProvenance})) Object.defineProperty(this.pending,k,{value:v,enumerable:true});
       return this.pending;
     }
     acknowledge(r, provenance = null) {
