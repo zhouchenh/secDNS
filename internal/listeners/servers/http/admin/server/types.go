@@ -50,8 +50,12 @@ type HTTPAdminServer struct {
 	FollowerStatusOnly  bool   // explicit status-only listener; never binds a record store
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
-	SourcePolicyExplain bool
-	SnapshotReaders     []SnapshotReader
+	SourcePolicyExplain       bool
+	SnapshotReaders           []SnapshotReader
+	RecordAuthorityURL        string // optional fixed loopback gateway base; local identity remains local
+	RecordAuthorityToken      string // server-side upstream credential, never sent to browsers
+	RecordAuthorityTokenFile  string // existing private credential; alternative to inline token
+	recordAuthorityCredential string
 
 	store                *recordstore.Store
 	versioned            *recordstore.VersionedStore
@@ -164,6 +168,19 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		if h.UI {
 			h.consoleRoutes(mux, base)
 			h.followerOnlyUIRoutes(mux, base)
+		}
+		return mux
+	}
+	if h.recordGatewayEnabled() {
+		if h.ValidateRecordGateway() != nil || h.agent == nil || h.agent.origin == "" {
+			return mux
+		}
+		h.agentRoutes(mux, base)
+		h.recordGatewayRoutes(mux, base)
+		if h.UI {
+			h.consoleRoutes(mux, base)
+			h.routerOSPreviewRoutes(mux, base)
+			h.editorRoutes(mux, base)
 		}
 		return mux
 	}
@@ -551,6 +568,9 @@ func init() {
 					descriptor.DefaultValue{Value: ""},
 				},
 			},
+			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityURL"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityURL"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
+			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityToken"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityToken"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
+			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityTokenFile"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityTokenFile"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"SnapshotReaders"},
 				ValueSource: descriptor.ValueSources{

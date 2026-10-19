@@ -102,7 +102,7 @@
   function render() {
     $("workspace").hidden = !model.base;
     $("connection").textContent = connected ? "Connected · snapshot API" : "Disconnected";
-    $("disconnect").hidden = !connected; $("login").hidden = connected;
+    $("disconnect").hidden = !connected; $("login").hidden = connected || document.body.dataset.recordGateway === "true";
     $("base-version").textContent = "Base revision " + (model.base?.revision || "—");
     $("current-version").textContent = "Observed current " + (model.current?.revision || "—");
     const diff = S.changes(model.base?.records || [], model.draft);

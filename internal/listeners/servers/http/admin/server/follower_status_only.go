@@ -13,12 +13,15 @@ func (h *HTTPAdminServer) ValidateFollowerStatusOnly() error {
 	if !h.FollowerStatusOnly {
 		return nil
 	}
-	if len(h.followerStatusNames) == 0 || h.Store != "" || len(h.SnapshotReaders) > 0 || h.SourcePolicyExplain || h.store != nil || h.versioned != nil {
+	if h.recordGatewayEnabled() || len(h.followerStatusNames) == 0 || h.Store != "" || len(h.SnapshotReaders) > 0 || h.SourcePolicyExplain || h.store != nil || h.versioned != nil {
 		return ErrFollowerStatusOnly
 	}
 	return nil
 }
 func (h *HTTPAdminServer) prepareRecordBinding() error {
+	if h.recordGatewayEnabled() {
+		return h.prepareRecordGateway()
+	}
 	if h.FollowerStatusOnly {
 		if err := h.ValidateFollowerStatusOnly(); err != nil {
 			return err
