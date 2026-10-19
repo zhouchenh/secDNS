@@ -64,6 +64,9 @@ func (h *HumanAuth) digest(value string) [32]byte {
 	return h.store.digest("human-ceremony:" + value)
 }
 func (h *HumanAuth) add(p *humanCeremony, now time.Time) (string, error) {
+	if e := h.store.mfaEligible(p.source, now); e != nil {
+		return "", e
+	}
 	for k, v := range h.pending {
 		if !now.Before(v.expires) {
 			clear(v.seed)
@@ -312,7 +315,7 @@ func (h *HumanAuth) confirm(challenge, code, source string, now time.Time, recen
 	if h.closed {
 		return HumanResult{}, ErrUnavailable
 	}
-	if e := h.store.rateAttempt(source, now); e != nil {
+	if e := h.store.rateAttemptMFA(source, now); e != nil {
 		return HumanResult{}, e
 	}
 	d, p, e := h.ceremony(challenge, source, now)

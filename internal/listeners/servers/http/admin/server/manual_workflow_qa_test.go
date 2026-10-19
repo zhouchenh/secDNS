@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"github.com/zhouchenh/secDNS/internal/recordset"
 	"github.com/zhouchenh/secDNS/internal/recordstore"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -77,7 +79,25 @@ func TestManualWorkflowQA(t *testing.T) {
 	if _, e = h.agent.human.Confirm(owner.Challenge, gatewayOTP(t, owner.Secret, now), "127.0.0.1", now); e != nil {
 		t.Fatal(e)
 	}
-	portal := httptest.NewUnstartedServer(h.routes())
+	routes := h.routes()
+	// Make the disposable identity unmistakable without changing production UI
+	// or exposing the synthetic password/seed in public markup.
+	portal := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/admin/auth/human.js" {
+			routes.ServeHTTP(w, r)
+			return
+		}
+		recorded := httptest.NewRecorder()
+		routes.ServeHTTP(recorded, r)
+		for name, values := range recorded.Header() {
+			w.Header()[name] = values
+		}
+		w.Header().Del("Content-Length")
+		w.WriteHeader(recorded.Code)
+		body := strings.ReplaceAll(recorded.Body.String(), "Enter your username and password to continue.", "Disposable QA account: qa-owner. Use the separate synthetic password, not your real account.")
+		body = strings.ReplaceAll(body, "Sign in to secDNS", "Sign in to disposable secDNS QA")
+		w.Write([]byte(body))
+	}))
 	h.agent.origin = "https://" + portal.Listener.Addr().String()
 	portal.StartTLS()
 	defer portal.Close()
