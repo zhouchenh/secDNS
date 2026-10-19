@@ -3,6 +3,7 @@
   const S=globalThis.RouterOSPreview, $=id=>document.getElementById(id), gate=new S.Gate();
   const endpoint=new URL("../../import/routeros/preview",document.currentScript.src);
   const editorPath=new URL("../",location.href).pathname,handoff=S.handoffConfig(location.hash,editorPath);
+  if(handoff?.rulesetID)$("ruleset").value=handoff.rulesetID;
   if(endpoint.origin!==location.origin)throw new Error("Invalid preview origin");
   if(location.hash)history.replaceState(null,"",location.pathname+location.search);
   $("endpoint").textContent=endpoint.origin+endpoint.pathname;

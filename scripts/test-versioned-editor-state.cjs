@@ -118,3 +118,21 @@ for(const operation of ['add','delete','multi','zero']) {
  x.rrsetCapability='v1';x.draftProvenance={editCounter:-1};assert.equal(x.proposal('/snapshot').mode,'replacement','edited import remains full atomic proposal');
 }
 console.log('Conditional RRset editor state tests passed.');
+
+// Typed draft assistance must reject before mutating the draft, retaining unfinished fields.
+const typed={name:'files.invalid.',type:'AAAA',values:['2001:db8::1'],ttl_seconds:0};
+const validationModel=new S.Model();validationModel.accept(snapshot('1',[typed]));validationModel.touch();
+const typedBefore=JSON.stringify(validationModel.draft);
+assert.throws(()=>validationModel.stage({...typed,values:['invalid-ipv6']},S.key(typed)),e=>e.issue.field==='values');
+assert.equal(JSON.stringify(validationModel.draft),typedBefore);assert.equal(validationModel.formDirty,true);assert.equal(validationModel.pending,null);
+for(const value of ['::','::1','2001:db8::1','1:2:3:4:5:6:7:8','::192.0.2.1'])assert.equal(S.draftIssue({...typed,values:[value]}),null,value);
+for(const value of ['invalid-ipv6','1::2::3','1:2:3:4:5:6:7','::ffff:192.0.2.1','fe80::1%eth0','[::1]'])assert.ok(S.draftIssue({...typed,values:[value]}),value);
+for(const value of ['192.0.2.1','::ffff:192.0.2.1'])assert.equal(S.draftIssue({...typed,type:'A',values:[value]}),null,value);
+for(const value of ['192.168.001.1','999.1.2.3','1.2.3','0x7f000001','::1'])assert.ok(S.draftIssue({...typed,type:'A',values:[value]}),value);
+assert.ok(S.draftIssue({...typed,values:['::1','0:0:0:0:0:0:0:1']}));
+assert.ok(S.draftIssue({...typed,type:'CNAME',values:['target.invalid.']},[typed]));
+assert.ok(S.draftIssue({...typed,name:'other.invalid.'},[typed,{...typed,name:'other.invalid.'}],S.key(typed)));
+assert.equal(S.draftIssue({...typed,type:'TXT',values:['','same','same'],ttl_seconds:0}),null);
+for(const name of ['_service._tcp.invalid.','*.invalid.','.'])assert.equal(S.draftIssue({...typed,name}),null);
+for(const name of ['x..invalid','a'.repeat(64)+'.invalid','bad name.invalid','escaped\\.invalid'])assert.ok(S.draftIssue({...typed,name}));
+console.log('Typed draft validation and unchanged-draft tests passed.');

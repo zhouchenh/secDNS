@@ -54,6 +54,46 @@
         changed:localChange !== "unchanged" || serverChange !== "unavailable" && serverChange !== "unchanged"};
     });
   }
+  // Draft assistance only: the server remains the canonical DNS parser and commit authority.
+  function dnsName(value) {
+    const name = value.trim().toLowerCase();
+    if (!name || /[^\x21-\x7e]|\\/.test(name)) return null;
+    const fqdn = name.endsWith(".") ? name : name + ".";
+    if (fqdn.length > 255) return null;
+    if (fqdn !== "." && fqdn.slice(0,-1).split(".").some(label => !label.length || label.length > 63)) return null;
+    return fqdn;
+  }
+  function ipv4(value) {
+    const parts=value.split(".");
+    return parts.length===4 && parts.every(p=>/^(0|[1-9][0-9]{0,2})$/.test(p)&&Number(p)<=255) ? parts.map(Number) : null;
+  }
+  function ipValue(value) {
+    value=value.trim(); const v4=ipv4(value); if(v4)return {family:4,key:v4.join(".")};
+    if(!value.includes(":") || /[^0-9a-fA-F:.]/.test(value))return null;
+    if(value.includes(".")) { const at=value.lastIndexOf(":"),tail=ipv4(value.slice(at+1));if(!tail)return null;value=value.slice(0,at+1)+((tail[0]<<8)|tail[1]).toString(16)+":"+((tail[2]<<8)|tail[3]).toString(16); }
+    const halves=value.split("::");if(halves.length>2)return null;
+    const left=halves[0]?halves[0].split(":"):[],right=halves.length===2&&halves[1]?halves[1].split(":"):[];
+    if([...left,...right].some(p=>! /^[0-9a-fA-F]{1,4}$/.test(p)))return null;
+    const n=left.length+right.length;if(halves.length===1?n!==8:n>=8)return null;
+    const words=[...left.map(p=>parseInt(p,16)),...Array(halves.length===2?8-n:0).fill(0),...right.map(p=>parseInt(p,16))];
+    if(words.slice(0,5).every(n=>n===0)&&words[5]===65535)return {family:4,key:[words[6]>>8,words[6]&255,words[7]>>8,words[7]&255].join(".")};
+    return {family:6,key:words.join(":")};
+  }
+  function draftIssue(record, records=[], oldKey=null) {
+    const issue=(field,text,index)=>({field,text,index});
+    if(!recordsValid([record]))return issue("name","Check the record fields, value limits, TTL and expiration.");
+    const name=dnsName(record.name);if(!name)return issue("name","Enter a DNS name with labels of at most 63 characters, using unescaped ASCII.");
+    const seen=new Set();
+    if(record.type==="CNAME"&&record.values.length!==1)return issue("values","A CNAME record must have exactly one destination.",0);
+    for(let i=0;i<record.values.length;i++){
+      const value=record.values[i];let canonical=value;
+      if(record.type==="A"||record.type==="AAAA") {const ip=ipValue(value);if(!ip||ip.family!==(record.type==="A"?4:6))return issue("values",record.type==="A"?"Enter a valid IPv4 address (for example, 192.0.2.10).":"Enter a valid IPv6 address (for example, 2001:db8::10). IPv4-mapped addresses belong in A records.",i);canonical=ip.key;}
+      if(record.type==="CNAME"){canonical=dnsName(value);if(!canonical)return issue("values","Enter a valid DNS destination name.",i);}
+      if(record.type!=="TXT"&&seen.has(canonical))return issue("values","Remove the duplicate value.",i);seen.add(canonical);
+    }
+    for(const other of records){if(oldKey&&key(other)===oldKey)continue;if(dnsName(other.name)!==name)continue;if(other.type===record.type)return issue("name","That name and type already exist. Edit the existing record.");if(other.type==="CNAME"||record.type==="CNAME")return issue("name","A CNAME cannot share its name with another record. Remove the conflicting record first.");}
+    return null;
+  }
   class Model {
     constructor() { this.clear(); }
     clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = this.currentProvenance = this.receiptProvenance = null; this.rrsetCapability = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
@@ -63,7 +103,7 @@
       if (this.pending) throw new Error("pending_operation");
       const found = this.draft.findIndex(r => key(r) === (oldKey || key(record)));
       if (found >= 0 && !oldKey) throw new Error("duplicate_record");
-      if (!recordsValid([record])) throw new Error("invalid_snapshot_request");
+      const issue = draftIssue(record,this.draft,oldKey); if(issue) throw Object.assign(new Error("invalid_record"),{issue});
       if (found >= 0) this.draft[found] = clone(record); else this.draft.push(clone(record));
       this.edits++; this.formDirty = false;
     }
@@ -127,6 +167,6 @@
     }
     uncertain() { if (this.pending && this.pending.status !== "acknowledged") this.pending.status = "uncertain"; this.fresh = false; }
   }
-  const api = {Model, compare, revision, increment, recordsValid, envelope, operatorProvenance, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
+  const api = {draftIssue, Model, compare, revision, increment, recordsValid, envelope, operatorProvenance, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.SnapshotEditor = api;
 })(globalThis);
