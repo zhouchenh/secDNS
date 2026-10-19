@@ -26,7 +26,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     assert.deepEqual(await comparison('literal.invalid.').locator('.comparison-values code').allTextContents(),[JSON.stringify('<img src=x onerror="alert(1)">')]);
     await submit();await status('acknowledged and latest');
     assert.equal(await page.locator('tbody img').count(),0);
-    await page.getByRole('button',{name:'Edit',exact:true}).click();
+    await page.getByRole('button',{name:/^Edit /}).click();
     await page.getByLabel('Record value',{exact:true}).fill('');await page.locator('#add-value').click();await page.getByLabel('Record value',{exact:true}).nth(1).fill('same');await page.locator('#add-value').click();await page.getByLabel('Record value',{exact:true}).nth(2).fill('same');
     await page.locator('#expiry-mode').selectOption('absolute');await page.locator('#expiry').fill('2000-01-01T00:00:00.123456789Z');await page.locator('#stage').click();
     const literalDraft=comparison('literal.invalid.').locator('.comparison-version').nth(1);
@@ -122,7 +122,7 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     await page.route(api,async route=>{if(route.request().method()==='POST'){receiptBody=route.request().postData();const response=await route.fetch();assert.equal(response.status(),200);await route.fulfill({status:200,json:{operation_id:'wrong',revision:3}});}else await route.continue();});
     await page.locator('#review').click();const countBefore=posts.length;await page.locator('#review-confirm').evaluate(button=>{button.click();button.click();});await status('outcome is uncertain');assert.equal(posts.length,countBefore+1);await page.unroute(api);await page.locator('#retry').click();await status('acknowledged and latest');assert.equal(posts.at(-1),receiptBody);
     // Delete is staged and explicitly confirmed, then full replacement is reviewed.
-    await page.locator('#rows tr').filter({hasText:'unavailable.invalid.'}).getByRole('button',{name:'Delete',exact:true}).click();assert.equal(await page.locator('#rows tr').filter({hasText:'unavailable.invalid.'}).count(),0);await submit();await status('acknowledged and latest');
+    await page.locator('#rows tr').filter({hasText:'unavailable.invalid.'}).getByRole('button',{name:/^Delete /}).click();assert.equal(await page.locator('#rows tr').filter({hasText:'unavailable.invalid.'}).count(),0);await submit();await status('acknowledged and latest');
     assert.deepEqual(await page.evaluate(()=>({local:localStorage.length,session:sessionStorage.length,cookies:document.cookie})),{local:0,session:0,cookies:''});assert.equal(await page.locator('#token').inputValue(),'');assert.deepEqual(errors,[]);
     // Identity changes cannot be adopted merely by refreshing or changing revision.
     await stage('identity-draft.invalid.','preserve');await page.route(api,route=>route.request().method()==='POST'?route.fulfill({status:409,json:{error:'identity_conflict'}}):route.continue());await submit();await status('identity or lineage differs');assert.equal(await page.locator('#adopt').isDisabled(),true);assert.equal(await page.locator('#review').isDisabled(),true);await page.unroute(api);

@@ -97,6 +97,8 @@
     $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);
     $("expiry-mode").value = record?.expires_at ? "absolute" : "permanent"; $("expiry").value = record?.expires_at || ""; controls();
   }
+  window.addEventListener("beforeunload",event=>{if(model.dirty()||model.pending){event.preventDefault();event.returnValue="";}});
+  $("record-type-filter").addEventListener("change",render);
   function render() {
     $("workspace").hidden = !model.base;
     $("connection").textContent = connected ? "Connected · snapshot API" : "Disconnected";
@@ -108,14 +110,15 @@
     $("receipt").textContent = model.receipt ? "Acknowledged operation " + model.receipt.operation_id + " at revision " + model.receipt.revision + " · " + model.receipt.committed_at + ". This receipt is not a current-state snapshot." : "";
     const origin=model.draftProvenance;$("draft-provenance").textContent=origin?"Operator-supplied strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"unchanged after transfer; the tuple will be submitted":"locally edited; the original tuple will not be submitted")+". The source and profile are not authenticated by the snapshot server.":"";
     $("count").textContent = String(model.draft.length); $("rows").replaceChildren();
-    const filter = $("filter").value.toLowerCase(); let count = 0;
+    const filter = $("filter").value.toLowerCase(), typeFilter=$("record-type-filter").value; let count = 0;
     for (const record of model.draft) {
+      if (typeFilter && record.type!==typeFilter) continue;
       if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
-      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; title.textContent = record.name; info.append(title);
-      for (const value of record.values) {const d = document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;info.append(d);}
-      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+record.expires_at;info.append(d);}
-      tr.append(info);for(const text of [record.type,record.ttl_seconds+" s"]){const td=document.createElement("td");td.textContent=text;tr.append(td);}
-      const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";
+      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; title.textContent = record.name; info.append(title); const valueCell=document.createElement("td");
+      for (const value of record.values) {const d = document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;valueCell.append(d);}
+      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+record.expires_at;valueCell.append(d);}
+      tr.append(info,valueCell);for(const text of [record.type,record.ttl_seconds+" s"]){const td=document.createElement("td");td.textContent=text;tr.append(td);}
+      const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
       change.addEventListener("click",()=>{if(!locked()) edit(record);});
       remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}if(confirm("Stage deletion of "+record.name+" · "+record.type+"? Nothing is sent until the reviewed operation is confirmed.")){model.remove(S.key(record));if(selected===S.key(record))edit(null,true);render();}});
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);

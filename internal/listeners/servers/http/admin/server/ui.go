@@ -6,7 +6,7 @@ import (
 	"net/http"
 )
 
-//go:embed ui/* versioned_ui/* preview_ui/* auth_ui/* follower_ui/*
+//go:embed ui/* versioned_ui/* preview_ui/* auth_ui/* follower_ui/* console_ui/*
 var editorAssets embed.FS
 
 const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -58,6 +58,7 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 				link = []byte(`<p><a href="followers/" target="_blank" rel="noopener noreferrer">Local follower status</a> opens a separate read-only page.</p>`)
 			}
 			data = bytes.ReplaceAll(data, []byte("<!-- follower-status-link -->"), link)
+			data = h.consolePage(data, base, "records")
 		}
 		mux.HandleFunc("GET "+base+"/ui"+asset.route, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)

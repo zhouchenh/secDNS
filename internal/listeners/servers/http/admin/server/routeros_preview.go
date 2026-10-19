@@ -320,6 +320,9 @@ func (h *HTTPAdminServer) routerOSPreviewRoutes(mux *http.ServeMux, base string)
 		if err != nil {
 			panic(err)
 		}
+		if asset.file == "index.html" {
+			data = h.consolePage(data, base, "import")
+		}
 		mux.HandleFunc("GET "+base+"/ui/import-preview"+asset.route, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
 			w.Header().Set("Content-Type", asset.contentType)

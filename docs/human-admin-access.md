@@ -49,3 +49,10 @@ ADMINAUTH_SCHEMA4_BROWSER=1 PLAYWRIGHT_MODULE=<existing-install> go test ./inter
 ```
 
 This uses disposable auth credentials and a temporary SQLite record store explicitly migrated to schema4. It exercises real password/TOTP login, the secure human session cookie, CSRF rejection without writes, the single-RRset editor without a bearer token, and exact operation replay after a deliberately truncated acknowledgement. Closing and reopening the store verifies the snapshot and exactly one targeted receipt remain durable. It does not capture screenshots or access an existing portal or database; the temporary TLS exception is limited to the test browser context.
+## Shared administration console
+
+The embedded record, RouterOS import and local follower pages share persistent navigation and a compact instance header. Navigation is generated from the listener's real capabilities: a follower-only listener never gains record-write or import routes. The instance label is the current browser endpoint, not a claim of cluster discovery or fleet health.
+
+The versioned record table separates names and values and supports text and record-type filtering. Existing staged edits, comparison/review, schema-dependent targeted versus full-snapshot writes and exact uncertain-operation retry remain unchanged. Navigating away with local draft changes, pending operations or pasted import source prompts before losing page-local state. Existing human, agent and legacy authentication modules are grouped under account access; credentials and CSRF handling are not replaced by the presentation layer.
+
+The RouterOS page still invokes the existing preview/conversion API and explicit candidate handoff. This console does not add OS networking, routing-protocol control or a global cluster dashboard. No production configuration is changed by enabling the presentation update.
