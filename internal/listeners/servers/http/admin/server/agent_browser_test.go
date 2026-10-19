@@ -42,7 +42,7 @@ func TestAgentBrowser(t *testing.T) {
 	routes := h.routes()
 	var dropped atomic.Bool
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" && r.URL.Path == "/admin/snapshot" && dropped.CompareAndSwap(false, true) {
+		if r.Method == "POST" && (r.URL.Path == "/admin/snapshot" || r.URL.Path == "/admin/snapshot/rrset") && dropped.CompareAndSwap(false, true) {
 			record := httptest.NewRecorder()
 			routes.ServeHTTP(record, r)
 			if record.Code != 200 {

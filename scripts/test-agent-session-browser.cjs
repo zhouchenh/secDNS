@@ -9,7 +9,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
  const context=await browser.newContext({ignoreHTTPSErrors:true,viewport:{width:1280,height:960}});
  const page=await context.newPage(),errors=[],posts=[],exchanges=[];
  page.on('pageerror',e=>errors.push(e.message));
- page.on('request',r=>{assert.ok(!r.url().includes(token));if(r.url()===api&&r.method()==='POST')posts.push(r.postData());if(r.url().endsWith('/auth/agent-session'))exchanges.push(r);});
+ page.on('request',r=>{assert.ok(!r.url().includes(token));if((r.url()===api||r.url()===api+'/rrset')&&r.method()==='POST')posts.push(r.postData());if(r.url().endsWith('/auth/agent-session'))exchanges.push(r);});
  const signIn=async()=>{await page.locator('#agent-credential').fill(token);await page.getByRole('button',{name:'Sign in as agent',exact:true}).click();await page.waitForFunction(()=>window.secDNSAgent?.active);await page.locator('#connection').filter({hasText:'Connected'}).waitFor();};
  const stage=async()=>{await page.locator('#new-record').click();await page.locator('#name').fill('session.invalid.');await page.locator('#type').selectOption('TXT');await page.getByLabel('Record value',{exact:true}).fill('preserved');await page.locator('#stage').click();};
  try{
@@ -21,7 +21,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   let release,entered;const held=new Promise(r=>release=r),started=new Promise(r=>entered=r);
   await page.route('**/auth/state',async route=>{const response=await route.fetch();entered();await held;await route.fulfill({response});});
   await page.goto(base);await started;await page.evaluate(()=>window.secDNSAgent.clear());release();await page.locator('#agent-credential').waitFor({state:'visible'});await page.unroute('**/auth/state');
-  await signIn();assert.equal(await page.locator('#agent-credential').inputValue(),'');
+  assert.equal(await page.locator('#agent-access').isVisible(),true);assert.equal(await page.locator('#console-auth-screen').isVisible(),false);await signIn();assert.equal(await page.locator('#agent-credential').inputValue(),'');
   assert.ok((await page.locator('#agent-identity').textContent()).includes('test-agent'));assert.ok((await page.locator('#agent-identity').textContent()).includes('Writable authority'));
   const cookies=await context.cookies();assert.equal(cookies.length,1);assert.ok(cookies[0].secure&&cookies[0].httpOnly&&cookies[0].sameSite==='Strict');
   assert.equal(await page.evaluate(()=>document.cookie),'');assert.deepEqual(await page.evaluate(()=>[localStorage.length,sessionStorage.length]),[0,0]);

@@ -4,7 +4,7 @@
   const base = new URL("../", script);
   let allowedOrigin=false, publicState=null;
   let actor = null, csrf = "", epoch = 0, timer = null, warningTimer=null;
-  const panel = document.createElement("section"); panel.className = "card"; panel.hidden = true;
+  const panel = document.createElement("section"); panel.className = "card"; panel.id="agent-access"; panel.hidden = true;
   const title = document.createElement("h2"); title.textContent = "Agent access";
   const description = document.createElement("p"); description.textContent = "Use a named agent credential. Its permissions remain separate from human administration.";
   const form = document.createElement("form"), label = document.createElement("label"), input = document.createElement("input"), button = document.createElement("button");

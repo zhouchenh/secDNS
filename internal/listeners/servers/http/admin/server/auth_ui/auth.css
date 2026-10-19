@@ -3,3 +3,29 @@ header{flex-wrap:wrap}#agent-identity{flex:1 1 100%;min-width:0;overflow-wrap:an
 #human-audit{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
 
 #human-qr{display:block;max-width:100%;height:auto;background:white;margin:16px auto}#human-qr[hidden]{display:none}
+
+/* Dedicated human authentication pages; the application DOM/drafts stay intact. */
+.auth-screen-open{padding:0!important;background:#f3f6fa}
+.auth-screen-open>header,.auth-screen-open>.console-sidebar,.auth-screen-open>main{display:none!important}
+#console-auth-screen{min-height:100vh;padding:16px 24px;max-width:448px;margin:auto}
+#console-auth-screen[hidden]{display:none}
+.auth-brand{font-size:30px;font-weight:650;letter-spacing:-1px;text-align:center;color:#173452;margin-bottom:16px}
+.auth-surface{background:white;border:1px solid #dce4ee;border-radius:12px;padding:24px;box-shadow:0 12px 36px #20355208}
+#console-auth-screen .card{border:0;padding:0;margin:0;max-width:none;background:transparent}
+#console-auth-screen h2{font-size:24px;letter-spacing:-.5px;line-height:1.3;margin:0 0 12px}
+#console-auth-screen p{font-size:14px;line-height:1.6;color:#596c83}
+#console-auth-screen label{display:block;margin:14px 0 6px;font-size:13px;font-weight:600;color:#253a53}
+#console-auth-screen input,#console-auth-screen textarea{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #bccbdd;border-radius:6px;font-size:16px;min-height:44px}
+#console-auth-screen button{min-height:40px;font-size:14px;border-radius:6px;cursor:pointer}
+#console-auth-screen form>.primary{width:100%;margin:20px 0 0;padding:10px;background:#275fce;color:white;border:1px solid #275fce;font-weight:600}
+#console-auth-screen button:focus-visible,#console-auth-screen input:focus-visible{outline:3px solid #a8c5ff;outline-offset:2px}
+#console-auth-screen [hidden]{display:none!important}
+#console-auth-screen[data-access="human"] #agent-access,#console-auth-screen[data-access="agent"] #human-access,#console-auth-screen[data-access="agent"] #passkey-access{display:none!important}
+.auth-secondary,.auth-return{display:block;margin:12px auto;background:transparent;border:0;color:#285cb4;padding:8px 12px}
+.auth-alternatives{display:flex;flex-direction:column;align-items:flex-start;margin-top:12px;gap:6px}
+#human-access .auth-alternatives button{background:none;border:0;color:#285cb4;margin:0;padding:4px 0;text-align:left}
+#human-access [role="status"]:empty{display:none}
+#human-security{border:0;margin:0;padding:0}
+@media(max-width:560px){#console-auth-screen{padding:28px 18px}.auth-surface{padding:24px}.auth-brand{margin-bottom:24px}}
+
+@media(max-height:560px) and (min-width:600px){#console-auth-screen{padding:10px 24px}.auth-brand{font-size:24px;margin-bottom:10px}.auth-surface{padding:18px 24px}#console-auth-screen h2{font-size:22px;margin-bottom:6px}#console-auth-screen p{margin:8px 0}#console-auth-screen label{margin-top:10px}#console-auth-screen input{min-height:40px;padding:8px 11px}#console-auth-screen form>.primary{margin-top:14px;min-height:40px;padding:8px}.auth-alternatives{margin-top:8px}#human-access .auth-alternatives button{min-height:28px}.auth-secondary,.auth-return{margin:6px auto;min-height:32px!important}}
