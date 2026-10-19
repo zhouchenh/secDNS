@@ -37,6 +37,9 @@ func snapshotError(w http.ResponseWriter, err error) {
 	case errors.Is(err, recordstore.ErrIdentity):
 		status = http.StatusConflict
 		code = "identity_conflict"
+	case errors.Is(err, recordstore.ErrRRsetSchemaRequired):
+		status = http.StatusConflict
+		code = "rrset_schema_required"
 	case errors.Is(err, recordstore.ErrRevisionConflict):
 		status = http.StatusConflict
 		code = "revision_conflict"

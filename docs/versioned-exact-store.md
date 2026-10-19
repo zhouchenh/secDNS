@@ -122,3 +122,19 @@ are inaccessible to configuration or API callers.
 Resolvers acquire one view for an entire same-store CNAME lookup and versioned
 mutations require CAS/idempotency metadata. This substrate still does not establish
 cluster synchronization, source authenticity, or cross-store atomicity.
+
+## Explicit offline schema4 opt-in for single-RRset mutations
+
+New versioned SQLite stores still start at schema3. Existing schema2/3 opens and full-snapshot replacement behavior remain unchanged. Schema4 adds a nullable canonical single-RRset request to each operation receipt. Legacy replacement rows have NULL metadata and retain their exact previous digest verification. Targeted rows bind canonical request bytes, operation ID, enrollment and expected revision to the receipt's domain-separated digest. Malformed or inconsistent metadata fails startup; it is never treated as an opaque hash.
+
+To enable targeted mutations, stop the writer, make a private backup of the complete offline database (and any existing SQLite journal), and build the helper locally:
+
+```sh
+go build -o secdns-recordstore ./cmd/secdns-recordstore
+./secdns-recordstore -operation enable-rrset-mutations -database /private/state/pilot.db -ruleset-id pilot -lineage-id deployment-lineage
+```
+
+The helper requires an existing private schema3 record database and exact enrollment. It obtains the same exclusive SQLite lock as the writer, validates the old schema/content/receipts and performs the schema change in one transaction. It neither creates a missing database nor migrates authentication databases, schema1/2, or already migrated schema4. Interrupted or failed attempts must be inspected before retrying. Ordinary runtime startup never opts into schema4. Schema4 can be opened by this version without further migration; older binaries are not guaranteed to open it. To revert, stop the writer and restore the offline backup together with a compatible binary; do not attempt to downgrade schema in place. This command does not modify running services or generate credentials.
+
+Retained canonical targeted-request metadata is capped at 16 MiB total in addition to the existing 10,000-receipt limit. New targeted writes that would exceed it return the existing receipt-capacity error without a commit; exact retries still return prior receipts. Startup checks the aggregate before materializing receipt metadata. Receipts are not silently pruned.
+The schema4 metadata envelope also binds the canonical request to the resulting content digest through a separate domain-separated outcome checksum, including historical receipts. The idempotency request digest stays independent of current contents. These checks detect inconsistent stored data; they are not cryptographic authentication against an attacker able to rewrite the whole database.

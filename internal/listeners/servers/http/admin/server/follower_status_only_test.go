@@ -47,7 +47,7 @@ func TestFollowerStatusOnlyRoutes(t *testing.T) {
 		t.Fatal("record store bound")
 	}
 	mux := h.routes()
-	for _, path := range []string{"/records", "/records/example/A", "/snapshot", "/snapshot/events", "/preview", "/routeros/preview", "/source-policy/explain", "/auth/state", "/auth/session", "/auth/agent-session", "/auth/human/login", "/auth/human/setup", "/ui/app.js", "/ui/state.js", "/auth/agent.js"} {
+	for _, path := range []string{"/records", "/records/example/A", "/snapshot", "/snapshot/rrset", "/snapshot/events", "/preview", "/routeros/preview", "/source-policy/explain", "/auth/state", "/auth/session", "/auth/agent-session", "/auth/human/login", "/auth/human/setup", "/ui/app.js", "/ui/state.js", "/auth/agent.js"} {
 		for _, method := range []string{"GET", "POST", "DELETE", "PUT", "PATCH"} {
 			r := httptest.NewRequest(method, "/owned-static"+path, nil)
 			r.Header.Set("Authorization", "Bearer "+h.Token)

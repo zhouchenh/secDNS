@@ -16,9 +16,13 @@ import (
 
 const MaxOperationReceipts = 10000
 
+// MaxRRsetReceiptBytes bounds retained targeted request metadata across receipts.
+const MaxRRsetReceiptBytes = 16 << 20
+
 var ErrRevisionConflict = errors.New("exact store revision conflict")
 var ErrIdentity = errors.New("exact store identity mismatch")
 var ErrOperationConflict = errors.New("exact store operation conflict")
+var ErrRRsetSchemaRequired = errors.New("RRset mutation requires explicit record-store schema migration")
 var ErrReceiptCapacity = errors.New("exact store receipt capacity reached")
 var ErrRevisionOverflow = errors.New("exact store revision exhausted")
 var ErrVersionedSchema = errors.New("unsupported or inconsistent exact store schema")
@@ -36,6 +40,7 @@ type Expected struct {
 	Revision             uint64
 }
 type Receipt struct {
+	rrsetRequest                  string
 	OperationID, RequestSHA256    string
 	Revision                      uint64
 	ContentSHA256                 string
@@ -199,21 +204,39 @@ func (s *VersionedStore) replace(expected Expected, operationID string, records 
 	if expected.Revision != meta.Revision {
 		return Receipt{}, ErrRevisionConflict
 	}
+	return s.commitLocked(meta, operationID, request, candidate.Records(), provenance, "")
+}
+
+// commitLocked persists before publishing one immutable generation and hint.
+// The caller owns mu and has checked identity, replay and revision CAS.
+func (s *VersionedStore) commitLocked(meta recordset.Metadata, operationID, request string, records []recordset.Record, provenance *recordset.OperatorSuppliedProvenance, rrsetRequest string) (Receipt, error) {
 	if meta.Revision == math.MaxUint64 {
 		return Receipt{}, ErrRevisionOverflow
 	}
 	if len(s.receipts) >= MaxOperationReceipts {
 		return Receipt{}, ErrReceiptCapacity
 	}
-	next, err := recordset.New(meta.RulesetID, meta.LineageID, meta.Revision+1, candidate.Records())
+	next, err := recordset.New(meta.RulesetID, meta.LineageID, meta.Revision+1, records)
 	if err != nil {
 		return Receipt{}, ErrVersionedInput
+	}
+	if rrsetRequest != "" {
+		rrsetRequest = encodeRRsetReceiptMetadata([]byte(rrsetRequest), next.Metadata().ContentSHA256)
+	}
+	if rrsetRequest != "" {
+		total := len(rrsetRequest)
+		for _, receipt := range s.receipts {
+			total += len(receipt.rrsetRequest)
+		}
+		if total > MaxRRsetReceiptBytes {
+			return Receipt{}, ErrReceiptCapacity
+		}
 	}
 	at := s.now().UTC()
 	if at.Year() < 1 || at.Year() > 9999 || at.IsZero() {
 		return Receipt{}, ErrVersionedInput
 	}
-	receipt := Receipt{OperationID: operationID, RequestSHA256: request, Revision: next.Metadata().Revision, ContentSHA256: next.Metadata().ContentSHA256, CommittedAt: at}
+	receipt := Receipt{rrsetRequest: rrsetRequest, OperationID: operationID, RequestSHA256: request, Revision: next.Metadata().Revision, ContentSHA256: next.Metadata().ContentSHA256, CommittedAt: at}
 	generation := &versionedGeneration{snapshot: next}
 	if provenance != nil {
 		receipt.operatorSuppliedProvenance = *provenance

@@ -20,17 +20,33 @@ const receiptTableSQLV2 = "CREATE TABLE operation_receipts (operation_id TEXT PR
 const snapshotTableSQLV3 = "CREATE TABLE snapshot_state (id INTEGER PRIMARY KEY CHECK(id=1), envelope BLOB NOT NULL, operator_provenance BLOB)"
 const receiptTableSQLV3 = "CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL, operator_provenance BLOB)"
 
+const receiptTableSQLV4 = "CREATE TABLE operation_receipts (operation_id TEXT PRIMARY KEY, request_sha256 TEXT NOT NULL, committed_revision TEXT NOT NULL, content_sha256 TEXT NOT NULL, committed_at TEXT NOT NULL, operator_provenance BLOB, rrset_request BLOB)"
+
 var ErrMigrationIncompatible = errors.New("legacy records cannot form an exact snapshot")
 
 func OpenVersionedSQLite(path string, enrollment Enrollment) (*VersionedStore, error) {
 	return openVersionedSQLite(path, enrollment, versionedHooks{})
 }
 func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHooks) (_ *VersionedStore, err error) {
+	return openVersionedSQLiteMode(path, enrollment, hooks, false)
+}
+
+// EnableRRsetMutationsSQLite is explicit offline schema3-to-4 migration.
+// The existing exclusive database lock prevents migration of an active store.
+// It never creates a store or migrates schemas1/2; keep a private offline backup.
+func EnableRRsetMutationsSQLite(path string, enrollment Enrollment) error {
+	s, err := openVersionedSQLiteMode(path, enrollment, versionedHooks{}, true)
+	if err != nil {
+		return err
+	}
+	return s.Close()
+}
+func openVersionedSQLiteMode(path string, enrollment Enrollment, hooks versionedHooks, migrateRRsets bool) (_ *VersionedStore, err error) {
 	s, err := NewVersionedMemory(enrollment)
 	if err != nil {
 		return nil, err
 	}
-	db, err := openExclusiveDatabase(path)
+	db, err := openExclusiveDatabaseMode(path, migrateRRsets)
 	if err != nil {
 		if errors.Is(err, ErrSQLiteUnsupported) {
 			return nil, ErrSQLiteUnsupported
@@ -70,6 +86,9 @@ func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHook
 	if err != nil {
 		return nil, err
 	}
+	if migrateRRsets && version != 3 {
+		return nil, ErrVersionedSchema
+	}
 	switch {
 	case version == 0 && id == 0 && len(schemas) == 0:
 		if err = createVersionedSchema(tx, s.current.Load().snapshot); err != nil {
@@ -97,7 +116,7 @@ func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHook
 		s.current.Store(&versionedGeneration{snapshot: snapshot})
 		s.schemaVersion = 3
 	case version == 2 && id == applicationID && len(schemas) == 2 && schemas["snapshot_state"] == snapshotTableSQLV2 && schemas["operation_receipts"] == receiptTableSQLV2:
-		generation, receipts, e := loadVersioned(tx, enrollment, false)
+		generation, receipts, e := loadVersioned(tx, enrollment, false, false)
 		if e != nil {
 			return nil, e
 		}
@@ -117,15 +136,32 @@ func openVersionedSQLite(path string, enrollment Enrollment, hooks versionedHook
 			s.schemaVersion = 3
 		}
 	case version == 3 && id == applicationID && len(schemas) == 2 && schemas["snapshot_state"] == snapshotTableSQLV3 && schemas["operation_receipts"] == receiptTableSQLV3:
-		generation, receipts, e := loadVersioned(tx, enrollment, true)
+		generation, receipts, e := loadVersioned(tx, enrollment, true, false)
 		if e != nil {
 			return nil, e
 		}
 		s.current.Store(generation)
 		s.receipts = receipts
 		s.schemaVersion = 3
+	case version == 4 && id == applicationID && len(schemas) == 2 && schemas["snapshot_state"] == snapshotTableSQLV3 && schemas["operation_receipts"] == receiptTableSQLV4:
+		generation, receipts, e := loadVersioned(tx, enrollment, true, true)
+		if e != nil {
+			return nil, e
+		}
+		s.current.Store(generation)
+		s.receipts = receipts
+		s.schemaVersion = 4
 	default:
 		return nil, ErrVersionedSchema
+	}
+	if migrateRRsets {
+		if _, err = tx.Exec("ALTER TABLE operation_receipts ADD COLUMN rrset_request BLOB"); err != nil {
+			return nil, err
+		}
+		if _, err = tx.Exec("PRAGMA user_version=4"); err != nil {
+			return nil, err
+		}
+		s.schemaVersion = 4
 	}
 	if hooks.beforeCommit != nil {
 		if err = hooks.beforeCommit(tx); err != nil {
@@ -209,7 +245,7 @@ func decodeStoredOperatorSuppliedProvenance(present int, raw []byte) (recordset.
 	return p, true, nil
 }
 
-func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGeneration, map[string]Receipt, error) {
+func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance, withRRsets bool) (*versionedGeneration, map[string]Receipt, error) {
 	var count, size, provenanceSize int
 	if withProvenance {
 		if err := tx.QueryRow("SELECT count(*),coalesce(max(length(CAST(envelope AS BLOB))),0),coalesce(max(length(CAST(operator_provenance AS BLOB))),0) FROM snapshot_state").Scan(&count, &size, &provenanceSize); err != nil {
@@ -263,10 +299,22 @@ func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGen
 	if meta.Revision == 1 && generation.hasOperatorSuppliedProvenance {
 		return nil, nil, ErrVersionedSchema
 	}
+	if withRRsets {
+		var total int64
+		if err = tx.QueryRow("SELECT coalesce(sum(length(CAST(rrset_request AS BLOB))),0) FROM operation_receipts").Scan(&total); err != nil {
+			return nil, nil, err
+		}
+		if total > MaxRRsetReceiptBytes {
+			return nil, nil, ErrVersionedSchema
+		}
+	}
 	var maxLength int
 	receiptBounds := "SELECT count(*),coalesce(max(length(CAST(operation_id AS BLOB))+length(CAST(request_sha256 AS BLOB))+length(CAST(committed_revision AS BLOB))+length(CAST(content_sha256 AS BLOB))+length(CAST(committed_at AS BLOB))),0) FROM operation_receipts"
 	if withProvenance {
 		receiptBounds = "SELECT count(*),coalesce(max(length(CAST(operation_id AS BLOB))+length(CAST(request_sha256 AS BLOB))+length(CAST(committed_revision AS BLOB))+length(CAST(content_sha256 AS BLOB))+length(CAST(committed_at AS BLOB))+coalesce(length(CAST(operator_provenance AS BLOB)),0)),0) FROM operation_receipts"
+	}
+	if withRRsets {
+		receiptBounds = strings.Replace(receiptBounds, "),0) FROM", "+coalesce(length(CAST(rrset_request AS BLOB)),0)),0) FROM", 1)
 	}
 	if err = tx.QueryRow(receiptBounds).Scan(&count, &maxLength); err != nil {
 		return nil, nil, err
@@ -275,12 +323,18 @@ func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGen
 	if withProvenance {
 		maxReceiptLength += recordset.MaxOperatorSuppliedProvenanceBytes
 	}
+	if withRRsets {
+		maxReceiptLength += maxRRsetReceiptMetadataBytes
+	}
 	if count > MaxOperationReceipts || maxLength > maxReceiptLength || meta.Revision != uint64(count)+1 {
 		return nil, nil, ErrVersionedSchema
 	}
 	receiptTypes := "SELECT count(*) FROM operation_receipts WHERE typeof(operation_id)!='text' OR typeof(request_sha256)!='text' OR typeof(committed_revision)!='text' OR typeof(content_sha256)!='text' OR typeof(committed_at)!='text'"
 	if withProvenance {
 		receiptTypes += " OR (operator_provenance IS NOT NULL AND typeof(operator_provenance)!='blob')"
+	}
+	if withRRsets {
+		receiptTypes += " OR (rrset_request IS NOT NULL AND typeof(rrset_request)!='blob')"
 	}
 	if err = tx.QueryRow(receiptTypes).Scan(&wrong); err != nil {
 		return nil, nil, err
@@ -291,6 +345,9 @@ func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGen
 	receiptQuery := "SELECT operation_id,request_sha256,committed_revision,content_sha256,committed_at FROM operation_receipts"
 	if withProvenance {
 		receiptQuery = "SELECT operation_id,request_sha256,committed_revision,content_sha256,committed_at,operator_provenance IS NOT NULL,operator_provenance FROM operation_receipts"
+	}
+	if withRRsets {
+		receiptQuery = strings.Replace(receiptQuery, " FROM operation_receipts", ",rrset_request IS NOT NULL,rrset_request FROM operation_receipts", 1)
 	}
 	rows, err := tx.Query(receiptQuery)
 	if err != nil {
@@ -304,8 +361,11 @@ func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGen
 		var r Receipt
 		var revision, at string
 		var raw []byte
-		var present int
-		if withProvenance {
+		var present, requestPresent int
+		var requestRaw []byte
+		if withRRsets {
+			err = rows.Scan(&r.OperationID, &r.RequestSHA256, &revision, &r.ContentSHA256, &at, &present, &raw, &requestPresent, &requestRaw)
+		} else if withProvenance {
 			err = rows.Scan(&r.OperationID, &r.RequestSHA256, &revision, &r.ContentSHA256, &at, &present, &raw)
 		} else {
 			err = rows.Scan(&r.OperationID, &r.RequestSHA256, &revision, &r.ContentSHA256, &at)
@@ -332,6 +392,20 @@ func loadVersioned(tx *sql.Tx, e Enrollment, withProvenance bool) (*versionedGen
 		digest := requestDigest(expected, r.ContentSHA256)
 		if r.hasOperatorSuppliedProvenance {
 			digest = requestDigestWithOperatorSuppliedProvenance(expected, r.ContentSHA256, r.operatorSuppliedProvenance)
+		}
+		if requestPresent != 0 {
+			if r.hasOperatorSuppliedProvenance || len(requestRaw) > maxRRsetReceiptMetadataBytes {
+				return nil, nil, ErrVersionedSchema
+			}
+			mutation, e := decodeRRsetReceiptMetadata(requestRaw, r.ContentSHA256)
+			if e != nil {
+				return nil, nil, ErrVersionedSchema
+			}
+			if mutation.OperationID != r.OperationID || mutation.RulesetID != expected.RulesetID || mutation.LineageID != expected.LineageID || mutation.Revision != expected.Revision {
+				return nil, nil, ErrVersionedSchema
+			}
+			digest = rrsetRequestDigest(mutation)
+			r.rrsetRequest = string(requestRaw)
 		}
 		if r.RequestSHA256 != digest {
 			return nil, nil, ErrVersionedSchema
@@ -461,7 +535,7 @@ func (s *VersionedStore) persistReplacement(generation *versionedGeneration, r R
 			return ErrOperatorProvenanceUnavailable
 		}
 		result, err = tx.Exec("UPDATE snapshot_state SET envelope=? WHERE id=1", wire)
-	case 3:
+	case 3, 4:
 		result, err = tx.Exec("UPDATE snapshot_state SET envelope=?,operator_provenance=? WHERE id=1", wire, provenance)
 	default:
 		return ErrVersionedSchema
@@ -478,6 +552,12 @@ func (s *VersionedStore) persistReplacement(generation *versionedGeneration, r R
 		_, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at) VALUES(?,?,?,?,?)", r.OperationID, r.RequestSHA256, strconv.FormatUint(r.Revision, 10), r.ContentSHA256, r.CommittedAt.UTC().Format(time.RFC3339Nano))
 	case 3:
 		_, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at,operator_provenance) VALUES(?,?,?,?,?,?)", r.OperationID, r.RequestSHA256, strconv.FormatUint(r.Revision, 10), r.ContentSHA256, r.CommittedAt.UTC().Format(time.RFC3339Nano), provenance)
+	case 4:
+		var request any
+		if r.rrsetRequest != "" {
+			request = []byte(r.rrsetRequest)
+		}
+		_, err = tx.Exec("INSERT INTO operation_receipts(operation_id,request_sha256,committed_revision,content_sha256,committed_at,operator_provenance,rrset_request) VALUES(?,?,?,?,?,?,?)", r.OperationID, r.RequestSHA256, strconv.FormatUint(r.Revision, 10), r.ContentSHA256, r.CommittedAt.UTC().Format(time.RFC3339Nano), provenance, request)
 	}
 	if err != nil {
 		return err

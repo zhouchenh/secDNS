@@ -140,10 +140,9 @@ func New(rulesetID, lineageID string, revision uint64, records []Record) (*Snaps
 		}
 		r := cloneRecord(input)
 		var err error
-		if r.Name, err = canonicalName(r.Name); err != nil {
+		if r.Name, r.Type, err = CanonicalKey(r.Name, r.Type); err != nil {
 			return nil, err
 		}
-		r.Type = strings.ToUpper(strings.TrimSpace(r.Type))
 		switch r.Type {
 		case "A", "AAAA":
 			for i, v := range r.Values {

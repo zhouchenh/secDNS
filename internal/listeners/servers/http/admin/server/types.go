@@ -178,6 +178,7 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		mux.HandleFunc("GET "+base+"/snapshot", h.withScopes(h.handleSnapshot, true, adminauth.RecordsRead))
 		mux.HandleFunc("GET "+base+"/snapshot/events", h.withScopes(h.handleSnapshotEvents, true, adminauth.RecordsRead, adminauth.SnapshotEvents))
 		mux.HandleFunc("POST "+base+"/snapshot", h.withScopes(h.handleReplace, false, adminauth.RecordsWrite))
+		mux.HandleFunc("POST "+base+"/snapshot/rrset", h.withScopes(h.handleRRsetMutation, false, adminauth.RecordsWrite))
 		blocked := func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "versioned_batch_required"})
 		}
