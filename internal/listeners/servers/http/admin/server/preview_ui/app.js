@@ -89,7 +89,7 @@
       const active=new AbortController(),requestURL=new URL(endpoint.href);controller=active;if(operation==="exact"){requestURL.searchParams.set("profile","exact");requestURL.searchParams.set("ruleset_id",ruleset);}status(operation==="exact"?"Requesting strict whole-source conversion. Nothing will be applied…":"Requesting a preview. No records will be changed…");
       const response=await fetch(requestURL.href,{method:"POST",headers:{...(window.secDNSAgent?.headers(capturedToken,"POST") || {Authorization:"Bearer "+capturedToken}),"Content-Type":"application/octet-stream"},body:data,credentials:window.secDNSAgent?.credentials() || "omit",redirect:"error",cache:"no-store",signal:active.signal});
       if(!gate.current(captured))return;
-      if(response.status===401||response.status===403){void response.body?.cancel().catch(()=>{});disconnect(false);status("Authentication rejected. Sign in again; source retained without automatic retry.","error");return;}
+      if(response.status===401||response.status===403){void response.body?.cancel().catch(()=>{});if(response.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();else disconnect(false);status("Authentication rejected. Sign in again; source retained without automatic retry.","error");return;}
       if(response.redirected||response.type==="opaqueredirect")throw new Error("invalid_response");
       const payload=await S.readJSON(response);if(!gate.current(captured))return;
       if(operation==="exact"){

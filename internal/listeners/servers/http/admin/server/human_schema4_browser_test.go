@@ -55,7 +55,11 @@ func TestHumanSchema4Browser(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/__test-clock" {
 			if r.Method == "POST" {
-				seconds.Add(30)
+				if r.URL.Query().Get("expire") == "1" {
+					seconds.Add(13 * 60 * 60)
+				} else {
+					seconds.Add(30)
+				}
 			}
 			json.NewEncoder(w).Encode(map[string]int64{"now": seconds.Load()})
 			return

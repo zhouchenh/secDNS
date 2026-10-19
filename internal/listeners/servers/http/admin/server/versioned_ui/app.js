@@ -154,7 +154,7 @@
   async function fetchCurrent() {
     const id=++getID, captured=epoch;
     try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(result.data,result.provenance,result.rrsetCapability);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
-    catch(e){if(captured===epoch&&id===getID){model.fresh=false;if(e.message==="authentication"){disconnect(false);status(message(e),"error");}render();throw e;}return false;}
+    catch(e){if(captured===epoch&&id===getID){model.fresh=false;if(e.message==="authentication"){if(e.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();else disconnect(false);status(message(e),"error");}render();throw e;}return false;}
   }
   function disconnect(show=true) {
     epoch++;getID++;for(const r of requests)r.abort();requests.clear();
@@ -225,7 +225,7 @@
       const result=await request("POST",pending.body,pending.endpoint);if(captured!==epoch)return;model.acknowledge(result.data,result.provenance);render();
       try{await fetchCurrent();if(captured===epoch)status(model.pending?"Saved; newer local edits require reconciliation.":"Operation acknowledged and latest saved records loaded.","success");}
       catch(e){if(captured===epoch)status("Saved; current state could not be loaded. The receipt and draft are retained. Fetch current before another proposal.","error");}
-    }catch(e){if(captured!==epoch)return;if(e.definitive){pending.status="rejected";model.fresh=false;if(e.message==="identity_conflict")model.identityBlocked=true;status(message(e),"error");}else{model.uncertain();status(message(e)+" "+messages.uncertain,"error");}if(e.message==="authentication")disconnect(false);}
+    }catch(e){if(captured!==epoch)return;if(e.definitive){pending.status="rejected";model.fresh=false;if(e.message==="identity_conflict")model.identityBlocked=true;status(message(e),"error");}else{model.uncertain();status(message(e)+" "+messages.uncertain,"error");}if(e.message==="authentication"){if(e.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();else disconnect(false);}}
     finally{if(captured===epoch){busy=false;render();}}
   }
   $("review-confirm").addEventListener("click",()=>void send(false));$("retry").addEventListener("click",()=>void send(true));

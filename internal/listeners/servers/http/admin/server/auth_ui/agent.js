@@ -47,6 +47,7 @@
     headers(token,method){return actor ? (method==="GET"?{}:{"X-SecDNS-CSRF":csrf,"Content-Type":"application/json"}) : {Authorization:"Bearer "+token,"X-SecDNS-Legacy-Access":"1"};},
     credentials(){return actor?"same-origin":"omit";},
     clear:localClear,
+    expire(){if(actor){localClear();note.textContent="Session expired. Sign in again; local work is preserved.";fire("agentexpired");}},
     async switchToLegacy(){
       if(allowedOrigin){
         let current=null;try{current=await api("session");}catch(error){if(error.status!==401)throw error;}

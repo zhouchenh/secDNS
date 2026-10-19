@@ -77,6 +77,7 @@
     try {
       const response = await fetch(endpoint.href + suffix, {method, headers:{...(window.secDNSAgent?.headers(token,method)||{Authorization:"Bearer "+token}), ...(payload ? {"Content-Type":"application/json"} : {})}, body:payload ? JSON.stringify(payload) : undefined, credentials:window.secDNSAgent?.credentials()||"omit", cache:"no-store", redirect:"error", signal:controller.signal});
       if (current !== generation) throw new DOMException("Disconnected", "AbortError");
+      if(response.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();
       if (!response.ok) { const error = new Error("Request rejected"); error.status = response.status; throw error; }
       const result = await response.json();
       if (current !== generation) throw new DOMException("Disconnected", "AbortError");
