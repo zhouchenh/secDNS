@@ -38,7 +38,7 @@ func TestVersionedEditorModeAndHeaders(t *testing.T) {
 					t.Fatal("token in assets")
 				}
 			}
-			if r := do(h, "GET", base+"/ui/", "", ""); !strings.Contains(r.Body.String(), "VERSIONED EXACT RECORDS") {
+			if r := do(h, "GET", base+"/ui/", "", ""); !strings.Contains(r.Body.String(), "DNS MANAGEMENT") {
 				t.Fatal("wrong bundle")
 			}
 			if r := do(h, "GET", base+"/records", testToken, ""); r.Code != 409 {

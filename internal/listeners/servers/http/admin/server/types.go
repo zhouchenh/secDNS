@@ -162,6 +162,7 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		}
 		h.followerRoutes(mux, base)
 		if h.UI {
+			h.consoleRoutes(mux, base)
 			h.followerOnlyUIRoutes(mux, base)
 		}
 		return mux
@@ -172,6 +173,7 @@ func (h *HTTPAdminServer) routes() *http.ServeMux {
 		h.sourcePolicyExplainRoutes(mux, base)
 	}
 	if h.UI {
+		h.consoleRoutes(mux, base)
 		h.routerOSPreviewRoutes(mux, base)
 	}
 	if h.versioned != nil {

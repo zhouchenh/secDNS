@@ -95,6 +95,9 @@ func (h *HTTPAdminServer) followerUIRoutes(mux *http.ServeMux, base string) {
 			data = bytes.ReplaceAll(data, []byte("Legacy token access"), []byte("Token access"))
 			data = bytes.ReplaceAll(data, []byte("Legacy admin access token"), []byte("Admin or scoped access token"))
 		}
+		if asset.name == "index.html" {
+			data = h.consolePage(data, base, "followers")
+		}
 		route := asset.name
 		if route == "index.html" {
 			route = "{$}"
