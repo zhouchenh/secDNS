@@ -30,3 +30,7 @@ assert.equal(S.validHandoffResult({kind:S.HANDOFF_RESULT_KIND,channel_id:channel
   await assert.rejects(S.readJSON(new Response('{')),/invalid_response/);
   console.log('RouterOS preview state/stream tests passed.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
+
+const knownDestination=S.handoffConfig('#draft_handoff='+ 'a'.repeat(48)+'&target=%2Fadmin%2Fui%2F&ruleset=workflow-qa','/admin/ui/');
+assert.equal(knownDestination.rulesetID,'workflow-qa');
+assert.equal(S.handoffConfig('#draft_handoff='+ 'a'.repeat(48)+'&target=%2Fadmin%2Fui%2F&ruleset=bad%20id','/admin/ui/'),null);

@@ -96,8 +96,10 @@
     remove.addEventListener("click", () => { if (locked()) return; row.remove(); model.touch(); controls(); });
     row.append(input,remove); $("values").append(row);
   }
+  function clearRecordError(){ $("record-error").hidden=true;$("record-error").textContent="";for(const field of $("editor").querySelectorAll("[aria-invalid]")){field.removeAttribute("aria-invalid");const described=(field.getAttribute("aria-describedby")||"").split(/\s+/).filter(id=>id&&id!=="record-error");if(described.length)field.setAttribute("aria-describedby",described.join(" "));else field.removeAttribute("aria-describedby");}}
   function edit(record = null, force = false, open = false) {
     if (!force && model.formDirty && !confirm("Discard unfinished record fields? The staged snapshot draft is retained.")) return;
+    clearRecordError();
     selected = record ? S.key(record) : null; model.formDirty = false;$("record-editor").hidden=!open;
     $("editor-title").textContent = record ? "Edit record" : "New record";
     $("name").value = record?.name || ""; $("type").value = record?.type || "A"; $("ttl").value = String(record?.ttl_seconds ?? 300);
@@ -183,7 +185,7 @@
       catch(e){error=["handoff_reconciliation_required","handoff_identity_conflict","invalid_draft_handoff"].includes(e.message)?e.message:"editor_unavailable";status(message(new Error(error)),"error");}
       channel.postMessage({kind:"secdns.routeros-exact-draft-result.v1",channel_id:channelID,request_id:event.data.request_id,accepted,...(accepted?{}:{error})});
     });
-    const target=new URL(previewURL.href);target.hash=new URLSearchParams({draft_handoff:channelID,target:targetPath}).toString();window.open(target.href,"_blank","noopener,noreferrer");
+    const target=new URL(previewURL.href);target.hash=new URLSearchParams({draft_handoff:channelID,target:targetPath,...(model.base?{ruleset:model.base.ruleset_id}:{})}).toString();window.open(target.href,"_blank","noopener,noreferrer");
   });
   window.addEventListener("pagehide",()=>{importChannel?.close();importChannel=null;importChannelID="";disconnect(false);});
   window.addEventListener("pageshow",e=>{if(e.persisted)disconnect();});
@@ -194,10 +196,10 @@
   $("editor").addEventListener("input",()=>{model.touch();controls();});
   $("expiry-mode").addEventListener("change",()=>{model.touch();controls();});
   $("editor").addEventListener("submit",e=>{
-    e.preventDefault();if(locked())return;
+    e.preventDefault();if(locked())return;clearRecordError();
     const record={name:$("name").value,type:$("type").value,values:[...$("values").querySelectorAll("textarea")].map(v=>v.value),ttl_seconds:Number($("ttl").value)};
     if($("expiry-mode").value==="absolute")record.expires_at=$("expiry").value;
-    try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the proposal before sending.","success");}catch(error){status(message(error),"error");}
+    try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the proposal before sending.","success");}catch(error){if(error.issue){const issue=error.issue,field=issue.field==="values"?$("values").querySelectorAll("textarea")[issue.index||0]:$(issue.field);$("record-error").textContent=issue.text;$("record-error").hidden=false;if(field){field.setAttribute("aria-invalid","true");field.setAttribute("aria-describedby",[...(field.getAttribute("aria-describedby")||"").split(/\s+/).filter(Boolean),"record-error"].join(" "));field.focus();}controls();}else status(message(error),"error");}
   });
   $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Current snapshot fetched. The operation outcome is still uncertain; retry the same operation.":model.pending?.status==="acknowledged"?"Saved; newer local edits require reconciliation.":"Current snapshot fetched. Your staged and unfinished edits were preserved.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
