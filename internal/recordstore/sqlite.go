@@ -250,7 +250,10 @@ func normalizeValidated(r Record) (Record, error) {
 // openExclusiveDatabase shares private-file checks and connection ownership
 // settings. The caller acquires the exclusive lock with its first transaction;
 // the connection retains that lock after commit until it closes.
-func openExclusiveDatabase(path string) (_ *sql.DB, err error) {
+func openExclusiveDatabase(path string) (*sql.DB, error) {
+	return openExclusiveDatabaseMode(path, false)
+}
+func openExclusiveDatabaseMode(path string, existingOnly bool) (_ *sql.DB, err error) {
 	if !sqlitePlatformSupported {
 		return nil, ErrSQLiteUnsupported
 	}
@@ -265,7 +268,7 @@ func openExclusiveDatabase(path string) (_ *sql.DB, err error) {
 		return nil, errors.New("database parent must be private")
 	}
 	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
+	if os.IsNotExist(err) && !existingOnly {
 		var f *os.File
 		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 		if err != nil {
@@ -288,6 +291,9 @@ func openExclusiveDatabase(path string) (_ *sql.DB, err error) {
 	}
 	u := url.URL{Scheme: "file", Path: uriPath}
 	q := url.Values{}
+	if existingOnly {
+		q.Set("mode", "rw")
+	}
 	q.Set("_txlock", "exclusive")
 	q.Add("_pragma", "busy_timeout(1000)")
 	q.Add("_pragma", "synchronous(FULL)")

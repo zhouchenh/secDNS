@@ -86,3 +86,17 @@ The editor's RouterOS review link opens a separate `noopener` tab and creates a 
 An accepted transfer only replaces the local browser draft and displays the strict profile plus source/content hashes. It never copies a bearer token, posts to the snapshot API, changes a store or bypasses the existing comparison and revision-aware confirmation. A later apply includes the operator-supplied tuple only when the transferred draft has not been locally edited. Any edit, including edit then revert, omits the original tuple rather than falsely attributing changed work to the source. The editor labels both cases and states that the server does not authenticate the source/profile assertion. The complete frozen body remains identical on retry. The random fragment capability is removed from the child address after startup; no cookie or browser storage is used.
 
 Validation uses `node scripts/test-versioned-editor-state.cjs` and `scripts/test-versioned-editor-browser.cjs`; the RouterOS preview browser suite exercises the cross-tab candidate handoff. The browser suites require an existing Playwright installation and a dedicated synthetic localhost memory server with the snapshot editor enabled. They may replace that test store's contents; never point them at an operational admin instance. `PLAYWRIGHT_MODULE`, `EDITOR_TEST_URL`, `EDITOR_SCREENSHOT` and `EDITOR_MOBILE_SCREENSHOT` optionally select installed tooling, the localhost test endpoint and output images. No dependency download is required.
+
+## Conditional single-RRset writes
+
+`POST <base>/snapshot/rrset` edits one exact RRset in an enrolled versioned writer. It uses the same `records:write` authorization and browser session/CSRF checks as snapshot replacement; it is absent from legacy stores and status-only followers. The editor is unchanged.
+
+```json
+{"expected":{"ruleset_id":"pilot","lineage_id":"deployment-lineage","revision":"7"},"operation_id":"agent-edit-1","action":"upsert","record":{"name":"host.example.","type":"A","values":["192.0.2.10"],"ttl_seconds":60}}
+```
+
+For deletion, replace `action` and `record` with `"action":"delete","key":{"name":"host.example.","type":"A"}`. Unknown, duplicate, null and cross-action fields are rejected. Values follow the existing exact-record rules, including absolute expiry, TTL zero, TXT value order and CNAME exclusivity. The request retains the 4 MiB HTTP limit and the canonical single-RRset representation is limited to 128 KiB.
+
+The expected revision is a global snapshot CAS, not a per-record revision. Only the matching canonical owner/type changes; unrelated and expired stored records remain. A new successful operation advances the revision even for an identical upsert or absent-key deletion. It clears operator-supplied import provenance. The response is the existing operation receipt. Repeating the same canonical request and operation ID returns its original receipt before revision CAS, including after later edits and restart. Reusing an ID for a different request or operation kind conflicts. Upsert and delete have independent request-digest domains; full-snapshot replacement digests are unchanged.
+
+Memory stores support this operation directly. SQLite requires explicit offline record-store schema4 migration; schemas2/3 continue normal replacement operations but targeted writes return HTTP409 `rrset_schema_required`. No startup migration is performed for this feature. See the offline procedure in `versioned-exact-store.md`.
