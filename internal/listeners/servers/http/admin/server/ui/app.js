@@ -8,16 +8,16 @@
   let busy = false, ready = false, dirty = false;
   const requests = new Set();
   const types = ["A", "AAAA", "CNAME", "TXT"];
-  function status(message, kind = "") { $("status").textContent = message; $("status").className = kind; }
+  function status(message, kind = "") { $("status").hidden=!message; $("status").textContent = message; $("status").className = kind; }
   function controls() {
     for (const input of $("editor").querySelectorAll("input, select, textarea, button")) input.disabled = busy;
     $("name").disabled = $("type").disabled = busy || !!selected;
     $("save").disabled = busy || !ready || (window.secDNSAgent && !window.secDNSAgent.allows("records:write"));
     $("refresh").disabled = busy;
-    $("new-record").disabled = busy;
+    $("new-record").disabled = busy || (window.secDNSAgent && !window.secDNSAgent.allows("records:write"));
     $("delete-confirm").disabled = busy || (window.secDNSAgent && !window.secDNSAgent.allows("records:write"));
     $("delete-cancel").disabled = busy;
-    for (const b of $("rows").querySelectorAll("button")) b.disabled = busy || !ready;
+    for (const b of $("rows").querySelectorAll("button")) b.disabled = busy || !ready || (window.secDNSAgent && !window.secDNSAgent.allows("records:write"));
   }
   function valueRow(value) {
     const row = document.createElement("div"); row.className = "value-row";
@@ -36,8 +36,9 @@
     $("expiry-label").textContent = mode === "relative" ? "Seconds from now" : "RFC3339 timestamp (nanoseconds accepted)";
     $("expiry-help").textContent = mode === "keep" ? "Unchanged: " + (selected?.expires_at || "Permanent") : mode === "permanent" ? "Permanent records do not expire from the store." : mode === "absolute" ? "Use an explicit timezone, for example 2030-01-01T12:00:00.123456789Z. Past timestamps are rejected." : "The server calculates expiration when it receives this request.";
   }
-  function edit(record = null) {
+  function edit(record = null, open = false) {
     if (dirty && !window.confirm("Discard the unsaved record draft?")) return;
+    $("record-editor").hidden=!open;$("workspace").classList.toggle("editing",open);
     selected = record; dirty = false;
     $("editor-title").textContent = record ? "Edit record" : "Create record";
     $("name").value = record?.name || ""; $("type").value = record?.type || "A";
@@ -46,7 +47,7 @@
     $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);
     $("expiry-mode").querySelector('[value="keep"]').disabled = !record;
     $("expiry-mode").value = record?.expires_at ? "keep" : "permanent";
-    $("expiry").value = ""; expiryUI(); controls();
+    $("expiry").value = ""; expiryUI(); controls();if(open)$("editor-title").focus();
   }
   function render() {
     const filter = $("filter").value.toLowerCase();
@@ -62,14 +63,14 @@
       tr.append(info);
       for (const text of [record.type, String(record.ttl_seconds) + " s"]) { const td = document.createElement("td"); td.textContent = text; tr.append(td); }
       const actions = document.createElement("td");
-      const editButton = document.createElement("button"); editButton.textContent = "Edit"; editButton.addEventListener("click", () => edit(record));
-      const remove = document.createElement("button"); remove.textContent = "Delete"; remove.addEventListener("click", () => {
+      const editButton = document.createElement("button"); editButton.textContent = "Edit"; editButton.setAttribute("aria-label","Edit "+record.name+" "+record.type); editButton.addEventListener("click", () => edit(record,true));
+      const remove = document.createElement("button"); remove.textContent = "Delete"; remove.setAttribute("aria-label","Delete "+record.name+" "+record.type); remove.addEventListener("click", () => {
         pendingDelete = record; $("delete-description").textContent = record.name + " · " + record.type; $("delete-dialog").showModal();
       }); actions.append(editButton, remove); tr.append(actions); $("rows").append(tr);
     } controls();
   }
   function messageFor(error) {
-    return ({400:"Invalid record or expired timestamp. Check the draft; your edits are preserved.",401:"Authentication required. Disconnect and reconnect with an admin token.",403:"Access denied. Disconnect and check the admin token.",409:"This name has an incompatible record set. Resolve the conflict before saving.",503:"The record store is unavailable. Your draft is preserved; check the server before retrying."})[error.status] || "Request failed. Check the connection and refresh before retrying; a lost response may still mean the server saved the change.";
+    return ({400:"Invalid record or expired timestamp. Check the draft; your edits are preserved.",401:"Authentication required. Sign in or reconnect.",403:"Access denied. Check your account permissions.",409:"This name has an incompatible record set. Resolve the conflict before saving.",503:"The record store is unavailable. Your draft is preserved; check the server before retrying."})[error.status] || "Request failed. Check the connection and refresh before retrying; a lost response may still mean the server saved the change.";
   }
   async function request(method = "GET", payload, suffix = "") {
     const current = generation, controller = new AbortController(); requests.add(controller);
@@ -105,10 +106,11 @@
   });
   $("disconnect").addEventListener("click", () => { if(window.secDNSAgent?.active){void window.secDNSAgent.logout().catch(()=>{});return;} if (!dirty || window.confirm("Disconnect and discard the unsaved draft?")) disconnect(); });
   window.addEventListener("agentexpired",()=>{generation++;for(const c of requests)c.abort();requests.clear();token="";ready=false;busy=false;$("login").hidden=false;$("connection").textContent="Sign-in required  -  draft preserved";controls();});
- window.addEventListener("agentconnected",async()=>{token="";try{await refresh();$("login").hidden=true;$("workspace").hidden=$("disconnect").hidden=false;$("connection").textContent="Agent session";status("Agent connected; draft preserved.","success");}catch(e){status(messageFor(e),"error");}controls();});
+ window.addEventListener("agentconnected",async()=>{token="";try{await refresh();$("login").hidden=true;$("workspace").hidden=$("disconnect").hidden=false;$("connection").textContent="Agent session";status("");$("disconnect").hidden=true;}catch(e){status(messageFor(e),"error");}controls();});
  window.addEventListener("pagehide", disconnect);
   $("filter").addEventListener("input", render);
-  $("new-record").addEventListener("click", () => edit());
+  $("close-editor").addEventListener("click",()=>{if(!confirm("Close the editor and discard unsaved fields?"))return;dirty=false;edit();$("new-record").focus();});
+  $("new-record").addEventListener("click", () => edit(null,true));
   $("add-value").addEventListener("click", () => { valueRow(""); dirty = true; });
   $("editor").addEventListener("input", () => { dirty = true; });
   $("expiry-mode").addEventListener("change", () => { dirty = true; $("expiry").value = ""; expiryUI(); });

@@ -7,18 +7,18 @@
 <link rel="stylesheet" href="../auth/auth.css">
 </head>
 <body>
-<header><strong>secDNS</strong><span>Operations</span><span id="connection">Disconnected</span></header>
+<header><strong>secDNS</strong><span id="connection">Disconnected</span></header>
 <main><!-- follower-status-link -->
-  <p class="hint"><a href="import-preview/" target="_blank" rel="noopener noreferrer">RouterOS import preview</a> opens in a separate page; this workspace stays here.</p>
+  <p class="hint console-import-handoff"><a href="import-preview/" target="_blank" rel="noopener noreferrer">RouterOS import preview</a> opens in a separate page; this workspace stays here.</p>
   <div class="heading"><div><p class="eyebrow">RECORD STORE</p><h1>DNS records</h1><p>Manage individual records in this server’s shared store.</p></div><button id="disconnect" hidden>Disconnect</button></div>
   <section id="login" class="card"><h2>Legacy token access</h2><p id="endpoint"></p><form id="connect-form"><label for="token">Legacy admin access token</label><div class="inline"><input id="token" type="password" autocomplete="off" required spellcheck="false"><button class="primary">Connect</button></div></form><p class="hint">The token stays in this page’s memory. Disconnect when you finish.</p></section>
   <p id="status" role="status" aria-live="polite"></p>
   <div id="workspace" hidden>
     <div class="grid">
-      <section class="card records"><div class="toolbar"><h2>Records <span id="count" class="badge">0</span></h2><button id="refresh">Refresh</button></div><label for="filter">Filter records</label><input id="filter" type="search" placeholder="Name, type or value"><div class="table-wrap"><table><thead><tr><th>Name / values</th><th>Type</th><th>TTL</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div><p id="empty">No records yet.</p></section>
-      <section class="card"><div class="toolbar"><h2 id="editor-title">Create record</h2><button id="new-record">New record</button></div><form id="editor">
+      <section class="card records"><div class="toolbar"><h2>Records <span id="count" class="badge">0</span></h2><div class="record-toolbar-actions"><button id="refresh">Refresh</button><button id="new-record" class="primary">New record</button></div></div><label for="filter">Filter records</label><input id="filter" type="search" placeholder="Name, type or value"><div class="table-wrap"><table><thead><tr><th>Name / values</th><th>Type</th><th>TTL</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table></div><p id="empty">No records yet.</p></section>
+      <section class="card" id="record-editor" hidden><div class="toolbar"><h2 id="editor-title" tabindex="-1">New record</h2><button id="close-editor" type="button">Close</button></div><form id="editor">
         <label for="name">DNS name</label><input id="name" required spellcheck="false" placeholder="host.example.">
-        <div class="two"><div><label for="type">Type</label><select id="type"><option>A</option><option>AAAA</option><option>CNAME</option><option>TXT</option></select></div><div><label for="ttl">TTL (seconds)</label><input id="ttl" type="number" min="0" max="4294967295" step="1" value="60" required></div></div>
+        <div class="two"><div><label for="type">Type</label><select id="type"><option>A</option><option>AAAA</option><option>CNAME</option><option>TXT</option></select></div><div><label for="ttl">TTL (seconds; 0 uses 60)</label><input id="ttl" type="number" min="0" max="4294967295" step="1" value="60" required></div></div>
         <fieldset><legend>Values</legend><div id="values"></div><button id="add-value" type="button">Add value</button></fieldset>
         <label for="expiry-mode">Expiration</label><select id="expiry-mode"><option value="permanent">Permanent</option><option value="keep">Keep existing expiration</option><option value="absolute">Set exact timestamp</option><option value="relative">Expire after seconds</option></select>
         <label for="expiry" id="expiry-label" hidden>Expiration value</label><input id="expiry" hidden spellcheck="false"><p id="expiry-help" class="hint">Permanent records do not expire from the store.</p>

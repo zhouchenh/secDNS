@@ -30,8 +30,8 @@
   }
   function accept(data) {
     if(!Number.isFinite(Date.parse(data.expires_at))||!Number.isFinite(Date.parse(data.idle_expires_at))||data.record_role!=="writable_authority"||!["agent","human"].includes(data.principal_type)||typeof data.csrf!=="string"||!Array.isArray(data.scopes)||!data.scopes.includes("ui:view"))throw new Error("Unexpected authentication response.");
-    actor=data;csrf=data.csrf;panel.hidden=data.principal_type==="human";logout.textContent=data.principal_type==="human"?"Sign out":"Sign out agent";form.hidden=true;identity.hidden=logout.hidden=false;
-    identity.textContent=`${data.principal_type==="human"?"Human":"Agent"} · ${data.display_name} · realm ${data.realm_id} · node ${data.node_id} · Writable authority | ${data.scopes.join(" · ")} · expires ${new Date(Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))).toISOString()}`;
+    actor=data;csrf=data.csrf;panel.hidden=true;logout.textContent=data.principal_type==="human"?"Sign out":"Sign out agent";form.hidden=true;identity.hidden=logout.hidden=false;
+    identity.textContent=`${data.principal_type==="human"?"Human":"Agent"} · ${data.display_name} · realm ${data.realm_id} · node ${data.node_id} · ${data.scopes.includes("records:write")?"Edit access":"Read-only access"} | ${data.scopes.join(" · ")} · expires ${new Date(Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))).toISOString()}`;
     clearTimeout(timer);const remaining=Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))-Date.now();
     clearTimeout(warningTimer);warning.textContent="";if(data.principal_type==="human")warningTimer=setTimeout(()=>{warning.textContent="Your session expires in two minutes. Continue working or sign in again; local drafts are preserved.";},Math.max(0,remaining-120000));
     timer=setTimeout(()=>{localClear();note.textContent="Session expired. Sign in again; local work is preserved.";fire("agentexpired");},Math.max(0,remaining));
@@ -42,6 +42,7 @@
     get kind(){return actor?.principal_type || "";},
     acceptSession(data){if(!allowedOrigin)throw new Error("Secure origin required.");accept(data);fire("agentconnected");},
     get name(){return actor?.display_name || "";},
+    get role(){return actor?.scopes.includes("records:write")?(actor.principal_type==="human"?"Administrator":"Agent - edit access"):"Read-only agent";},
     allows(scope){return !actor || (actor.scopes.includes(scope)&&(scope!=="records:write"||actor.record_role==="writable_authority"));},
     headers(token,method){return actor ? (method==="GET"?{}:{"X-SecDNS-CSRF":csrf,"Content-Type":"application/json"}) : {Authorization:"Bearer "+token,"X-SecDNS-Legacy-Access":"1"};},
     credentials(){return actor?"same-origin":"omit";},

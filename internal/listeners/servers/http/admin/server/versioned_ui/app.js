@@ -8,7 +8,7 @@
   $("endpoint").textContent = endpoint.origin + endpoint.pathname;
   let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null, importChannel = null, importChannelID = "";
   const requests = new Set();
-  function status(text, kind = "") { $("status").textContent = text; $("status").className = kind; }
+  function status(text, kind = "", routine = false) { $("status").textContent = text; $("status").className = kind; $("status").hidden = !text || routine; }
   function comparisonVersion(title, record, unavailable = false) {
     const section = document.createElement("section"), heading = document.createElement("h4");
     section.className = "comparison-version"; heading.textContent = title; section.append(heading);
@@ -57,7 +57,7 @@
     stale_snapshot_response:"An older snapshot response was ignored. Fetch current state again.",
     duplicate_record:"That name and type already exist in the draft. Edit the existing row.",
     reconciliation_required:"Stage unfinished fields and reconcile current state before preparing another operation.",
-    uncertain:"The operation outcome is uncertain. Retry only the same frozen operation; disconnecting does not roll it back.",
+    uncertain:"Could not confirm whether the change was saved. Your draft is preserved. Retry the same change to check safely. Signing out does not undo a submitted change.",
     invalid_snapshot_response:"The server returned an invalid snapshot. Local work is preserved.",
     handoff_reconciliation_required:"Exact candidate not transferred. Finish, apply or explicitly discard existing local work first.",
     handoff_identity_conflict:"Exact candidate not transferred. Its ruleset ID does not match this editor.",
@@ -67,13 +67,20 @@
   const message = e => messages[e.message] || "Unexpected response or connection failure. Local work is preserved.";
   const locked = () => (window.secDNSAgent && !window.secDNSAgent.allows("records:write")) || busy || !connected || !!model.pending || model.identityBlocked;
   function controls() {
+    const work=model.dirty()||!!model.pending||model.identityBlocked||(!!model.base&&!model.fresh);
+    $("pending-actions").hidden=!work;$("change-summary").hidden=!work;$("change-review").hidden=!work;
+    $("local-work-warning").hidden=!(model.dirty()||model.pending);
+    $("workspace").classList.toggle("editing",!$("record-editor").hidden);
+    const changes=S.changes(model.base?.records||[],model.draft);$("change-count").textContent=model.pending?.status==="uncertain"?"Change outcome uncertain":model.formDirty?"Unstaged record edit":`${changes.added} added / ${changes.changed} changed / ${changes.removed} removed`;
     for (const c of $("editor").querySelectorAll("input, select, textarea, button")) c.disabled = locked();
     $("name").disabled = $("type").disabled = locked() || !!selected;
     $("expiry").disabled = locked() || $("expiry-mode").value === "permanent";
+    $("expiry").hidden=document.querySelector('label[for="expiry"]').hidden=$("expiry-mode").value==="permanent";
     $("new-record").disabled = locked();
     for (const b of $("rows").querySelectorAll("button")) b.disabled = locked();
     $("review").disabled = locked() || !model.fresh || !model.dirty() || model.formDirty;
     $("retry").hidden = !model.pending || model.pending.status !== "uncertain";
+    $("review").hidden=model.pending?.status==="uncertain";$("retry").classList.toggle("primary",model.pending?.status==="uncertain");$("adopt").hidden=!(model.pending||model.identityBlocked||(model.base&&!model.fresh));$("recovery-tools").hidden=!(model.dirty()||model.pending||model.identityBlocked);
     $("retry").disabled = (window.secDNSAgent && !window.secDNSAgent.allows("records:write")) || busy || !connected || model.identityBlocked;
     $("adopt").disabled = busy || !connected || !model.current || !model.fresh || model.identityBlocked || ["sending","uncertain"].includes(model.pending?.status);
     $("refresh").disabled = busy || !connected;
@@ -89,40 +96,43 @@
     remove.addEventListener("click", () => { if (locked()) return; row.remove(); model.touch(); controls(); });
     row.append(input,remove); $("values").append(row);
   }
-  function edit(record = null, force = false) {
+  function edit(record = null, force = false, open = false) {
     if (!force && model.formDirty && !confirm("Discard unfinished record fields? The staged snapshot draft is retained.")) return;
-    selected = record ? S.key(record) : null; model.formDirty = false;
-    $("editor-title").textContent = record ? "Edit draft record" : "Create record";
+    selected = record ? S.key(record) : null; model.formDirty = false;$("record-editor").hidden=!open;
+    $("editor-title").textContent = record ? "Edit record" : "New record";
     $("name").value = record?.name || ""; $("type").value = record?.type || "A"; $("ttl").value = String(record?.ttl_seconds ?? 300);
     $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);
-    $("expiry-mode").value = record?.expires_at ? "absolute" : "permanent"; $("expiry").value = record?.expires_at || ""; controls();
+    $("expiry-mode").value = record?.expires_at ? "absolute" : "permanent"; $("expiry").value = record?.expires_at || ""; controls();if(open)$("editor-title").focus();
   }
   window.addEventListener("beforeunload",event=>{if(model.dirty()||model.pending){event.preventDefault();event.returnValue="";}});
+  $("close-editor").addEventListener("click",()=>{if(model.formDirty&&!confirm("Discard unfinished fields? Staged changes are retained."))return;edit(null,true);$("new-record").focus();});
   $("record-type-filter").addEventListener("change",render);
   function render() {
     $("workspace").hidden = !model.base;
-    $("connection").textContent = connected ? "Connected · snapshot API" : "Disconnected";
-    $("disconnect").hidden = !connected; $("login").hidden = connected || document.body.dataset.recordGateway === "true";
+    $("connection").textContent = connected ? (model.fresh?"Records loaded":"Refresh needed") : "Disconnected";
+    $("disconnect").hidden = !connected || !!window.secDNSAgent?.active; $("login").hidden = connected || document.body.dataset.recordGateway === "true";
     $("base-version").textContent = "Base revision " + (model.base?.revision || "—");
     $("current-version").textContent = "Observed current " + (model.current?.revision || "—");
     const diff = S.changes(model.base?.records || [], model.draft);
     $("change-count").textContent = `${diff.added} added · ${diff.changed} changed · ${diff.removed} removed`;
     $("receipt").textContent = model.receipt ? "Acknowledged operation " + model.receipt.operation_id + " at revision " + model.receipt.revision + " · " + model.receipt.committed_at + ". This receipt is not a current-state snapshot." : "";
+    $("saved-details").hidden=!model.receipt;
     const origin=model.draftProvenance;$("draft-provenance").textContent=origin?"Operator-supplied strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"unchanged after transfer; the tuple will be submitted":"locally edited; the original tuple will not be submitted")+". The source and profile are not authenticated by the snapshot server.":"";
     $("count").textContent = String(model.draft.length); $("rows").replaceChildren();
     const filter = $("filter").value.toLowerCase(), typeFilter=$("record-type-filter").value; let count = 0;
     for (const record of model.draft) {
       if (typeFilter && record.type!==typeFilter) continue;
       if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
-      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; title.textContent = record.name; info.append(title); const valueCell=document.createElement("td");
+      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; title.textContent = record.name; info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
       for (const value of record.values) {const d = document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;valueCell.append(d);}
       if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+record.expires_at;valueCell.append(d);}
-      tr.append(info,valueCell);for(const text of [record.type,record.ttl_seconds+" s"]){const td=document.createElement("td");td.textContent=text;tr.append(td);}
+      const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
-      change.addEventListener("click",()=>{if(!locked()) edit(record);});
+      change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});
       remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}if(confirm("Stage deletion of "+record.name+" · "+record.type+"? Nothing is sent until the reviewed operation is confirmed.")){model.remove(S.key(record));if(selected===S.key(record))edit(null,true);render();}});
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
+    $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;
     $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No draft records match this filter.":"The draft is empty.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
@@ -154,13 +164,13 @@
   $("connect-form").addEventListener("submit",async e=>{
     e.preventDefault();if(busy)return;const entered=$("token").value.trim();$("token").value="";if(!entered)return;try{await window.secDNSAgent?.switchToLegacy();}catch{status("Could not end the agent session. Legacy access was not started.","error");return;}token=entered;
     const captured=epoch;busy=true;controls();status("Loading current snapshot…");
-    try{await fetchCurrent();if(captured!==epoch)return;connected=true;status(model.pending?"Reconnected. Pending operation retained; no automatic submission.":"Snapshot loaded.","success");}
+    try{await fetchCurrent();if(captured!==epoch)return;connected=true;status(model.pending?"Reconnected. Pending operation retained; no automatic submission.":"Records loaded.","success",!model.pending);}
     catch(error){if(captured===epoch){token="";connected=false;status(message(error),"error");}}
     finally{if(captured===epoch){busy=false;render();}}
   });
   $("disconnect").addEventListener("click",()=>{if(window.secDNSAgent?.active)void window.secDNSAgent.logout().catch(()=>{});disconnect();});
  window.addEventListener("agentexpired",()=>{disconnect(false);status("Authentication session ended. Local draft and pending recovery are preserved.","error");});
- window.addEventListener("agentconnected",async()=>{if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;status("Authentication session connected. No pending operation was submitted.","success");}catch(e){status(message(e),"error");}finally{render();}});
+ window.addEventListener("agentconnected",async()=>{if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;status(model.pending?"Signed in. Pending changes preserved; nothing was submitted.":"Records loaded.","success",!model.pending);}catch(e){status(message(e),"error");}finally{render();}});
   function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
   $("open-import").addEventListener("click",event=>{
     if(typeof BroadcastChannel!=="function"||!globalThis.crypto?.getRandomValues)return;
@@ -179,7 +189,7 @@
   window.addEventListener("pageshow",e=>{if(e.persisted)disconnect();});
   window.addEventListener("beforeunload",e=>{if(model.dirty()||model.pending){e.preventDefault();e.returnValue="";}});
   $("filter").addEventListener("input",render);
-  $("new-record").addEventListener("click",()=>edit());
+  $("new-record").addEventListener("click",()=>edit(null,false,true));
   $("add-value").addEventListener("click",()=>{if(locked())return;valueRow("");model.touch();controls();});
   $("editor").addEventListener("input",()=>{model.touch();controls();});
   $("expiry-mode").addEventListener("change",()=>{model.touch();controls();});
@@ -192,7 +202,18 @@
   $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Current snapshot fetched. The operation outcome is still uncertain; retry the same operation.":model.pending?.status==="acknowledged"?"Saved; newer local edits require reconciliation.":"Current snapshot fetched. Your staged and unfinished edits were preserved.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
   $("clear").addEventListener("click",()=>{if(confirm("Clear all local drafts, pending request identity and receipt, then disconnect? This cannot cancel or undo any server operation. Closing or reloading also loses this recovery information.")){disconnect(false);model.clear();edit(null,true);render();status("Local work cleared. Reconnect explicitly to load a server snapshot.");}});
-  $("review").addEventListener("click",()=>{if($("review").disabled)return;reviewedEdit=model.review(endpoint.href);const proposal=model.proposal(endpoint.href);$("review-title").textContent=proposal.mode==="rrset"?"Apply one record change?":"Replace the complete snapshot?";$("review-scope").textContent=proposal.mode==="rrset"?`${proposal.change}: ${proposal.name} / ${proposal.type}. Only this RRset changes; other records remain. A global revision conflict still requires reconciliation.`:"All records, including retained expired records, are included. The server checks the base revision before committing.";$("review-confirm").textContent=proposal.mode==="rrset"?"Apply record change":"Apply replacement";const d=S.changes(model.base.records,model.draft);$("review-description").textContent=`${window.secDNSAgent?.active ? (window.secDNSAgent.kind==="human"?"Human ":"Agent ") + window.secDNSAgent.name + ": " : "Legacy administrator: "}Base revision ${model.base.revision}: ${d.added} added, ${d.changed} changed, ${d.removed} removed. ${proposal.mode==="rrset"?"One RRset operation":model.draft.length+" total record sets"} will be submitted.`;$("review-dialog").showModal();});
+  $("review").addEventListener("click",()=>{
+    if($("review").disabled)return;reviewedEdit=model.review(endpoint.href);const proposal=model.proposal(endpoint.href),d=S.changes(model.base.records,model.draft);
+    $("review-title").textContent=proposal.mode==="rrset"?"Apply one record change?":"Apply record changes?";
+    $("review-description").textContent=`${d.added} added, ${d.changed} changed, ${d.removed} removed.`;
+    $("review-scope").textContent=proposal.mode==="rrset"?"Other records remain unchanged.":"This sends the complete record list, including retained expired records. The server checks that no newer changes conflict before saving.";
+    $("review-technical").textContent=`Base revision ${model.base.revision}. ${proposal.mode==="rrset"?"Conditional single-record operation":"Complete snapshot replacement"}.`;
+    $("review-records").replaceChildren();
+    for(const row of S.comparisonRows(model.base.records,model.draft,model.current?.records||null).filter(r=>r.localChange!=="unchanged")){
+      const group=document.createElement("section");group.className="comparison-versions";group.append(comparisonVersion("Before",row.base),comparisonVersion("After",row.draft));$("review-records").append(group);
+    }
+    $("review-confirm").textContent=proposal.mode==="rrset"?"Apply record change":"Apply changes";$("review-dialog").showModal();
+  });
   $("review-cancel").addEventListener("click",()=>$("review-dialog").close());
   $("review-dialog").addEventListener("cancel",e=>{if(busy)e.preventDefault();});
   async function send(retry) {

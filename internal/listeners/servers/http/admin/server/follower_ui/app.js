@@ -3,9 +3,9 @@
  const $=id=>document.getElementById(id), endpoint=new URL("../../followers",document.currentScript.src);
  let token="",epoch=0,accessEpoch=0,switching=false,controller=null,connected=false,busy=false;
  const note=text=>{$("status").textContent=text;};
- function controls(){ $("refresh").disabled=busy||!connected||(window.secDNSAgent&&!window.secDNSAgent.allows("records:read"));$("disconnect").hidden=!connected; }
+ function controls(){ $("refresh").disabled=busy||!connected||(window.secDNSAgent&&!window.secDNSAgent.allows("records:read"));$("disconnect").hidden=!connected||!!window.secDNSAgent?.active;$("login").hidden=connected||!!window.secDNSAgent?.active; }
  function clear(){epoch++;controller?.abort();controller=null;token="";connected=false;busy=false;$("token").value="";$("rows").replaceChildren();$("sample").textContent="";controls();}
- const time=value=>value===null?"Not observed in this process":new Date(value).toISOString();
+ const time=value=>value===null?"Not observed in this process":new Date(value).toLocaleString();
  // Go emits UTC RFC3339Nano: reject JS's permissive locale/numeric date parsing.
  function timestamp(value){
   if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{0,8}[1-9])?Z$/.test(value))return false;
@@ -31,9 +31,9 @@
   for(const row of data.followers){
    const card=document.createElement("section"),title=document.createElement("h2"),list=document.createElement("dl");card.className="card";title.textContent=row.store;
    const fields={"Enrolled node":row.node_id,"Ruleset":row.ruleset_id,"Lineage":row.lineage_id,"Authority epoch":row.authority_epoch,"Local store":row.store_state,"Accepted revision":row.accepted?String(row.revision):"None accepted","Content digest":row.accepted?row.content_sha256:"None","Last accepted response":time(row.last_accepted_at),"Last validated contact":time(row.last_contact_at),"Contact freshness":row.contact_freshness,"Worker state":row.connection,"Last error category":row.error_category||"None"};
-   for(const [key,value] of Object.entries(fields)){const dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=key;dd.textContent=value;list.append(dt,dd);}card.append(title,list);cards.push(card);
+   for(const [key,value] of Object.entries(fields)){const dt=document.createElement("dt"),dd=document.createElement("dd");dt.textContent=key;dd.textContent=value;list.append(dt,dd);}const readable=value=>value.replaceAll("_"," ").replace(/^./,c=>c.toUpperCase());const overview=document.createElement("p");overview.className="follower-summary";overview.textContent="Records: "+readable(row.store_state)+" / Contact: "+readable(row.contact_freshness)+" / Connection: "+readable(row.connection)+(row.error_category?" / Error: "+row.error_category:"");const detail=document.createElement("details"),summary=document.createElement("summary");summary.textContent="Replication details";detail.append(summary,list);card.append(title,overview,detail);cards.push(card);
   }
-  $("rows").replaceChildren(...cards);$("sample").textContent="Observed at "+time(data.observed_at)+". This sample does not update automatically.";
+  $("rows").replaceChildren(...cards);$("sample").textContent="Last checked "+time(data.observed_at)+". This sample does not update automatically.";
  }
  async function refresh(){
   controller?.abort();const captured=++epoch;const current=new AbortController();controller=current;busy=true;controls();note("Reading local worker status...");const timeout=setTimeout(()=>current.abort(),10000);
@@ -51,6 +51,6 @@
  $("refresh").addEventListener("click",refresh);
  $("disconnect").addEventListener("click",()=>{const active=window.secDNSAgent?.active;accessEpoch++;clear();note("Disconnected. Status sample cleared.");if(active)void window.secDNSAgent.logout().catch(()=>{});});
  window.addEventListener("agentexpired",()=>{if(!switching)accessEpoch++;clear();note("Authentication session ended. Status sample cleared.");});
- window.addEventListener("agentconnected",()=>{accessEpoch++;clear();connected=true;controls();note("Session connected. Select Refresh status to read local workers.");});
+ window.addEventListener("agentconnected",()=>{accessEpoch++;clear();connected=true;controls();void refresh();});
  window.addEventListener("pagehide",()=>{accessEpoch++;clear();});
 })();
