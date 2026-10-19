@@ -16,7 +16,12 @@
   const cards=[...main.querySelectorAll(":scope > section")].filter(el=>el.id==="human-access"||el.id==="login"||el.querySelector("h2")?.textContent==="Agent access");
   if(cards.length){main.prepend(access);for(const card of cards)access.append(card);access.open=!window.secDNSAgent?.active;
    account.addEventListener("click",()=>{access.open=true;access.scrollIntoView({block:"start",behavior:"smooth"});summary.focus();});
-   window.addEventListener("agentconnected",()=>{access.open=true;});
+   // Collapse only an empty access panel. Visible enrollment/recovery UI stays open.
+   const collapseEmpty=()=>{if(cards.every(card=>card.hidden))access.open=false;};
+   const visibility=new MutationObserver(collapseEmpty);
+   for(const card of cards)visibility.observe(card,{attributes:true,attributeFilter:["hidden"]});
+   window.addEventListener("agentconnected",collapseEmpty);
+   collapseEmpty();
    window.addEventListener("agentexpired",()=>{access.open=true;});
   }else account.hidden=true;
  }
