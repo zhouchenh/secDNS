@@ -53,7 +53,7 @@
     receipt_capacity:"The operation receipt ledger is full. Operator intervention is required.",
     revision_exhausted:"The revision range is exhausted. Operator intervention is required.",
     snapshot_unavailable:"The store is unavailable. Local work is preserved.",
-    authentication:"Authentication failed. Reconnect with a token; local work and pending recovery are preserved.",
+    authentication:"Authentication failed. Sign in or reconnect; local work and pending recovery are preserved.",
     stale_snapshot_response:"An older snapshot response was ignored. Fetch current state again.",
     duplicate_record:"That name and type already exist in the draft. Edit the existing row.",
     reconciliation_required:"Stage unfinished fields and reconcile current state before preparing another operation.",
