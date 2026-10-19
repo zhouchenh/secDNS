@@ -40,3 +40,12 @@ Inspect recent security events and revoke other sessions after recovery. There i
 ## Local validation
 
 Go regressions cover schema migration rollback/commit uncertainty, strict reopen/encrypted-seed corruption, atomic one-winner setup, OTP replay, source-bound ceremonies, persistent rate refusal, root/saved-code recovery, old-factor preservation, session generation invalidation, recent-MFA expiry and agent denial. The opt-in `ADMINAUTH_BROWSER=1` fixture uses an isolated localhost TLS server and installed Chromium with synthetic credentials, proving setup/login/reload/rotation/recovery and a 375-pixel layout. It also reruns the agent-session browser flow. No real portal, candidate, CA or production service is changed by these tests.
+
+
+For the persistent-record-store intersection, run the separate local fixture:
+
+```sh
+ADMINAUTH_SCHEMA4_BROWSER=1 PLAYWRIGHT_MODULE=<existing-install> go test ./internal/listeners/servers/http/admin/server -run '^TestHumanSchema4Browser$' -count=1 -v
+```
+
+This uses disposable auth credentials and a temporary SQLite record store explicitly migrated to schema4. It exercises real password/TOTP login, the secure human session cookie, CSRF rejection without writes, the single-RRset editor without a bearer token, and exact operation replay after a deliberately truncated acknowledgement. Closing and reopening the store verifies the snapshot and exactly one targeted receipt remain durable. It does not capture screenshots or access an existing portal or database; the temporary TLS exception is limited to the test browser context.
