@@ -102,9 +102,9 @@ func TestManualWorkflowQA(t *testing.T) {
 		}
 	}
 	write("synthetic-credentials.private.json", map[string]string{"username": "qa-owner", "password": password, "totp_secret": owner.Secret, "follower_token": follower.Token})
-	write("READY.json", map[string]any{"portal_url": portal.URL + "/admin/ui/", "follower_url": fs.URL + "/owned-static/ui/", "tls_spki_sha256_base64": base64.StdEncoding.EncodeToString(spki[:]), "synthetic_only": true, "records": len(records), "started_at": time.Now().UTC(), "stop_file": "STOP", "expires_after_minutes": 45})
+	write("READY.json", map[string]any{"portal_url": portal.URL + "/admin/ui/", "follower_url": fs.URL + "/owned-static/ui/", "tls_spki_sha256_base64": base64.StdEncoding.EncodeToString(spki[:]), "synthetic_only": true, "records": len(records), "started_at": time.Now().UTC(), "stop_file": "STOP", "expires_after_minutes": 90})
 	t.Log("Disposable loopback gateway fixture ready; metadata in explicit QA directory")
-	deadline := time.NewTimer(45 * time.Minute)
+	deadline := time.NewTimer(90 * time.Minute)
 	defer deadline.Stop()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
