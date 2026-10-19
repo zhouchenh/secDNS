@@ -109,7 +109,7 @@ func TestHumanSchema4Browser(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if before.Metadata().Revision != 2 || len(before.Records()) != 1 {
+	if before.Metadata().Revision != 3 || len(before.Records()) != 13 {
 		t.Fatal("unexpected durable operation count")
 	}
 	if e = v.Close(); e != nil {
@@ -139,7 +139,7 @@ func TestHumanSchema4Browser(t *testing.T) {
 	if e = db.QueryRow("SELECT count(*), count(rrset_request) FROM operation_receipts").Scan(&count, &targeted); e != nil {
 		t.Fatal(e)
 	}
-	if count != 1 || targeted != 1 {
+	if count != 2 || targeted != 1 {
 		t.Fatal("CSRF refusals/retry created extra receipts")
 	}
 

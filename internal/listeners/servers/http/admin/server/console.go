@@ -40,10 +40,10 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	}
 	role := "Record administration"
 	if h.versioned != nil {
-		role = "Writer authority"
+		role = "DNS server"
 	}
 	if h.recordGatewayEnabled() {
-		role = "Connected record authority"
+		role = "Connected DNS server"
 	}
 	if h.FollowerStatusOnly {
 		role = "Read-only follower"

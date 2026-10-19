@@ -207,7 +207,7 @@ func TestRecordGatewayHumanSessionRemoteCAS(t *testing.T) {
 		}
 	}
 	ui := request("GET", "/ui/", "", nil, "")
-	if !strings.Contains(ui.Body.String(), "Connected record authority") || !strings.Contains(ui.Body.String(), "state.js") {
+	if !strings.Contains(ui.Body.String(), "Connected DNS server") || !strings.Contains(ui.Body.String(), "state.js") {
 		t.Fatal("gateway editor mode")
 	}
 	before = calls.Load()
