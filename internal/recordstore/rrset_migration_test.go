@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRRsetSchemaMigrationPreservesLegacyAndRollsBack(t *testing.T) {
@@ -179,5 +180,51 @@ func TestRRsetHistoricalOutcomeCorruptionRejected(t *testing.T) {
 	}
 	if !errors.Is(e, ErrVersionedSchema) {
 		t.Fatal("historical outcome accepted", e)
+	}
+}
+
+func TestRRsetCapabilitySchemaAndClosed(t *testing.T) {
+	path := dbPath(t)
+	versionedV2Fixture(t, path)
+	s := openVersionedTest(t, path)
+	if s.SupportsRRsetMutations() {
+		t.Fatal("schema2 advertised")
+	}
+	s.Close()
+	if s.SupportsRRsetMutations() {
+		t.Fatal("closed advertised")
+	}
+	m, _ := NewVersionedMemory(enrollment)
+	if !m.SupportsRRsetMutations() {
+		t.Fatal("memory missing capability")
+	}
+	m.Close()
+	if m.SupportsRRsetMutations() {
+		t.Fatal("closed memory advertised")
+	}
+}
+
+func TestRRsetCapabilityDoesNotWaitForWriter(t *testing.T) {
+	s, _ := NewVersionedMemory(enrollment)
+	defer s.Close()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	s.hooks.beforeCommit = func(*sql.Tx) error { close(entered); <-release; return nil }
+	go func() { _, e := s.MutateRRset(mutation(1, "blocked")); done <- e }()
+	<-entered
+	read := make(chan bool, 1)
+	go func() { read <- s.SupportsRRsetMutations() }()
+	select {
+	case ok := <-read:
+		if !ok {
+			t.Error("capability missing")
+		}
+	case <-time.After(time.Second):
+		t.Error("capability blocked behind commit")
+	}
+	close(release)
+	if e := <-done; e != nil {
+		t.Fatal(e)
 	}
 }

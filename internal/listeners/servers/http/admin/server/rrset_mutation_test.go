@@ -173,3 +173,55 @@ func TestRRsetHTTPSQLiteRequiresOfflineMigration(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestRRsetCapabilitySnapshotHeaders(t *testing.T) {
+	h := &HTTPAdminServer{Token: testToken}
+	bindRRsetTest(t, h)
+	var body, etag string
+	check := func(want string) {
+		first := do(h, "GET", "/admin/snapshot", testToken, "")
+		if first.Code != 200 || first.Header().Get("SecDNS-RRset-Mutations") != want {
+			t.Fatal(first.Code, first.Header())
+		}
+		if body == "" {
+			body = first.Body.String()
+			etag = first.Header().Get("ETag")
+		} else if body != first.Body.String() || etag != first.Header().Get("ETag") {
+			t.Fatal("capability changed canonical response or ETag")
+		}
+		req := httptest.NewRequest("GET", "/admin/snapshot", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		req.Header.Set("If-None-Match", first.Header().Get("ETag"))
+		w := httptest.NewRecorder()
+		h.routes().ServeHTTP(w, req)
+		if w.Code != 304 || w.Header().Get("SecDNS-RRset-Mutations") != want || w.Body.Len() != 0 {
+			t.Fatal(w.Code, w.Header())
+		}
+		denied := do(h, "GET", "/admin/snapshot", "", "")
+		if denied.Code != 401 || denied.Header().Get("SecDNS-RRset-Mutations") != "" {
+			t.Fatal("capability auth leak")
+		}
+	}
+	check("v1")
+	dir := t.TempDir()
+	os.Chmod(dir, 0700)
+	path := filepath.Join(dir, "records.db")
+	enrollment := recordstore.Enrollment{RulesetID: "r", LineageID: "l"}
+	s, e := recordstore.OpenVersionedSQLite(path, enrollment)
+	if e != nil {
+		t.Fatal(e)
+	}
+	h.versioned = s
+	check("")
+	s.Close()
+	if e = recordstore.EnableRRsetMutationsSQLite(path, enrollment); e != nil {
+		t.Fatal(e)
+	}
+	s, e = recordstore.OpenVersionedSQLite(path, enrollment)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer s.Close()
+	h.versioned = s
+	check("v1")
+}

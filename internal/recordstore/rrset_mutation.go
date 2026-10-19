@@ -106,3 +106,10 @@ func decodeRRsetReceiptMetadata(raw []byte, content string) (recordset.RRsetMuta
 	}
 	return mutation, nil
 }
+
+// SupportsRRsetMutations reports only local writer capability, not authorization.
+func (s *VersionedStore) SupportsRRsetMutations() bool {
+	// db and schemaVersion are immutable after initialization. Do not block a
+	// snapshot read behind a writer's durable commit I/O.
+	return s.current.Load() != nil && (s.db == nil || s.schemaVersion >= 4)
+}
