@@ -212,7 +212,50 @@ func (s *Store) grantSQL(q queryer, grant, purpose string, now time.Time) error 
 
 // Rate limits are durable across process restart. Account bucket is constant,
 // including unknown names; source is the caller's socket peer, never a header.
+func humanRateKeys(source string, mfa bool) []string {
+	if mfa {
+		return []string{"human-mfa-account", "human-mfa-source:" + source}
+	}
+	// Preserve the pre-existing keys and debt for password/grant admission.
+	return []string{"human-account", "human-source:" + source}
+}
+
 func (s *Store) rateAttempt(source string, now time.Time) error {
+	return s.rateAttemptStage(source, now, false)
+}
+func (s *Store) rateAttemptMFA(source string, now time.Time) error {
+	return s.rateAttemptStage(source, now, true)
+}
+
+// A ceremony must not be issued into an already blocked MFA window. This check
+// does not reserve a guess or erase debt; Confirm accounts for every OTP attempt.
+func (s *Store) mfaEligible(source string, now time.Time) error {
+	if len(source) < 1 || len(source) > 128 || !validNow(now) {
+		return ErrDenied
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.healthy() || s.version < 3 {
+		return ErrUnavailable
+	}
+	for _, key := range humanRateKeys(source, true) {
+		d := s.digest(key)
+		var until, updated int64
+		err := s.db.QueryRow("SELECT until_at,updated FROM human_rate WHERE bucket=?", d[:]).Scan(&until, &updated)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return ErrUnavailable
+		}
+		if updated >= now.Unix()-86400 && now.Unix() < until {
+			return ErrDenied
+		}
+	}
+	return nil
+}
+
+func (s *Store) rateAttemptStage(source string, now time.Time, mfa bool) error {
 	if len(source) < 1 || len(source) > 128 || !validNow(now) {
 		return ErrDenied
 	}
@@ -226,7 +269,7 @@ func (s *Store) rateAttempt(source string, now time.Time) error {
 		if _, e := tx.Exec("DELETE FROM human_rate WHERE updated<?", now.Unix()-86400); e != nil {
 			return ErrUnavailable
 		}
-		for _, key := range []string{"human-account", "human-source:" + source} {
+		for _, key := range humanRateKeys(source, mfa) {
 			d := s.digest(key)
 			var failures int
 			var until int64
@@ -275,7 +318,7 @@ func (s *Store) rateAttempt(source string, now time.Time) error {
 	return nil
 }
 func (s *Store) clearRateSQL(tx *sql.Tx, source string) error {
-	for _, key := range []string{"human-account", "human-source:" + source} {
+	for _, key := range append(humanRateKeys(source, false), humanRateKeys(source, true)...) {
 		d := s.digest(key)
 		if _, e := tx.Exec("DELETE FROM human_rate WHERE bucket=?", d[:]); e != nil {
 			return ErrUnavailable
