@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestConsoleActualRoutes(t *testing.T) {
@@ -25,6 +26,9 @@ func TestConsoleActualRoutes(t *testing.T) {
 					t.Fatal(route, r.Code)
 				}
 				body := r.Body.String()
+				if !utf8.ValidString(body) || strings.ContainsRune(body, '\uFFFD') {
+					t.Fatal("console page contains invalid or replacement UTF-8 text", route)
+				}
 				for _, want := range []string{`class="console-sidebar"`, `href="` + base + `/ui/console.css"`, `src="` + base + `/ui/console.js"`, `href="` + base + `/ui/"`, `href="` + base + `/ui/import-preview/"`} {
 					if !strings.Contains(body, want) {
 						t.Fatal("missing shell binding", want)
