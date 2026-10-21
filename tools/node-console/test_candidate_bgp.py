@@ -2,6 +2,9 @@ import copy
 import unittest
 import sys
 import types
+import tempfile
+import pathlib
+from contextlib import contextmanager
 from unittest.mock import patch
 if sys.platform=='win32':sys.modules['fcntl']=types.SimpleNamespace()
 import candidate_bgp as b
@@ -14,6 +17,19 @@ class BGPTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):b.rollback_locked('amd103',receipt,b.c.BASE/'receipt')
             self.assertEqual(receipt['status'],'pending')
             self.assertTrue(all(call.args[0].name!='receipt' for call in atomic.call_args_list))
+
+    def test_pending_transaction_blocks_new_apply(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);receipts=root/'console-receipts';receipts.mkdir()
+            (receipts/'old.json').write_text('{"action":"bgp-apply","status":"pending"}')
+            @contextmanager
+            def lock():
+                with (root/'lock').open('w') as handle:yield handle
+            fake=types.SimpleNamespace(flock=lambda *args:None,LOCK_EX=1,LOCK_NB=2)
+            with patch.object(b.c,'BASE',root),patch.object(b.c,'identity'),patch.object(b.c,'secure'),patch.object(b.c,'fcntl',fake),patch.object(b,'lock_file',lock),patch.object(b,'read_request') as read_request,patch.object(b,'restart') as restart:
+                with self.assertRaisesRegex(ValueError,'pending transaction'):
+                    b.apply('amd103','11111111-1111-4111-8111-111111111111',{})
+                read_request.assert_not_called();restart.assert_not_called()
 
     def test_reused_worker_pid_is_not_killed(self):
         receipt=dict(worker_pid=987654,worker_start='old')
