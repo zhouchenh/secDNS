@@ -7,6 +7,7 @@ import (
 )
 
 func (h *HTTPAdminServer) consoleRoutes(mux *http.ServeMux, base string) {
+	h.nodeUIRoutes(mux, base)
 	for _, asset := range []struct{ name, kind string }{{"console.css", "text/css"}, {"console.js", "text/javascript"}} {
 		data, err := editorAssets.ReadFile("console_ui/" + asset.name)
 		if err != nil {
@@ -35,6 +36,11 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 		link("/ui/", "DNS records", "records")
 		link("/ui/import-preview/", "Import records", "import")
 	}
+	if h.nodesEnabled() {
+		link("/ui/nodes/", "Nodes", "nodes")
+		link("/ui/health/", "DNS health", "health")
+		link("/ui/routing/", "Routing", "routing")
+	}
 	if len(h.followerStatusNames) > 0 {
 		link("/ui/followers/", "Local replication", "followers")
 	}
@@ -52,7 +58,12 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	if !h.FollowerStatusOnly {
 		account = `<button type="button" id="console-account">Access &amp; security</button>`
 	}
-	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><p class="console-label">ADMINISTRATION</p><nav aria-label="Administration">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>This instance only</span></div></aside>`
+	footer := "This instance only"
+	if active == "nodes" || active == "health" || active == "routing" {
+		role = "Candidate cluster"
+		footer = "3 managed nodes"
+	}
+	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><p class="console-label">ADMINISTRATION</p><nav aria-label="Administration">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>` + footer + `</span></div></aside>`
 	head := `<link rel="stylesheet" href="` + escaped + `/ui/console.css"><script defer src="` + escaped + `/ui/console.js"></script>`
 	data = bytes.Replace(data, []byte("</head>"), []byte(head+"</head>"), 1)
 	gateway := ""
