@@ -49,7 +49,7 @@ Validate and apply read a JSON object from standard input containing
 Only the four fixed peers' enabled state and keepalive/hold timers, and the four
 normal/DNS64 IPv4/IPv6 announcement eligibility flags, can change. At least one
 peer per address family must remain enabled. Addresses, ASNs, router identity,
-synthetic prefix filters and private BGP port1179 are fixed.
+synthetic prefix filters and private BGP port 1179 are fixed.
 
 The host validates FRR syntax before mutation, drains verified advertisements,
 saves the previous configuration, and arms an independent rollback timer before
@@ -58,8 +58,9 @@ restarts; DNS and its database remain running. Confirmed success requires fresh
 runtime peer state and actual advertisements matching the requested flags.
 Confirmed rollback similarly requires verified restored configuration and state.
 
-The adapter may report an uncertain result after its100-second SSH deadline while
-the independent120-second watchdog is still recovering the operation. Recovery
+The adapter may report an uncertain result after its 100-second SSH deadline while
+the independent 120-second watchdog is still recovering the operation. Recovery
 can require another forty seconds. Never submit another change to compensate for
 an uncertain operation: use read-only reconciliation of the UUID-bound receipt
 and status. A durable pending transaction blocks subsequent configuration apply.
+
