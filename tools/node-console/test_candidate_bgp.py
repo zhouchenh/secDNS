@@ -18,6 +18,16 @@ class BGPTests(unittest.TestCase):
             self.assertEqual(receipt['status'],'pending')
             self.assertTrue(all(call.args[0].name!='receipt' for call in atomic.call_args_list))
 
+    def test_rollback_waits_for_previously_healthy_profiles(self):
+        config=b.default_config('amd103')
+        profiles=[dict(role=a['role'],family=a['family'],healthy=False,advertised=False) for a in config['announcements']]
+        receipt=dict(node='amd103',action='bgp-apply',status='pending',old_bgp='old',old_config=config,old_withdraw=False,old_profile_health=[dict(role=p['role'],family=p['family'],healthy=True) for p in profiles])
+        status=dict(stale=False,profiles=profiles,peers=[dict(address=p['address'],state='Established') for p in config['peers']])
+        with patch.object(b,'atomic_text'),patch.object(b.c,'atomic') as atomic,patch.object(b,'restart'),patch.object(b.c,'snapshot',return_value=status),patch.object(b.time,'monotonic',side_effect=[0,41]):
+            with self.assertRaises(RuntimeError):b.rollback_locked('amd103',receipt,b.c.BASE/'receipt')
+            self.assertEqual(receipt['status'],'pending')
+            self.assertTrue(all(call.args[0].name!='receipt' for call in atomic.call_args_list))
+
     def test_pending_transaction_blocks_new_apply(self):
         with tempfile.TemporaryDirectory() as folder:
             root=pathlib.Path(folder);receipts=root/'console-receipts';receipts.mkdir()

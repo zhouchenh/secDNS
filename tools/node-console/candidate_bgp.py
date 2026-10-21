@@ -121,8 +121,10 @@ def rollback_locked(node,receipt,path):
         config=receipt['old_config']
         expected={p['address']:p['enabled'] for p in config['peers']}
         flags={(a['role'],a['family']):a['enabled'] for a in config['announcements']}
+        baseline={(p['role'],p['family']):p['healthy'] for p in receipt.get('old_profile_health',[])}
         ready=not result['stale'] and len(result['peers'])==4 and all((p['state']=='Established')==expected[p['address']] for p in result['peers'])
         ready=ready and all(p['healthy'] is not None and p['advertised']==(p['healthy'] and flags[p['role'],p['family']] and not receipt['old_withdraw']) for p in result['profiles'])
+        ready=ready and all(p['healthy'] is True or baseline.get((p['role'],p['family']),True) is not True for p in result['profiles'])
         ready=ready and get(node)['config']==validate(node,config) and (c.BASE/'bgp.conf').read_text()==receipt['old_bgp']
         if ready:break
         if time.monotonic()>deadline:raise RuntimeError('rollback not observed; receipt remains pending')
@@ -180,6 +182,7 @@ def apply(node,request_id,payload):
         preflight(node,config)
         c.secure(c.BASE/'bgp.conf')
         receipt=dict(request_id=request_id,action='bgp-apply',node=node,status='pending',confirmed=False,payload_digest=digest,old_config=old['config'],old_bgp=(c.BASE/'bgp.conf').read_text(),old_withdraw=before['maintenance']['withdraw'],worker_pid=os.getpid(),worker_start=pathlib.Path('/proc/self/stat').read_text().rsplit(')',1)[1].split()[19])
+        receipt['old_profile_health']=[{k:p[k] for k in ('role','family','healthy')} for p in before['profiles']]
         c.atomic(path,receipt)
         unit='secdns-bgp-rollback-'+request_id
         try:
