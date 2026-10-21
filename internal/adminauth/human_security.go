@@ -55,6 +55,9 @@ func (h *HumanAuth) Reauthenticate(token, csrf, password, code, source string, n
 		return HumanResult{}, ErrDenied
 	}
 	p.source = source
+	if e := h.store.rateAttemptMFA(source, now); e != nil {
+		return HumanResult{}, e
+	}
 	return h.confirmLogin([32]byte{}, p, code, now, token)
 }
 func (h *HumanAuth) RegenerateRecovery(token, csrf string, now time.Time) ([]string, error) {
