@@ -199,7 +199,8 @@ func TestNodeAgentCookieAndUncertainReceipt(t *testing.T) {
 	if w.Code != 409 || mutations != 1 {
 		t.Fatal("uncertain replay", w.Code, mutations)
 	}
-	data, _ := os.ReadFile(filepath.Join(h.NodeAuditDirectory, "22222222-2222-4222-8222-222222222222.jsonl"))
+	entries, _ := os.ReadDir(h.NodeAuditDirectory)
+	data, _ := os.ReadFile(filepath.Join(h.NodeAuditDirectory, entries[0].Name()))
 	if !strings.Contains(string(data), `"stage":"uncertain"`) {
 		t.Fatal("uncertain receipt absent")
 	}
@@ -215,5 +216,45 @@ func TestNodeManagementExcludedFromFollowerOnly(t *testing.T) {
 	h.routes().ServeHTTP(w, r)
 	if w.Code != 404 {
 		t.Fatal(w.Code)
+	}
+}
+
+func TestNodeReceiptSafeNamesAndLegacyReplay(t *testing.T) {
+	dir := t.TempDir()
+	for _, id := range []string{"../escape", `..\escape`, "/absolute", "C:/absolute", "11111111-1111-4111-8111-111111111111/../../x", ""} {
+		if file, err := reserveNodeReceipt(dir, id); err == nil {
+			file.Close()
+			t.Fatalf("unsafe identifier accepted: %q", id)
+		}
+	}
+	const oldID = "33333333-3333-4333-8333-333333333333"
+	if err := os.WriteFile(filepath.Join(dir, oldID+".jsonl"), []byte("legacy intent"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if file, err := reserveNodeReceipt(dir, oldID); !os.IsExist(err) {
+		if file != nil {
+			file.Close()
+		}
+		t.Fatalf("legacy receipt replay not blocked: %v", err)
+	}
+	const newID = "44444444-4444-4444-8444-444444444444"
+	file, err := reserveNodeReceipt(dir, newID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(file.Name())
+	file.Close()
+	if strings.Contains(name, newID) || len(name) != len("operation-")+64+len(".jsonl") || !strings.HasPrefix(name, "operation-") {
+		t.Fatal("unexpected receipt basename", name)
+	}
+	if file, err = reserveNodeReceipt(dir, newID); !os.IsExist(err) {
+		if file != nil {
+			file.Close()
+		}
+		t.Fatalf("new receipt replay not blocked: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 2 {
+		t.Fatal("unexpected receipt creation", err, len(entries))
 	}
 }

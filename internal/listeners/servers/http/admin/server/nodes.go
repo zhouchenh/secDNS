@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -174,7 +176,7 @@ func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
 			return
 		}
 		// O_EXCL is a durable replay barrier, including after server restart.
-		file, err := os.OpenFile(filepath.Join(h.NodeAuditDirectory, body["request_id"]+".jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		file, err := reserveNodeReceipt(h.NodeAuditDirectory, body["request_id"])
 		if err != nil {
 			agentError(w, 409, "operation_id_used_or_audit_unavailable")
 			return
@@ -208,4 +210,25 @@ func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
 		}
 		writeJSON(w, 200, result)
 	}))
+}
+
+// Receipt paths are derived from a fixed-length digest, never from a request
+// string. Match legacy UUID receipt names without turning them into file paths:
+// their existence still blocks replay after upgrading from the original format.
+func reserveNodeReceipt(directory, requestID string) (*os.File, error) {
+	if !nodeRequestID.MatchString(requestID) {
+		return nil, errors.New("invalid operation identifier")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.Name() == requestID+".jsonl" {
+			return nil, os.ErrExist
+		}
+	}
+	digest := sha256.Sum256([]byte(requestID))
+	basename := "operation-" + hex.EncodeToString(digest[:]) + ".jsonl"
+	return os.OpenFile(filepath.Join(directory, basename), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 }
