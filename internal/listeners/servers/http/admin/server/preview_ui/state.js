@@ -26,8 +26,8 @@
   const handoffID=s=>typeof s==="string"&&/^[a-f0-9]{48}$/.test(s);
   function handoffConfig(hash,expectedTarget){
     if(typeof hash!=="string"||!hash.startsWith("#"))return null;let p;try{p=new URLSearchParams(hash.slice(1));}catch{return null;}
-    if([...p.keys()].length!==2||p.getAll("draft_handoff").length!==1||p.getAll("target").length!==1||!handoffID(p.get("draft_handoff"))||p.get("target")!==expectedTarget)return null;
-    return Object.freeze({channelID:p.get("draft_handoff"),targetPath:expectedTarget});
+    if(![2,3].includes([...p.keys()].length)||p.getAll("draft_handoff").length!==1||p.getAll("target").length!==1||!handoffID(p.get("draft_handoff"))||p.get("target")!==expectedTarget||([...p.keys()].length===3&&(p.getAll("ruleset").length!==1||!validRulesetID(p.get("ruleset")))))return null;
+    return Object.freeze({channelID:p.get("draft_handoff"),targetPath:expectedTarget,...(p.has("ruleset")?{rulesetID:p.get("ruleset")}:{})});
   }
   function exactBlocker(b,entries){return keys(b,["ordinal","line","code"],["related_ordinal"])&&blockerCodes.has(b.code)&&whole(b.ordinal,0,entries)&&whole(b.line,b.ordinal===0?0:1,INPUT+1)&&(b.ordinal!==0||b.line===0)&&(!Object.hasOwn(b,"related_ordinal")||whole(b.related_ordinal,1,entries));}
   function exactRecord(r){return keys(r,["name","type","values","ttl_seconds"])&&typeof r.name==="string"&&wellFormed(r.name)&&!r.name.includes("\0")&&r.name.length>0&&r.name.length<=255&&["A","AAAA","CNAME"].includes(r.type)&&Array.isArray(r.values)&&r.values.length>0&&r.values.length<=64&&r.values.every(v=>typeof v==="string"&&wellFormed(v)&&!v.includes("\0")&&v.length>0&&v.length<=255)&&whole(r.ttl_seconds,0,0xffffffff);}
