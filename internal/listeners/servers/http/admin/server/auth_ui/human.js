@@ -70,13 +70,41 @@
     const b=document.createElement("button");b.type="button";b.textContent=text;groups[kind].append(b);
     b.addEventListener("click",async()=>{if(busy||window.secDNSAgent.kind!=="human")return;busy=true;b.disabled=true;const captured=epoch;let body={};try{if(kind==="reauth"){body={password:currentPassword.value,code:currentCode.value};currentPassword.value=currentCode.value="";}else if(kind==="password"){body={password:newPassword.value};newPassword.value="";}const result=await request(path,body,true);body={};if(captured!==epoch||window.secDNSAgent.kind!=="human")return;if(kind==="totp"){replacement=true;challenge=result.challenge;step="otp";showEnrollment(result);form.hidden=false;render();}if(result.principal_type)window.secDNSAgent.acceptSession(result);if(result.recovery_codes){recovery.value=result.recovery_codes.join("\n");recovery.hidden=dismiss.hidden=false;note.textContent="Previous recovery codes are invalid. Save these new codes now.";}else note.textContent={reauth:"Identity verified. You can now update your security settings.",password:"Password changed.",totp:"Confirm the new authenticator code below.",sessions:"Other human sessions signed out."}[kind]||"Security settings updated.";}catch(error){body={};if(captured===epoch&&window.secDNSAgent.kind==="human")note.textContent=error.message;}finally{busy=false;b.disabled=false;if(window.secDNSAgent.kind!=="human")reset();else{render();if(replacement)fields.code.input.focus();}}});
   }
-  const auditButton=document.createElement("button");auditButton.type="button";auditButton.textContent="View recent security events";const audit=document.createElement("pre");audit.hidden=true;audit.id="human-audit";security.append(auditButton,audit);
-  auditButton.addEventListener("click",async()=>{if(busy||window.secDNSAgent.kind!=="human")return;const captured=epoch;try{const result=await request("audit",undefined,true);if(captured!==epoch||window.secDNSAgent.kind!=="human")return;audit.textContent=result.events.map(e=>e.At+" "+e.Action).join("\n");audit.hidden=false;}catch(error){note.textContent=error.message;}});
+  const auditSection=document.createElement("section");auditSection.className="security-task security-events";auditSection.setAttribute("aria-labelledby","human-audit-title");
+const auditTitle=document.createElement("h3");auditTitle.id="human-audit-title";auditTitle.textContent="Recent security events";auditTitle.tabIndex=-1;
+const auditButton=document.createElement("button");auditButton.type="button";auditButton.textContent="View recent security events";auditButton.setAttribute("aria-controls","human-audit");
+const audit=document.createElement("div");audit.hidden=true;audit.id="human-audit";audit.setAttribute("role","status");
+auditSection.append(auditTitle,auditButton,audit);security.prepend(auditSection);
+let auditGeneration=0;
+const auditLabels={bootstrap_created:"Setup started",bootstrap_cancelled:"Setup cancelled",agent_issued:"Agent access created",agent_revoked:"Agent access revoked",session_created:"Session started",session_revoked:"Session signed out",human_grant:"Account setup or recovery authorized",human_grant_cancelled:"Account authorization cancelled",human_setup:"Account created",human_recovered:"Account recovered",human_login:"Signed in",human_logout:"Signed out",human_reauth:"Identity verified",human_codes:"Recovery codes replaced",human_password:"Password changed",human_sessions_revoked:"Other sessions signed out",passkey_added:"Passkey added",passkey_renamed:"Passkey renamed",passkey_removed:"Passkey removed",passkey_login:"Signed in with a passkey",passkey_reauth:"Identity verified with a passkey",passkey_test:"Passkey tested",passkey_warning:"Passkey warning"};
+auditButton.addEventListener("click",async()=>{
+ if(busy||window.secDNSAgent.kind!=="human"||auditButton.disabled)return;
+ const captured=epoch,generation=++auditGeneration;
+ audit.hidden=false;audit.textContent="Loading security events...";audit.setAttribute("aria-busy","true");auditButton.disabled=true;
+ auditTitle.focus();auditSection.scrollIntoView({block:"nearest"});
+ try{
+  const result=await request("audit",undefined,true);
+  if(captured!==epoch||generation!==auditGeneration||window.secDNSAgent.kind!=="human")return;
+  if(!Array.isArray(result.events))throw new Error("Invalid security events response");
+  audit.replaceChildren();
+  if(!result.events.length){audit.textContent="No recent security events.";return;}
+  const list=document.createElement("ol");list.className="security-event-list";list.tabIndex=0;list.setAttribute("aria-labelledby","human-audit-title");
+  for(const event of result.events){
+   const row=document.createElement("li"),name=document.createElement("strong"),time=document.createElement("time");
+   name.textContent=Object.hasOwn(auditLabels,event.Action)?auditLabels[event.Action]:"Security event";
+   const date=new Date(event.At);time.textContent=Number.isNaN(date.getTime())?"Time unavailable":date.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"long"});
+   if(!Number.isNaN(date.getTime())){time.dateTime=event.At;time.title=event.At;time.setAttribute("aria-label",time.textContent+"; exact time "+event.At);}
+   row.append(name,time);list.append(row);
+  }
+  audit.append(list);
+ }catch(error){if(captured===epoch&&generation===auditGeneration&&window.secDNSAgent.kind==="human")audit.textContent="Could not load security events. Try again.";}
+ finally{if(generation===auditGeneration){audit.removeAttribute("aria-busy");auditButton.disabled=false;}}
+});
   const download=document.createElement("button");download.type="button";download.textContent="Download recovery codes";download.hidden=true;card.insertBefore(download,dismiss);
   download.addEventListener("click",()=>{if(!recovery.value)return;const blob=new Blob([recovery.value+"\n"],{type:"text/plain"});const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download="secdns-recovery-codes.txt";a.click();setTimeout(()=>URL.revokeObjectURL(u),0);});
   const codesVisibility=new MutationObserver(()=>{download.hidden=recovery.hidden;});codesVisibility.observe(recovery,{attributes:true,attributeFilter:["hidden"]});
   card.append(security);
-  const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;audit.textContent="";audit.hidden=true;form.hidden=!security.hidden;title.textContent=security.hidden?"Sign in to secDNS":"Human account";currentPassword.value=currentCode.value=newPassword.value="";render();};
+  const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;auditGeneration++;audit.textContent="";audit.hidden=true;audit.removeAttribute("aria-busy");auditButton.disabled=false;form.hidden=!security.hidden;title.textContent=security.hidden?"Sign in to secDNS":"Human account";currentPassword.value=currentCode.value=newPassword.value="";render();};
   window.addEventListener("agentconnected",sessionChanged);window.addEventListener("agentexpired",()=>{sessionChanged();if(!busy)reset();});
   window.addEventListener("pagehide",reset);
   const applyState=state=>{if(state?.human_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin){origin=state.public_origin;card.hidden=false;setupRequired=state.setup_required===true;mode.value=setupRequired?"setup":"login";render();}};
