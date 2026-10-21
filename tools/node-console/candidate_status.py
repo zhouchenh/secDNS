@@ -8,7 +8,7 @@ import stat
 import subprocess
 import sys
 import time
-import uuid
+import re
 
 BASE = pathlib.Path('/opt/secdns-persistent-20261021')
 NODES = {'amd103': 65101, 'cix106': 65102, 'intel108': 65103}
@@ -26,7 +26,7 @@ def read(path):
     return json.loads(path.read_text())
 
 def atomic(path, obj):
-    tmp = path.with_name(path.name + '.tmp-' + str(uuid.uuid4()))
+    tmp = path.with_name(path.name + '.tmp-' + os.urandom(16).hex())
     fd = os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
         with os.fdopen(fd, 'w') as f:
@@ -107,7 +107,7 @@ def snapshot(node):
     return {'schema': 1, 'node': node, 'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'reachable': True, 'stale': bool(errors), 'errors': errors, 'heartbeat_age_seconds': age, 'daemon': {'active': props.get('ActiveState') == 'active', 'pid': int(props.get('MainPID', 0))}, 'maintenance': maintenance, 'profiles': profiles, 'peers': peers}
 
 def operate(node, action, request_id):
-    if action not in ('drain', 'resume') or str(uuid.UUID(request_id)) != request_id: raise ValueError('invalid operation')
+    if action not in ('drain', 'resume') or not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', request_id): raise ValueError('invalid operation')
     identity(node)
     receipts = BASE/'console-receipts'
     receipts.mkdir(mode=0o700, exist_ok=True)
