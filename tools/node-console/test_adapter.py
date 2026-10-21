@@ -29,7 +29,7 @@ class AdapterTests(unittest.TestCase):
         class Response:
             returncode = 0
             stdout = '{"schema":1,"node":"amd103"}'
-        with patch.object(a.subprocess,'run',return_value=Response()) as run:
+        with patch.object(a,'verify_private_path'), patch.object(a.subprocess,'run',return_value=Response()) as run:
             a.invoke('status','amd103')
         args = run.call_args.args[0]
         self.assertIn('StrictHostKeyChecking=yes',args)
