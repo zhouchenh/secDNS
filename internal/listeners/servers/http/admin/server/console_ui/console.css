@@ -36,7 +36,7 @@
 
 .console-sidebar button[aria-current]{background:#294d75;color:white}
 
-.account-screen-open>header #connection{display:none}
+.account-screen-open>header #connection,.account-screen-open>header #authentication{display:none}
 
 .console-layout,.console-layout *,.console-layout *::before,.console-layout *::after{box-sizing:border-box}.console-layout{background:#f5f7fa;color:var(--console-ink);color-scheme:light}.console-layout>header{max-width:none;margin:0}.console-layout button,.console-layout input,.console-layout select,.console-layout textarea{font-family:inherit}.console-layout button{background:#fff;border:1px solid #bccbdd;color:#28496c;cursor:pointer}.console-layout .primary{background:var(--console-accent);color:white;border-color:var(--console-accent)}.console-layout .console-sidebar button{background:none;border:0;color:#c3d0e1}.console-layout .console-sidebar button[aria-current]{background:#294d75;color:white}
 

@@ -40,7 +40,7 @@
   const enabled=state?.agent_access===true&&state.public_origin===location.origin;
   if(!humanEnabled){
    for(const node of [human,agent,passkeys])if(node&&node.parentElement===surface)main.prepend(node);
-   screen.hidden=true;document.body.classList.remove("auth-screen-open","account-screen-open");document.title=originalTitle;return;
+   screen.hidden=true;document.body.classList.remove("auth-screen-open","account-screen-open");document.title=originalTitle;label.textContent="DNS administration";return;
   }
   for(const node of [human,agent,passkeys])if(node&&node.parentElement!==surface)surface.append(node);
   const active=window.secDNSAgent?.active;
@@ -48,6 +48,7 @@
   const show=enabled&&(!active||accountOpen||ceremony);
   document.title=show?(active?"Account security":agentOpen?"Agent access":"Sign in")+" - secDNS":originalTitle;
   if(account){if(show&&active){account.setAttribute("aria-current","page");selectedNav?.removeAttribute("aria-current");}else{account.removeAttribute("aria-current");selectedNav?.setAttribute("aria-current","page");}}
+  label.textContent=show&&active?"Account security":"DNS administration";
   screen.hidden=!show;document.body.classList.toggle("auth-screen-open",show&&!active);document.body.classList.toggle("account-screen-open",show&&!!active);
   screen.dataset.access=agentOpen?"agent":"human";
   agentToggle.hidden=!!active||!humanEnabled;agentToggle.textContent=agentOpen?"Back to human sign in":"Agent access";
