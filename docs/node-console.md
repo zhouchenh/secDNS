@@ -28,3 +28,16 @@ This initial management slice does not edit peer ASNs, addresses, policy or time
 ## Local verification
 
 Run `go test ./internal/listeners/servers/http/admin/server`. Opt into the disposable Chromium workflow with `ADMINAUTH_BROWSER=1` and a local Playwright module via `NODE_PATH`, then run `go test ./internal/listeners/servers/http/admin/server -run TestNodeConsoleBrowser -v`. The browser fixture creates an ephemeral human account and uses synthetic node observations; it never opens the real owner database or contacts candidate/production hosts.
+
+## BGP settings and upstream readiness
+
+The Routing page's **BGP settings** dialog now reads the candidate's persistent configuration, allows editing, validates it, previews changes, then applies with a configuration revision precondition. Editable settings are each peer's enabled flag and bounded keepalive/hold timers, plus the four normal-DNS/DNS64 IPv4/IPv6 announcement eligibility flags. Peer addresses, ASNs, router IDs and service prefixes remain fixed to the isolated candidate inventory. At least one peer per family must remain enabled. Eligibility never overrides DNS health.
+
+API routes:
+- `GET /admin/nodes/{node}/bgp`
+- `POST /admin/nodes/{node}/bgp/preview` with `expected_revision` and `config`
+- `POST /admin/nodes/{node}/bgp/apply` with the same fields plus canonical UUID `request_id`
+
+All routes require human session authentication; preview/apply require CSRF and same origin. Unknown/duplicate JSON fields and inventory changes are rejected. Preview and apply helper responses are checked against the exact proposed config. Confirmed rollback requires the original revision and configuration; missing/mismatched readback is reported as uncertain, never success. Audit receipts and serialized maintenance operations are shared with drain/resume.
+
+Health observations separately expose local DNS readiness, upstream availability, upstream observation age, eligibility and actual advertisement. Unknown or stale observations remain unknown. Configuration apply can take up to two minutes while the isolated routing process recovers; browser disconnect does not cancel an already accepted operation, and uncertain results require a fresh read before any further action.
