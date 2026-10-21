@@ -76,11 +76,11 @@ const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     s=await get();assert.ok(s.records.some(r=>r.name==='remote.invalid.'));assert.ok((await page.locator('#current-version').textContent()).includes(s.revision));
     // Concurrent addition cannot be silently overwritten by rebasing a dirty draft.
     const wideTXT='  '+'x'.repeat(200)+'  ';await stage('local-draft.invalid.',wideTXT);s=await get();await replace([...s.records,{...remote,name:'remote-second.invalid.'}],'remote-before-conflict');
-    await submit();await status('server changed');assert.equal(await page.locator('#rows').getByText('local-draft.invalid.',{exact:true}).count(),1);assert.equal(await page.locator('#review').isDisabled(),true);
+    await submit();await status('server has newer changes');assert.equal(await page.locator('#rows').getByText('local-draft.invalid.',{exact:true}).count(),1);assert.equal(await page.locator('#review').isDisabled(),true);
     await page.locator('#refresh').click();await status('Records refreshed');assert.equal(await page.locator('#rows').getByText('local-draft.invalid.',{exact:true}).count(),1);
-    assert.deepEqual(await comparison('local-draft.invalid.').locator('.change-badge').allTextContents(),['Local: added','Observed server: unchanged']);
+    assert.deepEqual(await comparison('local-draft.invalid.').locator('.change-badge').allTextContents(),['Your changes: added','Server changes: unchanged']);
     assert.equal(await comparison('local-draft.invalid.').locator('.comparison-values code').textContent(),JSON.stringify(wideTXT));
-    assert.deepEqual(await comparison('remote-second.invalid.','A').locator('.change-badge').allTextContents(),['Local: unchanged','Observed server: added']);
+    assert.deepEqual(await comparison('remote-second.invalid.','A').locator('.change-badge').allTextContents(),['Your changes: unchanged','Server changes: added']);
     assert.equal(await comparison('remote-second.invalid.','A').locator('.comparison-version').nth(1).getByText('Not present in this snapshot',{exact:true}).count(),1);
     assert.equal(await page.locator('#rows').getByText('remote-second.invalid.',{exact:true}).count(),0,'comparison cannot adopt the remote addition');
     const comparedJSON=await page.locator('#comparison').textContent(), comparedRequests=requests.length;
