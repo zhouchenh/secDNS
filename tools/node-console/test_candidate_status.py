@@ -20,7 +20,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(c.advertised_prefixes({'advertisedRoutes':{'203.0.113.53/32':{}}},4),['203.0.113.53/32'])
     def test_health_is_not_advertisement_and_stale_health_is_unknown(self):
         entries = [{'role': r, 'family': f, 'prefix': p} for r, f, p in [('normal',4,'203.0.113.53/32'),('normal',6,'2001:db8:53::53/128'),('dns64',4,'203.0.113.64/32'),('dns64',6,'2001:db8:53::64/128')]]
-        with patch.object(c, 'identity', return_value=({'unit':'test'}, {'entries':entries})), patch.object(c, 'read', return_value={'withdraw': True}), patch.object(c, 'run', side_effect=['ActiveState=active\nMainPID=123', '{"type":"health","observed_monotonic":1,"healthy":[true,true,true,true]}']), patch.object(c.time, 'monotonic', return_value=100), patch.object(c, 'vty', return_value={}):
+        with patch.object(c, 'identity', return_value=({'unit':'test'}, {'entries':entries})), patch.object(c, 'read', return_value={'withdraw': True}), patch.object(c, 'run', side_effect=['ActiveState=active\nMainPID=123', '{"type":"health","observed_monotonic":1,"healthy":[true,true,true,true]}', '']), patch.object(c.time, 'monotonic', return_value=100), patch.object(c, 'vty', return_value={}):
             result = c.snapshot('amd103')
         self.assertTrue(result['stale'])
         self.assertTrue(result['maintenance']['withdraw'])
@@ -45,3 +45,4 @@ class SnapshotTests(unittest.TestCase):
                 with self.assertRaises(ValueError): c.operate('amd103','resume',request)
 
 if __name__ == '__main__': unittest.main()
+
