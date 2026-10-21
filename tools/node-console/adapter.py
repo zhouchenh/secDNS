@@ -84,7 +84,7 @@ def mutation_lock(state=None):
         yield
         # Closing the descriptor also releases the lock after exceptions.
 
-def invoke(action, node, request_id=None, payload=None):
+def invoke(action, node, request_id=None, payload=None, *, guard=False):
     if action not in ACTIONS or node not in NODES:
         raise ValueError('unknown candidate action')
     if action in ('drain', 'resume', 'bgp-apply'):
@@ -92,14 +92,22 @@ def invoke(action, node, request_id=None, payload=None):
             raise ValueError('invalid request identifier')
     elif request_id is not None:
         raise ValueError('unexpected request identifier')
+    if guard and action != 'status':
+        raise ValueError('invalid guard action')
+    observation = action in ('status', 'bgp-get', 'bgp-validate')
+    # Interactive observations fit inside the API's 30-second deadline. The
+    # two cohort checks retain their original budget before a bounded mutation.
+    interactive_status = action == 'status' and not guard
+    deadline = (25 if interactive_status else 12) if observation else (100 if action == 'bgp-apply' else 30)
+    keepalives = 8 if interactive_status else 2
     paths = platform_paths()
     host, key, trust = NODES[node]
     if sys.platform == 'linux':
         verify_private_path(paths['keys']/key, secret=True)
         verify_private_path(paths['trust']/trust)
-    args = [paths['ssh'], '-F', paths['null'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'ConnectTimeout=4', '-o', 'ServerAliveInterval=3', '-o', 'ServerAliveCountMax=2', '-i', str(paths['keys']/key), '-o', 'UserKnownHostsFile='+str(paths['trust']/trust), 'root@'+host,
+    args = [paths['ssh'], '-F', paths['null'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'ConnectTimeout=4', '-o', 'ServerAliveInterval=3', '-o', 'ServerAliveCountMax='+str(keepalives), '-i', str(paths['keys']/key), '-o', 'UserKnownHostsFile='+str(paths['trust']/trust), 'root@'+host,
             '/usr/bin/python3 /opt/secdns-persistent-20261021/candidate_status.py '+action+' '+node+((' '+request_id) if request_id else '')]
-    p = subprocess.run(args, input=json.dumps(payload) if payload is not None else None, capture_output=True, text=True, timeout=100 if action=='bgp-apply' else (12 if action in ('status','bgp-get','bgp-validate') else 30))
+    p = subprocess.run(args, input=json.dumps(payload) if payload is not None else None, capture_output=True, text=True, timeout=deadline)
     if p.returncode or len(p.stdout) > 262144: raise RuntimeError('candidate unavailable or operation unconfirmed')
     result = json.loads(p.stdout)
     if result.get('schema') != 1 or result.get('node') != node: raise ValueError('invalid candidate response')
@@ -127,7 +135,7 @@ def main():
             for other in NODES:
                 if other == node: continue
                 try:
-                    s = invoke('status', other)
+                    s = invoke('status', other, guard=True)
                     safe = (not s['stale'] and s['daemon']['active'] and not s['maintenance']['withdraw'] and len(s['profiles']) == 4 and all(p['healthy'] is True and p['advertised'] for p in s['profiles']))
                     if safe: break
                 except (RuntimeError, ValueError, OSError, subprocess.SubprocessError): pass
