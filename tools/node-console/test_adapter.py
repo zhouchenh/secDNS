@@ -10,6 +10,19 @@ a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
 
 class AdapterTests(unittest.TestCase):
+    def test_interactive_observations_tolerate_latency_without_extending_mutations(self):
+        class Response:
+            returncode=0
+            stdout='{"schema":1,"node":"amd103"}'
+        cases=[('status',None,False,25,8),('bgp-get',None,False,12,2),
+               ('bgp-validate',None,False,12,2),('status',None,True,12,2),
+               ('bgp-apply','395378da-4f31-4996-9f01-48cad8f96ba6',False,100,2),
+               ('drain','395378da-4f31-4996-9f01-48cad8f96ba6',False,30,2)]
+        for action,identifier,guard,deadline,keepalives in cases:
+            with self.subTest(action=action,guard=guard), patch.object(a,'verify_private_path'), patch.object(a.subprocess,'run',return_value=Response()) as run:
+                a.invoke(action,'amd103',identifier,guard=guard)
+                self.assertEqual(run.call_args.kwargs['timeout'],deadline)
+                self.assertIn('ServerAliveCountMax='+str(keepalives),run.call_args.args[0])
     @unittest.skipUnless(sys.platform == 'win32', 'Windows cohort serialization')
     def test_last_provider_guard_never_sends_drain(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -19,6 +32,7 @@ class AdapterTests(unittest.TestCase):
             with patch.object(a,'BASE',base), patch.object(a.sys,'argv',['adapter','drain','amd103','395378da-4f31-4996-9f01-48cad8f96ba6']), patch.object(a,'invoke',return_value=snapshot) as invoke:
                 with self.assertRaises(ValueError): a.main()
                 self.assertEqual([call.args[0] for call in invoke.call_args_list], ['status','status'])
+                self.assertTrue(all(call.kwargs.get('guard') is True for call in invoke.call_args_list))
     def test_untrusted_arguments_never_execute(self):
         for args in [['adapter','status','100.91.1.47'],['adapter','shell','amd103'],['adapter','drain','amd103','; reboot'],['adapter','status','amd103','extra']]:
             with patch.object(a.sys,'argv',args), patch.object(a,'invoke') as invoke:

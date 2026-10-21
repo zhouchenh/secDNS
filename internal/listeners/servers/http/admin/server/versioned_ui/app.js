@@ -8,6 +8,7 @@
   $("endpoint").textContent = endpoint.origin + endpoint.pathname;
   let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null, importChannel = null, importChannelID = "";
   const requests = new Set();
+  let deletion = null;
   function status(text, kind = "", routine = false) { $("status").textContent = text; $("status").className = kind; $("status").hidden = !text || routine; }
   function comparisonVersion(title, record, unavailable = false) {
     const section = document.createElement("section"), heading = document.createElement("h4");
@@ -131,13 +132,21 @@
       const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
       change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});
-      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}if(confirm("Stage deletion of "+record.name+" · "+record.type+"? Nothing is sent until the reviewed operation is confirmed.")){model.remove(S.key(record));if(selected===S.key(record))edit(null,true);render();}});
+      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:remove};$("delete-record").textContent=record.name+" / "+record.type;$("delete-dialog").showModal();$("delete-cancel").focus();});
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
     $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;
     $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No records match your search or type filter.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
+  $("delete-cancel").addEventListener("click",()=>$("delete-dialog").close());
+  $("delete-dialog").addEventListener("close",()=>{const opener=deletion?.opener;deletion=null;if(!connected)return;if(opener?.isConnected&&!opener.disabled)opener.focus();else if(!$("review").disabled)$("review").focus();else $("new-record").focus();});
+  $("delete-confirm").addEventListener("click",()=>{
+    const target=deletion,record=target&&model.draft.find(item=>S.key(item)===target.key);
+    $("delete-dialog").close();
+    if(!target||target.epoch!==epoch||locked()||model.formDirty||!record||JSON.stringify(record)!==target.record){status("The draft changed. Review the current record before marking it for deletion.","error");return;}
+    model.remove(target.key);if(selected===target.key)edit(null,true);render();status("Record marked for deletion locally. Review changes before applying.");
+  });
   async function request(method, body, target = endpoint.href) {
     const captured=epoch, controller=new AbortController();requests.add(controller);const timeout=setTimeout(()=>controller.abort(),30000);
     try {
@@ -161,7 +170,7 @@
   function disconnect(show=true) {
     epoch++;getID++;for(const r of requests)r.abort();requests.clear();
     if(model.pending?.status==="sending")model.uncertain();
-    token="";$("token").value="";connected=false;busy=false;model.fresh=false;$("review-dialog").close();render();if(show)status("Disconnected. Local draft and operation recovery remain in this page.");
+    token="";$("token").value="";connected=false;busy=false;model.fresh=false;$("review-dialog").close();$("delete-dialog").close();render();if(show)status("Disconnected. Local draft and operation recovery remain in this page.");
   }
   $("connect-form").addEventListener("submit",async e=>{
     e.preventDefault();if(busy)return;const entered=$("token").value.trim();$("token").value="";if(!entered)return;try{await window.secDNSAgent?.switchToLegacy();}catch{status("Could not end the agent session. Legacy access was not started.","error");return;}token=entered;
