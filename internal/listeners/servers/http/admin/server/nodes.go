@@ -34,11 +34,16 @@ type nodeSnapshot struct {
 		Withdraw bool `json:"withdraw"`
 	} `json:"maintenance"`
 	Profiles []struct {
-		Role       string `json:"role"`
-		Family     int    `json:"family"`
-		Healthy    *bool  `json:"healthy"`
-		Advertised bool   `json:"advertised"`
-		Prefix     string `json:"prefix"`
+		Role               string   `json:"role"`
+		Family             int      `json:"family"`
+		Healthy            *bool    `json:"healthy"`
+		LocalHealthy       *bool    `json:"local_healthy"`
+		UpstreamHealthy    *bool    `json:"upstream_healthy"`
+		UpstreamAgeSeconds *float64 `json:"upstream_age_seconds"`
+		Reason             string   `json:"reason"`
+		Enabled            *bool    `json:"enabled"`
+		Advertised         bool     `json:"advertised"`
+		Prefix             string   `json:"prefix"`
 	} `json:"profiles"`
 	Peers []struct {
 		Address  string   `json:"address"`
@@ -108,26 +113,11 @@ func (h *HTTPAdminServer) runNode(ctx context.Context, action, node, id string) 
 	return result, nil
 }
 func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
+	h.nodeBGPRoutes(mux, base)
 	if !h.nodesEnabled() {
 		return
 	}
-	wrap := func(mutation bool, next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			if h.agent == nil || !h.browserRequest(r, mutation) || len(r.Header.Values("Authorization")) != 0 {
-				agentError(w, 403, "human_authentication_required")
-				return
-			}
-			token, _ := cookieValue(r)
-			session, err := h.agent.sessions.Authenticate(token, r.Header.Get("X-SecDNS-CSRF"), mutation, mutation, h.agent.now())
-			if err != nil || session.Actor.Kind() != "human" {
-				agentError(w, 403, "human_authentication_required")
-				return
-			}
-			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(100 * time.Second))
-			next(w, r, session.Actor.ID())
-		}
-	}
-	mux.HandleFunc("GET "+base+"/nodes/{node}", wrap(false, func(w http.ResponseWriter, r *http.Request, _ string) {
+	mux.HandleFunc("GET "+base+"/nodes/{node}", h.withNodeHuman(false, func(w http.ResponseWriter, r *http.Request, _ string) {
 		node := r.PathValue("node")
 		if !knownNode(node) {
 			agentError(w, 404, "unknown_node")
@@ -142,7 +132,7 @@ func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
 		}
 		writeJSON(w, 200, result)
 	}))
-	mux.HandleFunc("POST "+base+"/nodes/{node}/maintenance", wrap(true, func(w http.ResponseWriter, r *http.Request, actor string) {
+	mux.HandleFunc("POST "+base+"/nodes/{node}/maintenance", h.withNodeHuman(true, func(w http.ResponseWriter, r *http.Request, actor string) {
 		node := r.PathValue("node")
 		if !knownNode(node) {
 			agentError(w, 404, "unknown_node")
@@ -231,4 +221,21 @@ func reserveNodeReceipt(directory, requestID string) (*os.File, error) {
 	digest := sha256.Sum256([]byte(requestID))
 	basename := "operation-" + hex.EncodeToString(digest[:]) + ".jsonl"
 	return os.OpenFile(filepath.Join(directory, basename), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+}
+
+func (h *HTTPAdminServer) withNodeHuman(mutation bool, next func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if h.agent == nil || !h.browserRequest(r, mutation) || len(r.Header.Values("Authorization")) != 0 {
+			agentError(w, 403, "human_authentication_required")
+			return
+		}
+		token, _ := cookieValue(r)
+		session, err := h.agent.sessions.Authenticate(token, r.Header.Get("X-SecDNS-CSRF"), mutation, mutation, h.agent.now())
+		if err != nil || session.Actor.Kind() != "human" {
+			agentError(w, 403, "human_authentication_required")
+			return
+		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(160 * time.Second))
+		next(w, r, session.Actor.ID())
+	}
 }

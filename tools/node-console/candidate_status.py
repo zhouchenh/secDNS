@@ -69,6 +69,9 @@ def identity(node):
 
 def snapshot(node):
     c, h = identity(node)
+    import candidate_bgp
+    settings = candidate_bgp.get(node)['config']
+    enabled = {(a['role'],a['family']):a['enabled'] for a in settings['announcements']}
     errors = []
     props = run(['systemctl', 'show', c['unit'], '-p', 'ActiveState', '-p', 'MainPID'])
     props = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
@@ -87,6 +90,8 @@ def snapshot(node):
     peers = []
     try:
         summary = vty('show bgp summary json')
+        running = {line.strip() for line in run(['vtysh','--vty_socket',str(BASE/'state'),'-d','bgpd','-c','show running-config']).splitlines()}
+        desired_peers={p['address']:p for p in settings['peers']}
         for family in (4, 6):
             afi = summary['ipv%dUnicast' % family]
             expected = {a[0 if family == 4 else 1] for n, a in ADDRESSES.items() if n != node}
@@ -95,15 +100,24 @@ def snapshot(node):
                 # FRR addresses are validated before forming a read-only command.
                 import ipaddress
                 ipaddress.ip_address(address)
-                routes = vty('show bgp ipv%d unicast neighbors %s advertised-routes json' % (family, address))
-                prefixes = advertised_prefixes(routes, family)
-                peers.append({'address': address, 'family': family, 'state': p.get('state', 'Unknown'), 'prefixes': prefixes})
+                desired=desired_peers[address]
+                shutdown=('neighbor '+address+' shutdown') in running
+                if shutdown==desired['enabled']:raise ValueError('runtime peer enable differs')
+                if 'neighbor '+address+' timers '+str(desired['keepalive_seconds'])+' '+str(desired['hold_seconds']) not in running:raise ValueError('runtime peer timers differ')
+                if shutdown and p.get('state')!='Established':
+                    # Explicit runtime shutdown plus no session proves no current
+                    # advertisements; do not parse a non-established diagnostic.
+                    prefixes=[]
+                else:
+                    routes = vty('show bgp ipv%d unicast neighbors %s advertised-routes json' % (family, address))
+                    prefixes = advertised_prefixes(routes, family)
+                peers.append({'address': address, 'family': family, 'state': p.get('state', 'Unknown'), 'prefixes': prefixes, 'enabled':not shutdown})
     except (KeyError, RuntimeError, ValueError, subprocess.SubprocessError, OSError):
         errors.append('BGP advertisement inspection unavailable')
     profiles = []
     for i, e in enumerate(h['entries']):
         targets = [p for p in peers if p['family'] == e['family'] and p['state'] == 'Established' and e['prefix'] in p['prefixes']]
-        profiles.append({'role': e['role'], 'family': e['family'], 'prefix': e['prefix'], 'healthy': heartbeat['healthy'][i] if fresh else None, 'advertised': bool(targets)})
+        profiles.append({'role': e['role'], 'family': e['family'], 'prefix': e['prefix'], 'enabled':enabled[e['role'],e['family']], 'healthy': heartbeat['healthy'][i] if fresh else None, 'local_healthy':heartbeat.get('local_healthy',heartbeat['healthy'])[i] if fresh else None, 'upstream_healthy':heartbeat.get('upstream_healthy',[None]*4)[i] if fresh else None, 'upstream_age_seconds':heartbeat.get('upstream_age_seconds') if fresh else None, 'reason':heartbeat.get('reasons',['upstream checks not configured']*4)[i] if fresh else 'health observation stale', 'advertised': bool(targets)})
     return {'schema': 1, 'node': node, 'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'reachable': True, 'stale': bool(errors), 'errors': errors, 'heartbeat_age_seconds': age, 'daemon': {'active': props.get('ActiveState') == 'active', 'pid': int(props.get('MainPID', 0))}, 'maintenance': maintenance, 'profiles': profiles, 'peers': peers}
 
 def operate(node, action, request_id):
@@ -117,6 +131,9 @@ def operate(node, action, request_id):
     with os.fdopen(fd, 'w') as f:
         secure(lock)
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for pending in receipts.glob('*.json'):
+            transaction=read(pending)
+            if transaction.get('action')=='bgp-apply' and transaction.get('status')=='pending':raise ValueError('pending BGP transaction')
         path = receipts/(request_id+'.json')
         if path.exists():
             old = read(path)
@@ -133,7 +150,7 @@ def operate(node, action, request_id):
         while True:
             result = snapshot(node)
             ok = not result['stale'] and result['maintenance']['withdraw'] == (action == 'drain')
-            ok = ok and all(p['advertised'] == (action == 'resume') for p in result['profiles'])
+            ok = ok and all(p['advertised'] == (action == 'resume' and p['enabled']) for p in result['profiles'])
             if action == 'resume': ok = ok and all(p['healthy'] is True for p in result['profiles'])
             if ok or time.monotonic() >= deadline: break
             time.sleep(1)
@@ -145,6 +162,22 @@ def operate(node, action, request_id):
 def main():
     if len(sys.argv) not in (3, 4): raise ValueError('arguments')
     action, node = sys.argv[1:3]
+    if action.startswith('bgp-'):
+        import candidate_bgp as bgp
+        identity(node)
+        if action=='bgp-get' and len(sys.argv)==3:result=bgp.get(node)
+        elif action=='bgp-rollback' and len(sys.argv)==4:
+            bgp.rollback(node,sys.argv[3]);result={'schema':1,'node':node,'rolled_back':True}
+        elif action in ('bgp-validate','bgp-apply'):
+            raw=sys.stdin.read(16385)
+            if len(raw)>16384:raise ValueError('payload size')
+            payload=json.loads(raw)
+            if action=='bgp-apply' and len(sys.argv)==4:result=bgp.apply(node,sys.argv[3],payload)
+            elif action=='bgp-validate' and len(sys.argv)==3:
+                old,config=bgp.read_request(node,payload);bgp.preflight(node,config);result=dict(schema=1,node=node,revision=old['revision'],config=config,valid=True)
+            else:raise ValueError('arguments')
+        else:raise ValueError('arguments')
+        print(json.dumps(result));return
     if action == 'status' and len(sys.argv) == 3: result = snapshot(node)
     elif len(sys.argv) == 4: result = operate(node, action, sys.argv[3])
     else: raise ValueError('arguments')

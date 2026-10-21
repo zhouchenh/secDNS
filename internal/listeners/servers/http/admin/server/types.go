@@ -39,6 +39,8 @@ var allowedTypes = map[uint16]bool{
 }
 
 type HTTPAdminServer struct {
+ nodeBGPRunner func(context.Context,string,string,string,[]byte)(nodeBGPResult,error)
+
 	NodeAdapterExecutable string
 	NodeAdapterScript     string
 	NodeAuditDirectory    string
@@ -618,3 +620,4 @@ func init() {
 		common.ErrOutput(err)
 	}
 }
+
