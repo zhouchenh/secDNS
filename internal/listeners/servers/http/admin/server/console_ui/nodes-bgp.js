@@ -4,6 +4,7 @@
  const make=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
  const modal=make('dialog',undefined,'bgp-dialog'),form=make('form'),title=make('h2'),subtitle=make('p'),notice=make('p'),live=make('p'),fields=make('div'),preview=make('section'),actions=make('div',undefined,'dialog-actions');
  live.role='status';live.setAttribute('aria-live','polite');notice.textContent='Candidate network only. Peer identities and service addresses are fixed. Applying briefly withdraws this node while BGP restarts; another healthy candidate must remain available.';
+ title.id='bgp-dialog-title';modal.setAttribute('aria-labelledby',title.id);
  const close=make('button','Cancel'),validate=make('button','Review changes'),apply=make('button','Apply configuration','primary');close.type=validate.type=apply.type='button';apply.hidden=true;actions.append(close,validate,apply);form.append(title,subtitle,notice,fields,preview,live,actions);modal.append(form);document.querySelector('main').append(modal);
  let node='',current=null,prepared=null,inFlight=false,generation=0;
  const api=(...args)=>window.secDNSNodeConsole.request(...args);
