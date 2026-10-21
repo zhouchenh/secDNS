@@ -18,7 +18,7 @@
   if(failure)card.append(el('p',failure+' Previous values are historical, not current status.','node-error'));
   if(s){
    if(page==='nodes'){const summary=el('div',undefined,'node-summary');for(const [title,value] of [['DNS process',s.daemon.active?'Running':'Stopped'],['Announcements',s.maintenance.withdraw?'Administratively withdrawn':'Health controlled'],['Healthy checks',(s.profiles||[]).filter(p=>p.healthy===true).length+' / '+(s.profiles||[]).length],['BGP sessions',(s.peers||[]).filter(p=>p.state.toLowerCase()==='established').length+' / '+(s.peers||[]).length]]){const item=el('div');item.append(el('strong',title),el('span',fresh?value:'Last sample: '+value));summary.append(item);}card.append(summary);}
-   if(page==='health'||page==='routing')card.append(table(['Service','Family','Health','Announcement','Address'],(s.profiles||[]).map(p=>[p.role,p.family===6?'IPv6':'IPv4',!fresh?'Unknown (stale)':p.healthy===null?'Unknown':p.healthy?'Passing':'Failing',!fresh?'Unknown (stale)':p.advertised?'Advertised':'Withdrawn',p.prefix])));
+   if(page==='health'||page==='routing')card.append(table(['Service','Family','Health','Announcement','Address'],(s.profiles||[]).map(p=>[p.role==='normal'?'Normal DNS':p.role==='dns64'?'DNS64':p.role,p.family===6?'IPv6':'IPv4',!fresh?'Unknown (stale)':p.healthy===null?'Unknown':p.healthy?'Passing':'Failing',!fresh?'Unknown (stale)':p.advertised?'Advertised':'Withdrawn',p.prefix])));
    if(page==='routing') {card.append(el('h3','BGP peers'),table(['Peer','Family','Session','Advertised prefixes'],(s.peers||[]).map(p=>[p.address,p.family===6?'IPv6':'IPv4',fresh?p.state:'Historical: '+p.state,fresh?((p.prefixes||[]).join(', ')||'None'):'Unknown (stale)'])));}
    if(s.errors?.length)card.append(el('p',s.errors.join(' · '),'node-error'));
    if(page!=='health'){const actions=el('div',undefined,'node-actions'),b=el('button',s.maintenance.withdraw?'Resume announcements':'Drain node');b.type='button';b.disabled=busy||!fresh||!s.reachable;b.addEventListener('click',()=>openAction(id,s));actions.append(b,el('span','DNS continues running during a drain.'));card.append(actions);}
@@ -35,5 +35,6 @@
  setInterval(()=>{if(!document.hidden&&samples.size&&!busy)render();},15000);
  if(window.secDNSAgent?.kind==='human')load();
 })();
+
 
 

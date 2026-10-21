@@ -58,7 +58,12 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	if !h.FollowerStatusOnly {
 		account = `<button type="button" id="console-account">Access &amp; security</button>`
 	}
-	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><p class="console-label">ADMINISTRATION</p><nav aria-label="Administration">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>This instance only</span></div></aside>`
+	footer := "This instance only"
+	if active == "nodes" || active == "health" || active == "routing" {
+		role = "Candidate cluster"
+		footer = "3 managed nodes"
+	}
+	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><p class="console-label">ADMINISTRATION</p><nav aria-label="Administration">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>` + footer + `</span></div></aside>`
 	head := `<link rel="stylesheet" href="` + escaped + `/ui/console.css"><script defer src="` + escaped + `/ui/console.js"></script>`
 	data = bytes.Replace(data, []byte("</head>"), []byte(head+"</head>"), 1)
 	gateway := ""
