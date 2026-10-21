@@ -39,15 +39,19 @@ var allowedTypes = map[uint16]bool{
 }
 
 type HTTPAdminServer struct {
-	AgentAuthConfigured bool
-	agent               *agentBinding
-	Listen              net.IP
-	Port                uint16
-	Path                string
-	Store               string // shared store name; empty joins recordstore.DefaultName
-	Token               string // bearer token; required (the listener fails closed without it)
-	UI                  bool   // optional embedded UI; disabled by default
-	FollowerStatusOnly  bool   // explicit status-only listener; never binds a record store
+	NodeAdapterExecutable string
+	NodeAdapterScript     string
+	NodeAuditDirectory    string
+	nodeRunner            func(context.Context, string, string, string) (nodeSnapshot, error)
+	AgentAuthConfigured   bool
+	agent                 *agentBinding
+	Listen                net.IP
+	Port                  uint16
+	Path                  string
+	Store                 string // shared store name; empty joins recordstore.DefaultName
+	Token                 string // bearer token; required (the listener fails closed without it)
+	UI                    bool   // optional embedded UI; disabled by default
+	FollowerStatusOnly    bool   // explicit status-only listener; never binds a record store
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
 	SourcePolicyExplain       bool
@@ -160,6 +164,7 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 func (h *HTTPAdminServer) routes() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
+	h.nodeRoutes(mux, base)
 	if h.FollowerStatusOnly {
 		if h.ValidateFollowerStatusOnly() != nil {
 			return mux
@@ -568,7 +573,7 @@ func init() {
 					descriptor.DefaultValue{Value: ""},
 				},
 			},
-			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityURL"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityURL"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
+			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAdapterExecutable"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAdapterExecutable"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAdapterScript"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAdapterScript"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAuditDirectory"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAuditDirectory"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityURL"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityURL"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
 			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityToken"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityToken"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
 			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityTokenFile"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityTokenFile"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},
 			descriptor.ObjectFiller{

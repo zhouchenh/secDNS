@@ -7,6 +7,7 @@ import (
 )
 
 func (h *HTTPAdminServer) consoleRoutes(mux *http.ServeMux, base string) {
+	h.nodeUIRoutes(mux, base)
 	for _, asset := range []struct{ name, kind string }{{"console.css", "text/css"}, {"console.js", "text/javascript"}} {
 		data, err := editorAssets.ReadFile("console_ui/" + asset.name)
 		if err != nil {
@@ -34,6 +35,11 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	if !h.FollowerStatusOnly {
 		link("/ui/", "DNS records", "records")
 		link("/ui/import-preview/", "Import records", "import")
+	}
+	if h.nodesEnabled() {
+		link("/ui/nodes/", "Nodes", "nodes")
+		link("/ui/health/", "DNS health", "health")
+		link("/ui/routing/", "Routing", "routing")
 	}
 	if len(h.followerStatusNames) > 0 {
 		link("/ui/followers/", "Local replication", "followers")
