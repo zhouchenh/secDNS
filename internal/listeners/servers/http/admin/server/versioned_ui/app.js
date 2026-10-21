@@ -35,8 +35,8 @@
     for (const row of shown) {
       const record = row.draft || row.base || row.current, card = document.createElement("article"), heading = document.createElement("h3"), labels = document.createElement("p"), versions = document.createElement("div");
       card.className = "comparison-record"; card.dataset.recordKey = row.key; heading.textContent = record.name + " · " + record.type; labels.className = "comparison-labels";
-      for (const [scope, change] of [["Local",row.localChange],["Observed server",row.serverChange]]) { const badge = document.createElement("span"); badge.className = "change-badge change-" + change; badge.textContent = scope + ": " + change; labels.append(badge); }
-      versions.className = "comparison-versions"; versions.append(comparisonVersion("Base",row.base),comparisonVersion("Local draft",row.draft),comparisonVersion("Observed server",row.current,row.serverChange === "unavailable")); card.append(heading,labels,versions); $("comparison-rows").append(card);
+      for (const [scope, change] of [["Your changes",row.localChange],["Server changes",row.serverChange]]) { const badge = document.createElement("span"); badge.className = "change-badge change-" + change; badge.textContent = scope + ": " + change; labels.append(badge); }
+      versions.className = "comparison-versions"; versions.append(comparisonVersion("Saved version",row.base),comparisonVersion("Your changes",row.draft),comparisonVersion("Latest server version",row.current,row.serverChange === "unavailable")); card.append(heading,labels,versions); $("comparison-rows").append(card);
     }
     $("comparison-empty").hidden = shown.length > 0;
     $("comparison-empty").textContent = rows.length ? "No changed rows. Show unchanged rows to inspect the retained snapshots." : "No records to compare.";
@@ -44,7 +44,7 @@
   const messages = {
     invalid_snapshot_request:"The proposal is invalid. Your draft is preserved; correct it after reconciliation.",
     snapshot_too_large:"The complete proposal exceeds the size limit. Your draft is preserved.",
-    revision_conflict:"The server changed since your base revision. Compare snapshots, then explicitly discard/reload and manually re-enter desired edits.",
+    revision_conflict:"The server has newer changes. Your draft is preserved. Refresh to compare versions, then review your work before discarding the draft and re-entering changes.",
     identity_conflict:"The server identity or lineage differs. Writing is blocked. Clear local work only after reviewing it, then reconnect explicitly.",
     operation_conflict:"This operation ID conflicts with another request. The frozen attempt is preserved; no replacement ID was generated.",
     rrset_schema_required:"This store no longer supports targeted edits. Your draft is preserved; reconcile and review explicitly. No replacement was sent.",
@@ -57,7 +57,7 @@
     stale_snapshot_response:"An older snapshot response was ignored. Fetch current state again.",
     duplicate_record:"That name and type already exist in the draft. Edit the existing row.",
     reconciliation_required:"Stage unfinished fields and reconcile current state before preparing another operation.",
-    uncertain:"Could not confirm whether the change was saved. Your draft is preserved. Retry the same change to check safely. Signing out does not undo a submitted change.",
+    uncertain:"Could not confirm whether the change was saved. Your draft is preserved. Use Check submitted change to send the identical request and check its result safely. Signing out does not undo a submitted change.",
     invalid_snapshot_response:"The server returned an invalid snapshot. Local work is preserved.",
     handoff_reconciliation_required:"Exact candidate not transferred. Finish, apply or explicitly discard existing local work first.",
     handoff_identity_conflict:"Exact candidate not transferred. Its ruleset ID does not match this editor.",
@@ -71,7 +71,7 @@
     $("pending-actions").hidden=!work;$("change-summary").hidden=!work;$("change-review").hidden=!work;
     $("local-work-warning").hidden=!(model.dirty()||model.pending);
     $("workspace").classList.toggle("editing",!$("record-editor").hidden);
-    const changes=S.changes(model.base?.records||[],model.draft);$("change-count").textContent=model.pending?.status==="uncertain"?"Change outcome uncertain":model.formDirty?"Unstaged record edit":`${changes.added} added / ${changes.changed} changed / ${changes.removed} removed`;
+    const changes=S.changes(model.base?.records||[],model.draft);$("change-count").textContent=model.pending?.status==="uncertain"?"Change outcome uncertain":model.formDirty?"Unfinished record edit — add it to changes before review":`Unsaved changes: ${changes.added} added / ${changes.changed} changed / ${changes.removed} removed`;
     for (const c of $("editor").querySelectorAll("input, select, textarea, button")) c.disabled = locked();
     $("name").disabled = $("type").disabled = locked() || !!selected;
     $("expiry").disabled = locked() || $("expiry-mode").value === "permanent";
@@ -101,7 +101,7 @@
     if (!force && model.formDirty && !confirm("Discard unfinished record fields? The staged snapshot draft is retained.")) return;
     clearRecordError();
     selected = record ? S.key(record) : null; model.formDirty = false;$("record-editor").hidden=!open;
-    $("editor-title").textContent = record ? "Edit record" : "New record";
+    $("editor-title").textContent = record ? "Edit record" : "New record";$("stage").textContent=record?"Update changes":"Add to changes";
     $("name").value = record?.name || ""; $("type").value = record?.type || "A"; $("ttl").value = String(record?.ttl_seconds ?? 300);
     $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);
     $("expiry-mode").value = record?.expires_at ? "absolute" : "permanent"; $("expiry").value = record?.expires_at || ""; controls();if(open)$("editor-title").focus();
@@ -119,7 +119,7 @@
     $("change-count").textContent = `${diff.added} added · ${diff.changed} changed · ${diff.removed} removed`;
     $("receipt").textContent = model.receipt ? "Acknowledged operation " + model.receipt.operation_id + " at revision " + model.receipt.revision + " · " + model.receipt.committed_at + ". This receipt is not a current-state snapshot." : "";
     $("saved-details").hidden=!model.receipt;
-    const origin=model.draftProvenance;$("draft-provenance").textContent=origin?"Operator-supplied strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"unchanged after transfer; the tuple will be submitted":"locally edited; the original tuple will not be submitted")+". The source and profile are not authenticated by the snapshot server.":"";
+    const origin=model.draftProvenance;$("draft-provenance-details").hidden=!origin;$("draft-provenance").textContent=origin?"Operator-supplied strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"unchanged after transfer; the tuple will be submitted":"locally edited; the original tuple will not be submitted")+". The source and profile are not authenticated by the snapshot server.":"";
     $("count").textContent = String(model.draft.length); $("rows").replaceChildren();
     const filter = $("filter").value.toLowerCase(), typeFilter=$("record-type-filter").value; let count = 0;
     for (const record of model.draft) {
@@ -135,7 +135,7 @@
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
     $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;
-    $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No draft records match this filter.":"The draft is empty.";
+    $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No records match your search or type filter.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
   async function request(method, body, target = endpoint.href) {
@@ -201,7 +201,7 @@
     if($("expiry-mode").value==="absolute")record.expires_at=$("expiry").value;
     try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the proposal before sending.","success");}catch(error){if(error.issue){const issue=error.issue,field=issue.field==="values"?$("values").querySelectorAll("textarea")[issue.index||0]:$(issue.field);$("record-error").textContent=issue.text;$("record-error").hidden=false;if(field){field.setAttribute("aria-invalid","true");field.setAttribute("aria-describedby",[...(field.getAttribute("aria-describedby")||"").split(/\s+/).filter(Boolean),"record-error"].join(" "));field.focus();}controls();}else status(message(error),"error");}
   });
-  $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Records refreshed. The change is still unconfirmed; retry the same change to check safely.":model.pending?.status==="acknowledged"?"Changes saved. Review your remaining local edits before saving again.":model.dirty()?"Records refreshed. Your unsaved edits are preserved.":"Records refreshed.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
+  $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Records refreshed. The change is still unconfirmed; use Check submitted change to send the identical request and check its result safely.":model.pending?.status==="acknowledged"?"Changes saved. Review your remaining local edits before saving again.":model.dirty()?"Records refreshed. Your unsaved edits are preserved.":"Records refreshed.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
   $("clear").addEventListener("click",()=>{if(confirm("Clear all local drafts, pending request identity and receipt, then disconnect? This cannot cancel or undo any server operation. Closing or reloading also loses this recovery information.")){disconnect(false);model.clear();edit(null,true);render();status("Local work cleared. Reconnect explicitly to load a server snapshot.");}});
   $("review").addEventListener("click",()=>{
@@ -222,7 +222,7 @@
     if(busy||!connected||(window.secDNSAgent && !window.secDNSAgent.allows("records:write")))return;
     if(!retry){if(reviewedEdit!==model.review(endpoint.href)){status("The draft changed. Review it again.","error");return;}try{if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));const id=Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");model.freeze(id,endpoint.href,reviewedEdit);}catch(e){status(message(e),"error");return;}}
     else if(model.pending?.status!=="uncertain")return;
-    const pending=model.pending,captured=epoch;pending.status="sending";getID++;busy=true;controls();$("review-dialog").close();status("Submitting the frozen operation…");
+    const pending=model.pending,captured=epoch;pending.status="sending";getID++;busy=true;controls();$("review-dialog").close();status("Saving the reviewed changes…");
     try{
       const result=await request("POST",pending.body,pending.endpoint);if(captured!==epoch)return;model.acknowledge(result.data,result.provenance);render();
       try{await fetchCurrent();if(captured===epoch)status(model.pending?"Changes saved. Review your remaining local edits before saving again.":"Records saved.","success");}

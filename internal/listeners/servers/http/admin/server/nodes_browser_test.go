@@ -30,6 +30,23 @@ func TestNodeConsoleBrowser(t *testing.T) {
 			withdraw[node] = state
 		}
 		raw := map[string]any{"schema": 1, "node": node, "observed_at": time.Now().UTC(), "reachable": true, "stale": false, "daemon": map[string]any{"active": true, "pid": 123}, "maintenance": map[string]bool{"withdraw": state}, "profiles": []any{map[string]any{"role": "normal", "family": 4, "healthy": true, "advertised": !state, "prefix": "192.0.2.53/32"}, map[string]any{"role": "dns64", "family": 6, "healthy": true, "advertised": !state, "prefix": "2001:db8::64/128"}}, "peers": []any{map[string]any{"address": "192.0.2.1", "family": 4, "state": "Established", "prefixes": []string{"192.0.2.53/32"}}}}
+		profiles := []any{}
+		for _, role := range []string{"normal", "dns64"} {
+			for _, family := range []int{4, 6} {
+				prefix := "192.0.2.53/32"
+				if role == "dns64" {
+					prefix = "192.0.2.64/32"
+				}
+				if family == 6 {
+					prefix = "2001:db8::53/128"
+					if role == "dns64" {
+						prefix = "2001:db8::64/128"
+					}
+				}
+				profiles = append(profiles, map[string]any{"role": role, "family": family, "enabled": true, "healthy": true, "local_healthy": true, "upstream_healthy": true, "upstream_age_seconds": 3, "reason": "ready", "advertised": !state, "prefix": prefix})
+			}
+		}
+		raw["profiles"] = profiles
 		if action != "status" {
 			raw["operation"] = map[string]any{"request_id": id, "action": action, "confirmed": true, "status": "confirmed"}
 		}

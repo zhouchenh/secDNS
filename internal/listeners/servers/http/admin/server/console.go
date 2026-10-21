@@ -33,8 +33,12 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 		links += `<a href="` + escaped + path + `"` + current + `>` + label + `</a>`
 	}
 	if !h.FollowerStatusOnly {
+		links += `<p class="console-label">DNS</p>`
 		link("/ui/", "DNS records", "records")
 		link("/ui/import-preview/", "Import records", "import")
+	}
+	if h.nodesEnabled() || len(h.followerStatusNames) > 0 {
+		links += `<p class="console-label">Infrastructure</p>`
 	}
 	if h.nodesEnabled() {
 		link("/ui/nodes/", "Nodes", "nodes")
@@ -56,14 +60,14 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	}
 	account := ""
 	if !h.FollowerStatusOnly {
-		account = `<button type="button" id="console-account">Access &amp; security</button>`
+		account = `<p class="console-label">Account</p><button type="button" id="console-account">Access &amp; security</button>`
 	}
 	footer := "This instance only"
 	if active == "nodes" || active == "health" || active == "routing" {
 		role = "Candidate cluster"
 		footer = "3 managed nodes"
 	}
-	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><p class="console-label">ADMINISTRATION</p><nav aria-label="Administration">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>` + footer + `</span></div></aside>`
+	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><nav aria-label="Main navigation">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>` + footer + `</span></div></aside>`
 	head := `<link rel="stylesheet" href="` + escaped + `/ui/console.css"><script defer src="` + escaped + `/ui/console.js"></script>`
 	data = bytes.Replace(data, []byte("</head>"), []byte(head+"</head>"), 1)
 	gateway := ""

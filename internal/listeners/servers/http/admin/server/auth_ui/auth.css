@@ -29,3 +29,13 @@ header{flex-wrap:wrap}#agent-identity{flex:1 1 100%;min-width:0;overflow-wrap:an
 @media(max-width:560px){#console-auth-screen{padding:28px 18px}.auth-surface{padding:24px}.auth-brand{margin-bottom:24px}}
 
 @media(max-height:560px) and (min-width:600px){#console-auth-screen{padding:10px 24px}.auth-brand{font-size:24px;margin-bottom:10px}.auth-surface{padding:18px 24px}#console-auth-screen h2{font-size:22px;margin-bottom:6px}#console-auth-screen p{margin:8px 0}#console-auth-screen label{margin-top:10px}#console-auth-screen input{min-height:40px;padding:8px 11px}#console-auth-screen form>.primary{margin-top:14px;min-height:40px;padding:8px}.auth-alternatives{margin-top:8px}#human-access .auth-alternatives button{min-height:28px}.auth-secondary,.auth-return{margin:6px auto;min-height:32px!important}}
+
+/* Account settings keep the application shell; sign-in retains its focused form. */
+.console-layout.account-screen-open #console-auth-screen{width:100%;max-width:1100px;min-height:0;padding:24px;margin:0 auto}
+.console-layout.account-screen-open #console-auth-screen .auth-brand{display:none}
+.console-layout.account-screen-open .auth-surface{padding:24px;border-radius:6px;box-shadow:none}
+.console-layout.account-screen-open #human-access{max-width:none;margin:0}
+.console-layout.account-screen-open #console-auth-screen h2{font-size:24px}
+.console-layout.account-screen-open #console-auth-screen label{font-size:14px}
+.console-layout.account-screen-open .auth-return{margin:16px 0 0;text-align:left}
+@media(max-width:700px){.console-layout.account-screen-open #console-auth-screen{padding:16px}.console-layout.account-screen-open .auth-surface{padding:16px}}
