@@ -1,10 +1,12 @@
-"""Windows console adapter; only the three isolated candidates are addressable."""
+"""Windows/Linux console adapter for the three isolated candidates only."""
+from contextlib import contextmanager
 import json
 import os
 import pathlib
+import re
 import subprocess
+import stat
 import sys
-import uuid
 
 BASE = pathlib.Path('C:/Users/zhouchenh/.codex/infra-discovery-2026-10-17')
 KEYS = pathlib.Path('C:/Users/zhouchenh/.ssh')
@@ -14,10 +16,88 @@ NODES = {
     'intel108': ('100.91.1.84', 'era-secdns-intel108_ed25519', 'lxc-three-node-prep-r3/intel108-known-hosts'),
 }
 SSH = 'C:/Windows/System32/OpenSSH/ssh.exe'
+ACTIONS = ('status', 'drain', 'resume', 'bgp-get', 'bgp-validate', 'bgp-apply')
+
+
+def canonical_request_id(value):
+    return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', value) is not None
+
+
+def platform_paths(platform=None):
+    platform = sys.platform if platform is None else platform
+    if platform == 'win32':
+        return dict(ssh=SSH, null='NUL', keys=KEYS, trust=BASE,
+                    state=BASE/'secdns-node-console-20261021'/'adapter-state')
+    if platform == 'linux':
+        return dict(ssh='/usr/bin/ssh', null='/dev/null',
+                    keys=pathlib.Path('/etc/secdns-admin/ssh/keys'),
+                    trust=pathlib.Path('/etc/secdns-admin/ssh/known-hosts'),
+                    state=pathlib.Path('/var/lib/secdns-admin/adapter-state'))
+    raise RuntimeError('unsupported adapter platform')
+
+
+def verify_private_path(path, secret=False, directory=False):
+    """Linux service inputs cannot be redirected by another local account."""
+    path = pathlib.Path(path)
+    for item in (path, *path.parents):
+        info = item.lstat()
+        if stat.S_ISLNK(info.st_mode) or info.st_uid not in (0, os.geteuid()):
+            raise PermissionError('unsafe adapter path')
+        if info.st_mode & 0o022 and not (item != path and stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_mode & stat.S_ISVTX):
+            raise PermissionError('writable adapter path')
+        if item == path:
+            if directory and not stat.S_ISDIR(info.st_mode):
+                raise PermissionError('adapter state is not a directory')
+            if not directory and not stat.S_ISREG(info.st_mode):
+                raise PermissionError('adapter credential is not a file')
+            if secret and info.st_mode & 0o077:
+                raise PermissionError('adapter key permissions')
+
+
+@contextmanager
+def mutation_lock(state=None):
+    paths = platform_paths()
+    state = paths['state'] if state is None else pathlib.Path(state)
+    state.mkdir(mode=0o700, exist_ok=True)
+    if sys.platform == 'linux':
+        verify_private_path(state, directory=True)
+        info = state.lstat()
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise PermissionError('adapter state must be private')
+    # The service owns this private directory. Never follow a lock-file symlink.
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0)
+    with os.fdopen(os.open(str(state/'mutation.lock'), flags, 0o600), 'r+b') as lock:
+        if sys.platform == 'linux':
+            info = os.fstat(lock.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise PermissionError('adapter lock must be private')
+        if sys.platform == 'win32':
+            import msvcrt
+            if lock.read(1) == b'':
+                lock.write(b'0')
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+        # Closing the descriptor also releases the lock after exceptions.
 
 def invoke(action, node, request_id=None, payload=None):
+    if action not in ACTIONS or node not in NODES:
+        raise ValueError('unknown candidate action')
+    if action in ('drain', 'resume', 'bgp-apply'):
+        if not canonical_request_id(request_id):
+            raise ValueError('invalid request identifier')
+    elif request_id is not None:
+        raise ValueError('unexpected request identifier')
+    paths = platform_paths()
     host, key, trust = NODES[node]
-    args = [SSH, '-F', 'NUL', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'ConnectTimeout=4', '-o', 'ServerAliveInterval=3', '-o', 'ServerAliveCountMax=2', '-i', str(KEYS/key), '-o', 'UserKnownHostsFile='+str(BASE/trust), 'root@'+host,
+    if sys.platform == 'linux':
+        verify_private_path(paths['keys']/key, secret=True)
+        verify_private_path(paths['trust']/trust)
+    args = [paths['ssh'], '-F', paths['null'], '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'IdentitiesOnly=yes', '-o', 'ConnectTimeout=4', '-o', 'ServerAliveInterval=3', '-o', 'ServerAliveCountMax=2', '-i', str(paths['keys']/key), '-o', 'UserKnownHostsFile='+str(paths['trust']/trust), 'root@'+host,
             '/usr/bin/python3 /opt/secdns-persistent-20261021/candidate_status.py '+action+' '+node+((' '+request_id) if request_id else '')]
     p = subprocess.run(args, input=json.dumps(payload) if payload is not None else None, capture_output=True, text=True, timeout=100 if action=='bgp-apply' else (12 if action in ('status','bgp-get','bgp-validate') else 30))
     if p.returncode or len(p.stdout) > 262144: raise RuntimeError('candidate unavailable or operation unconfirmed')
@@ -28,7 +108,7 @@ def invoke(action, node, request_id=None, payload=None):
 def main():
     if len(sys.argv) not in (3, 4): raise ValueError('invalid arguments')
     action, node = sys.argv[1:3]
-    if node not in NODES or action not in ('status', 'drain', 'resume','bgp-get','bgp-validate','bgp-apply'): raise ValueError('unknown candidate action')
+    if node not in NODES or action not in ACTIONS: raise ValueError('unknown candidate action')
     payload=None
     if action in ('bgp-validate','bgp-apply'):
         raw=sys.stdin.read(16385)
@@ -38,17 +118,10 @@ def main():
     if action in ('status','bgp-get','bgp-validate'):
         if len(sys.argv) != 3: raise ValueError('arguments')
         return invoke(action, node,payload=payload)
-    if len(sys.argv) != 4 or str(uuid.UUID(sys.argv[3])) != sys.argv[3]: raise ValueError('invalid request identifier')
+    if len(sys.argv) != 4 or not canonical_request_id(sys.argv[3]): raise ValueError('invalid request identifier')
     # All GUI changes serialize across nodes so two simultaneous drains cannot
-    # each rely on the other node. This file is on the local trusted Windows host.
-    import msvcrt
-    state = BASE/'secdns-node-console-20261021'/'adapter-state'
-    state.mkdir(exist_ok=True)
-    with (state/'mutation.lock').open('a+b') as lock:
-        lock.seek(0)
-        if lock.read(1) == b'': lock.write(b'0'); lock.flush()
-        lock.seek(0)
-        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+    # each rely on the other node. One private lock serves this console process family.
+    with mutation_lock():
         if action in ('drain','bgp-apply'):
             safe = False
             for other in NODES:

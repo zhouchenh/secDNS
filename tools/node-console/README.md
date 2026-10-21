@@ -64,3 +64,36 @@ can require another forty seconds. Never submit another change to compensate for
 an uncertain operation: use read-only reconciliation of the UUID-bound receipt
 and status. A durable pending transaction blocks subsequent configuration apply.
 
+
+## Linux console host
+
+The adapter supports Windows and Linux. Linux uses fixed paths, never paths or
+hosts supplied by an HTTP request:
+
+- SSH: `/usr/bin/ssh`, with `/dev/null` configuration, strict known-host checking,
+  batch mode and identities-only enabled.
+- Keys: `/etc/secdns-admin/ssh/keys/`, with the existing inventory key filenames.
+- Known hosts: `/etc/secdns-admin/ssh/known-hosts/`, with the inventory relative
+  filenames (including the `lxc-three-node-prep-r3` subdirectory).
+- Global mutation lock: `/var/lib/secdns-admin/adapter-state/mutation.lock`.
+
+Provision the state directory owned by the service identity with mode 0700;
+its lock must be a regular service-owned 0600 file. Keys must be private regular
+files. Known-host files and all path ancestors must be owned by root or the
+service identity and not writable by other accounts. Symlinks fail closed.
+Root-owned sticky ancestor directories are allowed for isolated test fixtures.
+Linux uses nonblocking `flock`; Windows retains its existing nonblocking byte
+lock. Run only one active console coordinator for this candidate inventory:
+locks on different machines cannot serialize one another.
+
+Generate a new scoped management key on the Linux host, and enroll only its
+public key with a reviewed forced-command restriction on each candidate. Do not
+copy workstation private keys. This source change does not provision keys,
+change SSH policy, install services, or expose any listener.
+
+A network portal also requires an exact HTTPS public origin, a trusted TLS
+terminator, and consistent migration of the existing authentication database and
+key while its sole writer is stopped. Preserve immutable authentication store
+identity; do not initialize another owner or enroll MFA again. The admin HTTP
+listener does not itself terminate TLS. Deployment must keep existing DNS and
+replication listeners unchanged. Portability tests do not authorize deployment.
