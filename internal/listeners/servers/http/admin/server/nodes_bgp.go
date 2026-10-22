@@ -30,6 +30,7 @@ type nodeAnnouncement struct {
 	Enabled *bool  `json:"enabled"`
 }
 type nodeBGPConfig struct {
+	ExternalPeers []nodeExternalPeer `json:"external_peers,omitempty"`
 	LocalASN      int                `json:"local_asn"`
 	RouterID      string             `json:"router_id"`
 	Peers         []nodeBGPPeer      `json:"peers"`
@@ -40,13 +41,15 @@ type nodeBGPView struct {
 	Config   nodeBGPConfig `json:"config"`
 }
 type nodeBGPResult struct {
-	Schema    int               `json:"schema"`
-	Node      string            `json:"node"`
-	Revision  string            `json:"revision,omitempty"`
-	Config    nodeBGPConfig     `json:"config"`
-	Valid     bool              `json:"valid,omitempty"`
-	BGP       *nodeBGPView      `json:"bgp,omitempty"`
-	Operation *nodeBGPOperation `json:"operation,omitempty"`
+	ExternalPolicy *nodeExternalPolicy       `json:"external_policy,omitempty"`
+	ExternalStatus []nodeExternalObservation `json:"external_status,omitempty"`
+	Schema         int                       `json:"schema"`
+	Node           string                    `json:"node"`
+	Revision       string                    `json:"revision,omitempty"`
+	Config         nodeBGPConfig             `json:"config"`
+	Valid          bool                      `json:"valid,omitempty"`
+	BGP            *nodeBGPView              `json:"bgp,omitempty"`
+	Operation      *nodeBGPOperation         `json:"operation,omitempty"`
 }
 type nodeBGPOperation struct {
 	RequestID string `json:"request_id"`
@@ -110,7 +113,7 @@ func validateNodeBGP(node string, c nodeBGPConfig) error {
 		}
 		profiles[key] = true
 	}
-	return nil
+	return validateExternalPeers(c.ExternalPeers)
 }
 func (h *HTTPAdminServer) runNodeBGP(ctx context.Context, action, node, id string, body []byte) (nodeBGPResult, error) {
 	var out nodeBGPResult
@@ -214,6 +217,10 @@ func (h *HTTPAdminServer) nodeBGPRoutes(mux *http.ServeMux, base string) {
 				agentError(w, 409, "bgp_revision_changed_refresh")
 				return
 			}
+			if err := authorizeExternalPeers(body.Config.ExternalPeers, current.ExternalPolicy); err != nil {
+				agentError(w, 400, "external_peer_not_enrolled")
+				return
+			}
 			payload, _ := json.Marshal(struct {
 				ExpectedRevision string        `json:"expected_revision"`
 				Config           nodeBGPConfig `json:"config"`
@@ -315,7 +322,10 @@ func sameNodeBGP(a, b nodeBGPConfig) bool {
 	b.Peers = append([]nodeBGPPeer(nil), b.Peers...)
 	a.Announcements = append([]nodeAnnouncement(nil), a.Announcements...)
 	b.Announcements = append([]nodeAnnouncement(nil), b.Announcements...)
+	a.ExternalPeers = append([]nodeExternalPeer(nil), a.ExternalPeers...)
+	b.ExternalPeers = append([]nodeExternalPeer(nil), b.ExternalPeers...)
 	for _, c := range []*nodeBGPConfig{&a, &b} {
+		sort.Slice(c.ExternalPeers, func(i, j int) bool { return c.ExternalPeers[i].ID < c.ExternalPeers[j].ID })
 		sort.Slice(c.Peers, func(i, j int) bool { return c.Peers[i].Address < c.Peers[j].Address })
 		sort.Slice(c.Announcements, func(i, j int) bool {
 			if c.Announcements[i].Role == c.Announcements[j].Role {

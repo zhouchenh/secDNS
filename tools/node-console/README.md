@@ -39,14 +39,14 @@ and reconcile the operation first. The console supplies its own authenticated
 actor audit; remote receipts deliberately contain no account secrets.
 
 Run local tests with `python -m unittest discover -s tools/node-console`.
-This implementation does not edit peer addresses, ASNs, prefixes, production DNS,
-or OSPF settings.
+The fixed mesh identities and production DNS are unchanged. External BGP peers
+use the separate enrollment workflow below. OSPF configuration is unsupported.
 
 ## Candidate BGP configuration
 
 Validate and apply read a JSON object from standard input containing
 `expected_revision` and `config`. The revision is a canonical configuration SHA256.
-Only the four fixed peers' enabled state and keepalive/hold timers, and the four
+For the fixed mesh, only the four peers' enabled state and keepalive/hold timers, and the four
 normal/DNS64 IPv4/IPv6 announcement eligibility flags, can change. At least one
 peer per address family must remain enabled. Addresses, ASNs, router identity,
 synthetic prefix filters and private BGP port 1179 are fixed.
@@ -108,3 +108,72 @@ Eight profile/transport workers run concurrently; each tries the two fixed canar
 Settings load only between upstream rounds, with gates reset on a revision change. This can briefly withdraw the node's routes. A successful apply requires a completed round bearing the new revision and restoration of the baseline eligible health/advertisements. Rollback likewise requires the old revision and baseline recovery. The independent rollback timer is scheduled before the file change; request interruption is not evidence of failure. An uncertain response must be reconciled, never automatically retried. No DNS process restart, account change, or arbitrary canary/endpoint configuration is part of a settings apply.
 
 The deployed health controller uses `query_helper` pointing to the locally built `secdns-health-query` binary. It passes the configured timeout in milliseconds to the DNS exchange itself; the subprocess gets a separate 250 ms startup/cleanup allowance. Structured timeout/network errors are recorded per attempt. The old parity fixture remains available for legacy callers but hardcodes a 700 ms DNS timeout and must not be used to qualify adjustable timeout semantics. Helper-only rollout changes the root-owned health configuration path and restarts the private routing controller, not DNS or the admin service.
+
+## External peers in Routing → BGP settings
+
+An operator first enrolls allowed external routers on the candidate. The browser
+can then **add, edit, or remove** entries referencing those enrolled routers.
+New entries start disabled and export no addresses. Enabling a session and
+selecting service exports are separate choices. Review shows before/after names,
+session state, routing families, timers, and exact service addresses.
+
+An IPv6 transport can carry both IPv4 and IPv6 routing families. External timers
+support keepalive 1–30 seconds and hold 3–90 seconds, with hold at least three times
+keepalive; 1/5 is the new-entry setting. Existing mesh timers are not changed.
+Transport destination, local source, local/remote AS, and port are displayed but
+cannot be changed by a browser request. A per-peer local AS alias does not renumber
+the mesh. Names such as `Switch17.fixture@IPv6` are descriptive, not DNS lookups.
+
+All external imports are denied. Exports must be an enrolled subset of the four
+existing synthetic Normal DNS/DNS64 host prefixes. The outbound policy additionally
+requires a locally originated AS path; learned routes, aggregates and default
+routes cannot be exported. The existing health controller remains the only source
+of service announcements, so an allowed export is still withdrawn when its health
+gate closes. External peers are not members of the mesh health quorum.
+
+Apply briefly drains the node and restarts its routing service, using the existing
+revision check, durable operation receipt, independent rollback and actor audit.
+Success requires exact runtime neighbor/policy readback and per-peer advertised
+routes, not just a healthy mesh. An enabled external session must establish before
+success is confirmed. Unknown observations never mean no advertisements. An
+uncertain result requires inspection; do not submit another apply blindly.
+
+### Operator enrollment (not a browser API)
+
+Install `candidate_external.py` alongside `candidate_bgp.py` and
+`candidate_status.py`. Enrollment is the root-owned, non-group/world-writable
+`external-policy.json` under the existing candidate directory. It contains:
+
+```json
+{
+  "schema": 1,
+  "node": "amd103",
+  "peers": [{
+    "id": "fixture-switch",
+    "address": "2001:db8:85:1::1",
+    "transport_family": 6,
+    "local_source": "2001:db8:85:1::",
+    "local_asn": 8505,
+    "remote_asn": 8501,
+    "port": 179,
+    "allowed_afis": [4, 6],
+    "allowed_exports": ["203.0.113.53/32", "2001:db8:53::53/128"]
+  }]
+}
+```
+
+This example is a disconnected namespace fixture, **not a production ASN
+allocation or router enrollment**. No production targets or automatic enrollment
+ship with the feature. Maximum eight enrolled peers; canonical literal unicast
+addresses only, no mesh/client address collisions. Local-source reachability and
+router-side policy require a separately authorized operator setup.
+
+The whole enrollment is included in the revision. Enrollment changes invalidate
+prepared requests. During an in-flight policy change, recovery removes all external
+sessions, retains the original mesh/test-client configuration, restores the prior
+maintenance flag after restart, and leaves the receipt pending for reconciliation.
+It never rewrites root enrollment to restore revoked authority. Ordinary rollback
+requires exact old configuration, healthy profiles and external runtime readback.
+
+The existing receive-only CT109 peer remains separately enrolled and unchanged.
+OSPF has no model, renderer, API or setup controls in this implementation.

@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"github.com/zhouchenh/secDNS/internal/recordset"
 	"github.com/zhouchenh/secDNS/internal/recordstore"
 	"net"
@@ -79,6 +81,18 @@ func TestEraUIManualPreview(t *testing.T) {
 			revisions[node] = strings.Repeat("a", 64)
 		}
 		out := nodeBGPResult{Schema: 1, Node: node, Revision: revisions[node], Config: configs[node]}
+		if os.Getenv("SECDNS_EXTERNAL_PREVIEW") == "1" {
+			out.ExternalPolicy = &nodeExternalPolicy{Schema: 1, Node: node, Peers: []nodeExternalEnrollment{}}
+			if node != "intel108" {
+				out.ExternalPolicy.Peers = append(out.ExternalPolicy.Peers, nodeExternalEnrollment{ID: "fixture-switch", Address: "2001:db8:85:1::1", TransportFamily: 6, LocalSource: "2001:db8:85:1::", LocalASN: 8505, RemoteASN: 8501, Port: 179, AllowedAFIs: []int{4, 6}, AllowedExports: []string{"203.0.113.53/32", "203.0.113.64/32", "2001:db8:53::53/128", "2001:db8:53::64/128"}})
+			}
+			for _, p := range configs[node].ExternalPeers {
+				for _, f := range p.AFIs {
+					out.ExternalStatus = append(out.ExternalStatus, nodeExternalObservation{ID: p.ID, Family: f, State: "Idle", Observed: true, Prefixes: []string{}})
+				}
+			}
+		}
+
 		var body nodeBGPRequest
 		if len(payload) > 0 {
 			json.Unmarshal(payload, &body)
@@ -89,7 +103,7 @@ func TestEraUIManualPreview(t *testing.T) {
 		}
 		if action == "bgp-apply" {
 			configs[node] = body.Config
-			revisions[node] = strings.Repeat("b", 64)
+			revisions[node] = fmt.Sprintf("%x", sha256.Sum256(payload))
 			out.BGP = &nodeBGPView{revisions[node], configs[node]}
 			out.Operation = &nodeBGPOperation{RequestID: id, Action: action, Confirmed: true, Status: "confirmed"}
 		}
@@ -146,11 +160,15 @@ func TestEraUIManualPreview(t *testing.T) {
 	if _, err = store.Replace(recordstore.Expected{RulesetID: "design-preview", LineageID: "disposable", Revision: 1}, "preview-seed", records); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:5194")
+	previewAddress := "127.0.0.1:5194"
+	if os.Getenv("SECDNS_EXTERNAL_PREVIEW") == "1" {
+		previewAddress = "127.0.0.1:5196"
+	}
+	listener, err := net.Listen("tcp", previewAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.agent.origin = "http://127.0.0.1:5194"
+	h.agent.origin = "http://" + previewAddress
 	routes := h.routes()
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: s.Token})
@@ -158,7 +176,7 @@ func TestEraUIManualPreview(t *testing.T) {
 	})}
 	go server.Serve(listener)
 	defer server.Close()
-	t.Log("Disposable backend preview http://127.0.0.1:5194/admin/ui/")
+	t.Log("Disposable backend preview http://" + previewAddress + "/admin/ui/")
 	time.Sleep(90 * time.Minute)
 }
 

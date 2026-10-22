@@ -7,6 +7,7 @@ import subprocess
 import signal
 import time
 import candidate_status as c
+import candidate_external as external
 
 def default_config(node):
     peers = []
@@ -17,9 +18,9 @@ def default_config(node):
     return dict(local_asn=c.NODES[node], router_id=c.ADDRESSES[node][0], peers=peers,
                 announcements=[dict(role=r, family=f, enabled=True) for r in ('normal','dns64') for f in (4,6)])
 
-def validate(node, obj):
+def validate(node, obj, enrollment=None):
     expected = default_config(node)
-    if not isinstance(obj,dict) or set(obj) != set(expected): raise ValueError('configuration fields')
+    if not isinstance(obj,dict) or set(obj) not in (set(expected), set(expected)|{'external_peers'}): raise ValueError('configuration fields')
     if type(obj['local_asn']) is not int or obj['local_asn'] != expected['local_asn'] or obj['router_id'] != expected['router_id']: raise ValueError('fixed local identity')
     if not isinstance(obj['peers'],list) or len(obj['peers']) != 4: raise ValueError('four fixed peers')
     lookup = {p['address']:p for p in expected['peers']}
@@ -35,7 +36,9 @@ def validate(node, obj):
     if not isinstance(announcements,list) or len(announcements)!=4: raise ValueError('four announcements')
     if any(not isinstance(a,dict) or set(a)!={'role','family','enabled'} or type(a['family']) is not int or type(a['enabled']) is not bool for a in announcements): raise ValueError('announcement fields')
     if {(a['role'],a['family']) for a in announcements}!={(r,f) for r in ('normal','dns64') for f in (4,6)}: raise ValueError('fixed announcements')
-    return dict(local_asn=obj['local_asn'],router_id=obj['router_id'],peers=sorted(obj['peers'],key=lambda p:p['address']),announcements=sorted(announcements,key=lambda a:(a['role'],a['family'])))
+    result = dict(local_asn=obj['local_asn'],router_id=obj['router_id'],peers=sorted(obj['peers'],key=lambda p:p['address']),announcements=sorted(announcements,key=lambda a:(a['role'],a['family'])))
+    if 'external_peers' in obj: result['external_peers']=external.validate(node,obj['external_peers'],enrollment)
+    return result
 
 def test_client():
     """Root-enrolled receive-only test client; never accepted from browser input."""
@@ -56,14 +59,17 @@ def test_client():
 
 def get(node):
     path=c.BASE/'bgp-console.json'
-    config=validate(node,c.read(path) if path.exists() else default_config(node))
+    enrollment=external.policy(node)
+    config=validate(node,c.read(path) if path.exists() else default_config(node),enrollment)
     client=test_client()
     revision_input=config if client is None else dict(config=config,test_client=client)
+    if enrollment['peers']: revision_input=dict(config=revision_input,external_policy=enrollment)
     revision=hashlib.sha256(json.dumps(revision_input,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-    return dict(schema=1,node=node,revision=revision,config=config)
+    return dict(schema=1,node=node,revision=revision,config=config,external_policy=enrollment)
 
-def render(node, config):
-    config=validate(node,config)
+def render(node, config, enrollment=None):
+    enrollment=external.policy(node) if enrollment is None else enrollment
+    config=validate(node,config,enrollment)
     client=test_client()
     lines=['hostname secdns-'+node,'log stdout warnings','bgp as-path access-list LOCAL-ONLY permit ^$']
     for f in (4,6):
@@ -74,7 +80,10 @@ def render(node, config):
         for f in (4,6): lines += [f'route-map IN-{name}-{f} permit 10',f' match {"ip" if f==4 else "ipv6"} address prefix-list EXACT{f}',f' set local-preference {preference}']
     for f in (4,6): lines += [f'route-map OUT-{f} permit 10',f' match {"ip" if f==4 else "ipv6"} address prefix-list EXACT{f}',' match as-path LOCAL-ONLY']
     if client: lines += ['route-map TEST-CLIENT-DENY deny 10']
+    policies, external_neighbors, external_afis = external.render(node, config.get('external_peers', []), enrollment)
+    lines += policies
     lines += [f'router bgp {config["local_asn"]}',f' bgp router-id {config["router_id"]}',' no bgp default ipv4-unicast',' bgp graceful-restart-disable']
+    lines += external_neighbors
     for p in config['peers']:
         a=p['address'];f=p['family']
         lines += [f' neighbor {a} remote-as {p["remote_asn"]}',f' neighbor {a} port 1179',f' neighbor {a} update-source {c.ADDRESSES[node][0 if f==4 else 1]}',f' neighbor {a} timers {p["keepalive_seconds"]} {p["hold_seconds"]}']
@@ -92,6 +101,7 @@ def render(node, config):
         if client:
             address=client['ipv'+str(f)]
             lines += [f'  neighbor {address} activate',f'  neighbor {address} route-map TEST-CLIENT-DENY in',f'  neighbor {address} route-map OUT-{f} out']
+        lines += external_afis[f]
         lines.append(' exit-address-family')
     return '\n'.join(lines)+'\n'
 
@@ -117,12 +127,12 @@ def read_request(node, payload):
     if not isinstance(payload,dict) or set(payload)!={'expected_revision','config'}: raise ValueError('request fields')
     old=get(node)
     if payload['expected_revision']!=old['revision']:raise ValueError('configuration changed; refresh')
-    return old,validate(node,payload['config'])
+    return old,validate(node,payload['config'],old['external_policy'])
 
-def preflight(node,config):
+def preflight(node,config,enrollment=None):
     path=c.BASE/('bgp-check-'+os.urandom(16).hex()+'.conf')
     try:
-        atomic_text(path,render(node,config))
+        atomic_text(path,render(node,config,enrollment))
         p=subprocess.run(['/usr/lib/frr/bgpd','-C','-S','-Z','-p','0','-P','0','-f',str(path)],capture_output=True,text=True,timeout=5)
         if p.returncode:raise ValueError('FRR rejected configuration')
     finally:
@@ -138,6 +148,18 @@ def lock_file():
 def rollback_locked(node,receipt,path):
     if receipt['node']!=node or receipt['action']!='bgp-apply':raise ValueError('receipt identity')
     if receipt['status']!='pending':return
+    policy_changed=False
+    if 'external_policy_digest' in receipt:
+        try: policy_changed=receipt['external_policy_digest'] != external.digest(external.policy(node))
+        except (ValueError,OSError): policy_changed=True
+    if policy_changed:
+        safe=dict(receipt['old_config']);safe.pop('external_peers',None)
+        c.atomic(c.BASE/'maintenance.json',{'withdraw':True})
+        atomic_text(c.BASE/'bgp.conf',render(node,safe,{'schema':1,'node':node,'peers':[]}))
+        c.atomic(c.BASE/'bgp-console.json',safe)
+        restart()
+        c.atomic(c.BASE/'maintenance.json',{'withdraw':receipt['old_withdraw']})
+        raise RuntimeError('external enrollment changed; external peers removed, reconciliation required')
     atomic_text(c.BASE/'bgp.conf',receipt['old_bgp'])
     c.atomic(c.BASE/'bgp-console.json',validate(node,receipt['old_config']))
     c.atomic(c.BASE/'maintenance.json',{'withdraw':True})
@@ -154,7 +176,7 @@ def rollback_locked(node,receipt,path):
         ready=ready and all(p['healthy'] is not None and p['advertised']==(p['healthy'] and flags[p['role'],p['family']] and not receipt['old_withdraw']) for p in result['profiles'])
         ready=ready and all(p['healthy'] is True or baseline.get((p['role'],p['family']),True) is not True for p in result['profiles'])
         ready=ready and get(node)['config']==validate(node,config) and (c.BASE/'bgp.conf').read_text()==receipt['old_bgp']
-        if ready:break
+        if ready and external_converged(node,config,result):break
         if time.monotonic()>deadline:raise RuntimeError('rollback not observed; receipt remains pending')
         time.sleep(1)
     receipt.update(status='rolled_back',confirmed=False)
@@ -207,9 +229,12 @@ def apply(node,request_id,payload):
         old,config=read_request(node,payload)
         before=c.snapshot(node)
         if before['stale']:raise ValueError('fresh inspection required')
-        preflight(node,config)
+        enrollment=old['external_policy']
+        if external.digest(external.policy(node)) != external.digest(enrollment): raise ValueError('configuration changed; refresh')
+        preflight(node,config,enrollment)
         c.secure(c.BASE/'bgp.conf')
         receipt=dict(request_id=request_id,action='bgp-apply',node=node,status='pending',confirmed=False,payload_digest=digest,old_config=old['config'],old_bgp=(c.BASE/'bgp.conf').read_text(),old_withdraw=before['maintenance']['withdraw'],worker_pid=os.getpid(),worker_start=pathlib.Path('/proc/self/stat').read_text().rsplit(')',1)[1].split()[19])
+        receipt['external_policy_digest']=external.digest(enrollment)
         receipt['old_profile_health']=[{k:p[k] for k in ('role','family','healthy')} for p in before['profiles']]
         c.atomic(path,receipt)
         unit='secdns-bgp-rollback-'+request_id
@@ -223,7 +248,8 @@ def apply(node,request_id,payload):
                 if not withdrawn['stale'] and not any(p['advertised'] for p in withdrawn['profiles']):break
                 if time.monotonic()>deadline:raise RuntimeError('withdrawal not observed')
                 time.sleep(.5)
-            atomic_text(c.BASE/'bgp.conf',render(node,config));c.atomic(c.BASE/'bgp-console.json',config)
+            if external.digest(external.policy(node)) != receipt['external_policy_digest']: raise RuntimeError('external enrollment changed')
+            atomic_text(c.BASE/'bgp.conf',render(node,config,enrollment));c.atomic(c.BASE/'bgp-console.json',config)
             restart()
             c.atomic(c.BASE/'maintenance.json',{'withdraw':receipt['old_withdraw']})
             deadline=time.monotonic()+40
@@ -233,7 +259,8 @@ def apply(node,request_id,payload):
                 peers_ok=len(result['peers'])==4 and all((p['state']=='Established')==expected[p['address']] for p in result['peers'])
                 flags={(a['role'],a['family']):a['enabled'] for a in config['announcements']}
                 profiles_ok=all(p['healthy'] is True and p['advertised']==(flags[p['role'],p['family']] and not receipt['old_withdraw']) for p in result['profiles'])
-                if not result['stale'] and peers_ok and profiles_ok:break
+                if external.digest(external.policy(node)) != receipt['external_policy_digest']: raise RuntimeError('external enrollment changed')
+                if not result['stale'] and peers_ok and profiles_ok and external_converged(node, config, result):break
                 if time.monotonic()>deadline:raise RuntimeError('configuration did not converge')
                 time.sleep(1)
             receipt.update(status='confirmed',confirmed=True);c.atomic(path,receipt)
@@ -245,3 +272,20 @@ def apply(node,request_id,payload):
             if receipt['status']!='pending':subprocess.run(['systemctl','stop',unit+'.timer'],capture_output=True,timeout=3)
         result['operation']={k:receipt[k] for k in ('request_id','action','status','confirmed')};result['bgp']=get(node)
         return result
+
+
+def external_converged(node, config, snapshot):
+    entries = config.get('external_peers', [])
+    enrolled=external.policy(node)
+    deadline=time.monotonic()+4
+    if not entries:
+        try: return external.runtime_matches(node,entries,enrolled,deadline) if enrolled['peers'] else True
+        except (ValueError,RuntimeError,OSError,subprocess.SubprocessError): return False
+    observations = external.observe(node, entries, enrolled, deadline)
+    profiles = {p['prefix']: p for p in snapshot['profiles']}
+    for entry in entries:
+        for family in entry['afis']:
+            item = next((x for x in observations if x['id'] == entry['id'] and x['family'] == family), None)
+            expected = {x for x in entry['exports'] if (':' in x) == (family == 6) and profiles[x]['healthy'] and profiles[x]['enabled'] and not snapshot['maintenance']['withdraw']} if entry['enabled'] else set()
+            if item is None or not item['runtime_verified'] or not item['observed'] or (entry['enabled'] and item['state'] != 'Established') or (not entry['enabled'] and item['state'] == 'Established') or set(item['prefixes']) != expected: return False
+    return True
