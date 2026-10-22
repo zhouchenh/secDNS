@@ -203,7 +203,7 @@ def apply(node,request_id,payload):
             result=c.snapshot(node);result['operation']={k:receipt[k] for k in ('request_id','action','status','confirmed')};result['bgp']=get(node);return result
         for p in path.parent.glob('*.json'):
             prior=c.read(p)
-            if prior.get('action')=='bgp-apply' and prior.get('status')=='pending':raise ValueError('pending transaction requires reconciliation')
+            if prior.get('status')=='pending':raise ValueError('pending transaction requires reconciliation')
         old,config=read_request(node,payload)
         before=c.snapshot(node)
         if before['stale']:raise ValueError('fresh inspection required')
