@@ -45,7 +45,7 @@
 .diagnostics:empty{display:none}.console-layout[data-console-page="import"] .banner{background:transparent;border:0;padding:0;color:var(--console-muted)}
 
 /* Shared administration scale: all operational surfaces use these values. */
-:root{--console-text:14px;--console-secondary:12px;--console-space:24px;--console-control:38px;--console-radius:6px;--console-muted:var(--console-muted, oklch(.500 .020 260));--console-line:var(--console-line, oklch(.890 .012 260));font-family:"Segoe UI",system-ui,sans-serif}
+:root{--console-text:14px;--console-secondary:12px;--console-space:24px;--console-control:38px;--console-radius:6px;font-family:"Segoe UI",system-ui,sans-serif}
 .console-layout{font-size:var(--console-text);line-height:1.5}
 .console-layout main{width:100%;max-width:1640px;padding:var(--console-space);min-width:0}
 .console-layout>header{min-height:64px;padding:12px var(--console-space)}
