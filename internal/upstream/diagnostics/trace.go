@@ -35,9 +35,19 @@ var dropped atomic.Uint64
 var written atomic.Uint64
 var writeErrors atomic.Uint64
 var active atomic.Int64
+
+type aggregate struct {
+	Count atomic.Uint64
+	MaxMS atomic.Int64
+}
+
+var aggregates = map[string]*aggregate{}
 var events chan event
 
 func init() {
+	for _, phase := range []string{"doh.resolve", "doh.slot_wait", "doh.http", "doh.failed_refresh", "dns64.resolve", "dns64.aaaa", "dns64.speculative_a", "cache.slot_wait", "sequence.attempt"} {
+		aggregates[phase] = &aggregate{}
+	}
 	seconds, e := strconv.Atoi(os.Getenv("SECDNS_RESOLVER_TRACE_SECONDS"))
 	if e != nil || seconds < 1 || seconds > 180 {
 		return
@@ -60,12 +70,11 @@ func init() {
 					written.Add(1)
 				}
 			case <-timer.C:
-				_ = encoder.Encode(struct {
-					Kind                                     string `json:"kind"`
-					Attempted, Dropped, Written, WriteErrors uint64
-					Active                                   int64
-					Queued                                   int
-				}{"secdns-resolver-trace-summary", emitted.Load(), dropped.Load(), written.Load(), writeErrors.Load(), active.Load(), len(events)})
+				totals := map[string]map[string]int64{}
+				for phase, stat := range aggregates {
+					totals[phase] = map[string]int64{"completed": int64(stat.Count.Load()), "max_ms": stat.MaxMS.Load()}
+				}
+				_ = encoder.Encode(map[string]interface{}{"kind": "secdns-resolver-trace-summary", "attempted": emitted.Load(), "dropped": dropped.Load(), "written": written.Load(), "write_errors": writeErrors.Load(), "active": active.Load(), "queued": len(events), "phases": totals})
 			}
 		}
 	}()
@@ -96,7 +105,6 @@ func Begin(q *dns.Msg, phase string) Span {
 			s.qtype = q.Question[0].Qtype
 		}
 	}
-	send(event{ID: s.id, Phase: phase, State: "begin", At: s.start.UnixMilli(), DNSID: s.dnsid, Qtype: s.qtype})
 	return s
 }
 func (s Span) End(outcome string) {
@@ -104,5 +112,11 @@ func (s Span) End(outcome string) {
 		return
 	}
 	active.Add(-1)
+	duration := time.Since(s.start).Milliseconds()
+	if stat := aggregates[s.phase]; stat != nil && !time.Now().After(deadline) {
+		stat.Count.Add(1)
+		for old := stat.MaxMS.Load(); duration > old && !stat.MaxMS.CompareAndSwap(old, duration); old = stat.MaxMS.Load() {
+		}
+	}
 	send(event{ID: s.id, Phase: s.phase, State: "end", At: time.Now().UnixMilli(), Duration: time.Since(s.start).Milliseconds(), DNSID: s.dnsid, Qtype: s.qtype, Outcome: outcome})
 }

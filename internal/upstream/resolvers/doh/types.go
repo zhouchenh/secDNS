@@ -2,6 +2,7 @@ package doh
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
@@ -37,6 +38,10 @@ type DoH struct {
 	queryClient           *client
 	requestLimiter        chan struct{}
 	initOnce              sync.Once
+	refreshMutex          sync.Mutex
+	refreshing            bool
+	refreshDone           chan struct{}
+	refreshAfter          time.Time
 }
 
 type client struct {
@@ -56,12 +61,51 @@ func (d *DoH) TypeName() string {
 	return "doh"
 }
 
-func (d *DoH) acquireRequestSlot() func() {
+func (d *DoH) acquireRequestSlot(ctx context.Context) (func(), error) {
 	if d.requestLimiter == nil || d.MaxConcurrentRequests <= 0 {
-		return func() {}
+		return func() {}, ctx.Err()
 	}
-	d.requestLimiter <- struct{}{}
-	return func() { <-d.requestLimiter }
+	select {
+	case d.requestLimiter <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-d.requestLimiter
+			return nil, err
+		}
+		return func() { <-d.requestLimiter }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// refreshURLs coalesces failed-request bootstrap work. The Resolver interface
+// cannot cancel bootstrap lookups, so at most one such worker may exist per
+// DoH instance, including after any caller's deadline. Queries never wait for it.
+// Empty results never replace a previously usable endpoint snapshot.
+func (d *DoH) refreshURLs(query *dns.Msg, depth int) <-chan struct{} {
+	d.refreshMutex.Lock()
+	if d.refreshing || time.Now().Before(d.refreshAfter) {
+		done := d.refreshDone
+		d.refreshMutex.Unlock()
+		return done
+	}
+	d.refreshDone = make(chan struct{})
+	done := d.refreshDone
+	d.refreshing = true
+	d.refreshAfter = time.Now().Add(time.Second)
+	d.refreshMutex.Unlock()
+	copied := query.Copy()
+	go func() {
+		defer func() { d.refreshMutex.Lock(); d.refreshing = false; close(done); d.refreshMutex.Unlock() }()
+		trace := diagnostics.Begin(copied, "doh.failed_refresh")
+		defer trace.End("complete")
+		urls := d.resolveURL(depth)
+		if len(urls) > 0 {
+			d.queryClient.urlMutex.Lock()
+			d.queryClient.resolvedURLs = urls
+			d.queryClient.urlMutex.Unlock()
+		}
+	}()
+	return done
 }
 
 func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
@@ -70,118 +114,109 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
-	d.initOnce.Do(func() {
-		d.initClient()
-	})
-
-	// Apply ECS configuration to query if configured
+	d.initOnce.Do(func() { d.initClient() })
+	// Initial endpoint bootstrap retains its existing resolver semantics. Once
+	// initialized, the request budget covers slot wait, HTTP headers and body.
+	ctx, cancel := context.WithCancel(context.Background())
+	if d.QueryTimeout > 0 {
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), d.QueryTimeout)
+	}
+	defer cancel()
 	if d.ecsConfig != nil {
-		// Create a copy of the query to avoid modifying the original
-		queryCopy := query.Copy()
-		if err := d.ecsConfig.ApplyToQuery(queryCopy); err != nil {
+		copied := query.Copy()
+		if err := d.ecsConfig.ApplyToQuery(copied); err != nil {
 			return nil, err
 		}
-		query = queryCopy
+		query = copied
 	}
-
-	wireFormattedQuery, e := query.Pack()
-	if e != nil {
-		return nil, e
+	wire, err := query.Pack()
+	if err != nil {
+		return nil, err
 	}
-
-	// Get a snapshot of URLs with read lock
 	d.queryClient.urlMutex.RLock()
-	urls := make([]string, len(d.queryClient.resolvedURLs))
-	copy(urls, d.queryClient.resolvedURLs)
+	urls := append([]string(nil), d.queryClient.resolvedURLs...)
 	d.queryClient.urlMutex.RUnlock()
-
-	once := new(sync.Once)
-	msg := make(chan *dns.Msg)
-	err := make(chan error)
-	errCollector := make(chan error, len(urls))
-	wg := new(sync.WaitGroup)
-	wg.Add(len(urls))
-	sendRequest := func(urlString string) {
-		defer wg.Done()
-		queued := diagnostics.Begin(query, "doh.slot_wait")
-		release := d.acquireRequestSlot()
-		queued.End("acquired")
-		defer release()
-		request, e := http.NewRequest(http.MethodPost, urlString, bytes.NewReader(wireFormattedQuery))
-		if e != nil {
-			errCollector <- e
-			return
+	if len(urls) == 0 {
+		// An empty snapshot may recover the same query, but only within its budget.
+		done := d.refreshURLs(query, depth-1)
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		request.Host = d.queryClient.serverName
-		request.Header.Set("Accept", "application/dns-message")
-		request.Header.Set("Content-Type", "application/dns-message")
-		active := diagnostics.Begin(query, "doh.http")
-		outcome := "error"
-		defer func() { active.End(outcome) }()
-		response, e := d.queryClient.httpClient.Do(request)
-		if e != nil {
-			errCollector <- e
-			return
+		d.queryClient.urlMutex.RLock()
+		urls = append([]string(nil), d.queryClient.resolvedURLs...)
+		d.queryClient.urlMutex.RUnlock()
+		if len(urls) == 0 {
+			return nil, UnknownHostError(d.URL.Hostname())
 		}
-		defer response.Body.Close()
-		wireFormattedMsg, e := io.ReadAll(response.Body)
-		if e != nil {
-			errCollector <- e
-			return
-		}
-		m := new(dns.Msg)
-		e = m.Unpack(wireFormattedMsg)
-		if e != nil {
-			errCollector <- e
-			return
-		}
-		outcome = "response"
-		once.Do(func() {
-			msg <- m
-			err <- nil
-		})
 	}
+	type result struct {
+		msg *dns.Msg
+		err error
+	}
+	results := make(chan result, len(urls))
 	for _, urlString := range urls {
-		go sendRequest(urlString)
+		go func(urlString string) {
+			queued := diagnostics.Begin(query, "doh.slot_wait")
+			release, e := d.acquireRequestSlot(ctx)
+			if e != nil {
+				queued.End("canceled")
+				results <- result{err: e}
+				return
+			}
+			queued.End("acquired")
+			defer release()
+			active := diagnostics.Begin(query, "doh.http")
+			outcome := "error"
+			defer func() { active.End(outcome) }()
+			request, e := http.NewRequestWithContext(ctx, http.MethodPost, urlString, bytes.NewReader(wire))
+			if e != nil {
+				results <- result{err: e}
+				return
+			}
+			request.Host = d.queryClient.serverName
+			request.Header.Set("Accept", "application/dns-message")
+			request.Header.Set("Content-Type", "application/dns-message")
+			response, e := d.queryClient.httpClient.Do(request)
+			if e != nil {
+				results <- result{err: e}
+				return
+			}
+			defer response.Body.Close()
+			body, e := io.ReadAll(response.Body)
+			if e != nil {
+				results <- result{err: e}
+				return
+			}
+			msg := new(dns.Msg)
+			if e = msg.Unpack(body); e != nil {
+				results <- result{err: e}
+				return
+			}
+			outcome = "response"
+			results <- result{msg: msg}
+		}(urlString)
 	}
-	go func() {
-		wg.Wait()
-		once.Do(func() {
-			refresh := diagnostics.Begin(query, "doh.failed_refresh")
-			resolvedURLs := d.resolveURL(depth - 1)
-			refresh.End("complete")
-			if len(resolvedURLs) < 1 {
-				if len(errCollector) < 1 {
-					msg <- nil
-					err <- UnknownHostError(d.URL.Hostname())
-					return
-				}
-			} else {
-				// Update URL list with write lock
-				d.queryClient.urlMutex.Lock()
-				d.queryClient.resolvedURLs = resolvedURLs
-				d.queryClient.urlMutex.Unlock()
-
-				if len(errCollector) < 1 {
-					m, e := d.Resolve(query, depth-1)
-					msg <- m
-					err <- e
-					return
-				}
+	var last error
+	for range urls {
+		select {
+		case r := <-results:
+			if r.err == nil {
+				return r.msg, nil
 			}
-			msg <- nil
-			// Safely drain errCollector
-			if len(errCollector) > 0 {
-				for len(errCollector) > 1 {
-					<-errCollector
-				}
-				err <- <-errCollector
-			} else {
-				err <- UnknownHostError(d.URL.Hostname())
-			}
-		})
-	}()
-	return <-msg, <-err
+			last = r.err
+		case <-ctx.Done():
+			d.refreshURLs(query, depth-1)
+			return nil, ctx.Err()
+		}
+	}
+	d.refreshURLs(query, depth-1)
+	if last == nil {
+		last = UnknownHostError(d.URL.Hostname())
+	}
+	return nil, last
 }
 
 func (d *DoH) NameServerResolver() {}
