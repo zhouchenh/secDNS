@@ -56,7 +56,7 @@ func (d *DNSServer) ServePeer(handler func(query *dns.Msg, peer netip.Addr) (rep
 }
 
 func (d *DNSServer) serve(handler func(w dns.ResponseWriter, query *dns.Msg) *dns.Msg, errorHandler func(err error)) {
-	handleIfError(dns.ListenAndServe(net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), d.Protocol, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
+	srv := &dns.Server{Addr: net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), Net: d.Protocol, DecorateReader: decorateDiagnosticReader, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
 		span := diagnostics.Begin(query, "listener.handler")
 		reply := handler(w, query)
 		span.End("returned")
@@ -76,7 +76,8 @@ func (d *DNSServer) serve(handler func(w dns.ResponseWriter, query *dns.Msg) *dn
 		}
 		writeSpan.End(outcome)
 		handleIfError(writeErr, errorHandler)
-	})), errorHandler)
+	})}
+	handleIfError(srv.ListenAndServe(), errorHandler)
 }
 
 func peerAddress(address net.Addr) netip.Addr {

@@ -19,9 +19,7 @@ var diagnosticName = regexp.MustCompile(`^secdnshealth[0-9a-f]{24}\.1-1-1-1\.(ss
 // configured. It logs neither the salt nor names. Synthetic nonce names make
 // repeated DNS IDs distinct; this is not unique lineage for arbitrary traffic.
 func CorrelationToken(q *dns.Msg) string {
-	until, err := strconv.ParseInt(os.Getenv("SECDNS_QUERY_TRACE_UNTIL"), 10, 64)
-	remaining := time.Until(time.Unix(until, 0))
-	if err != nil || remaining <= 0 || remaining > 180*time.Second {
+	if !CorrelationActive() {
 		return ""
 	}
 	key, err := hex.DecodeString(os.Getenv("SECDNS_QUERY_TRACE_SALT"))
@@ -40,4 +38,16 @@ func CorrelationToken(q *dns.Msg) string {
 	h.Write(b[:])
 	h.Write([]byte(name))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// CorrelationActive bounds packet parsing and helper instrumentation to the experiment.
+func CorrelationActive() bool {
+	until, err := strconv.ParseInt(os.Getenv("SECDNS_QUERY_TRACE_UNTIL"), 10, 64)
+	remaining := time.Until(time.Unix(until, 0))
+	if err != nil || remaining <= 0 || remaining > 180*time.Second {
+		return false
+	}
+
+	key, err := hex.DecodeString(os.Getenv("SECDNS_QUERY_TRACE_SALT"))
+	return err == nil && len(key) == 32
 }
