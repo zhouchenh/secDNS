@@ -52,6 +52,22 @@ def semantic(reply, e):
         return False
 
 
+def query_trace(raw):
+    """Only a bounded, typed diagnostic allowlist may enter health evidence."""
+    if not isinstance(raw,str) or len(raw)>2048:return None
+    try:
+        item=json.loads(raw.strip())
+        if not isinstance(item,dict) or item.get('kind')!='secdns-query-exchange':return None
+        token=item.get('correlation')
+        if not isinstance(token,str) or len(token)!=64 or any(c not in '0123456789abcdef' for c in token):return None
+        fields=('started_unix_ms','ended_unix_ms','duration_ms')
+        if any(type(item.get(k)) is not int or item[k]<0 for k in fields):return None
+        if item['ended_unix_ms']<item['started_unix_ms'] or item['duration_ms']>10000:return None
+        if item.get('outcome') not in ('response','exchange_error'):return None
+        return {k:item[k] for k in ('correlation',*fields,'outcome')}
+    except (ValueError,TypeError):return None
+
+
 def probe(c, e, transport, timeout=2, diagnostic=None):
     started = time.monotonic()
     detail = {'transport': transport, 'rcode': None, 'outcome': 'process_error'}
@@ -62,6 +78,8 @@ def probe(c, e, transport, timeout=2, diagnostic=None):
         args=[helper or c['fixture'], 'query', transport, endpoint, e['query_name'], e['query_type']]
         if helper:args.append(str(round(timeout*1000)))
         r = subprocess.run(args, capture_output=True, text=True, timeout=timeout+(.25 if helper else 0), check=not bool(helper))
+        trace=query_trace(getattr(r,'stderr','')) if helper else None
+        if trace is not None:detail['exchange']=trace
         reply = json.loads(r.stdout)
         if not isinstance(reply,dict):
             detail['outcome']='invalid_response'
