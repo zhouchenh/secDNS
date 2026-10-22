@@ -2,6 +2,10 @@
  "use strict";
  const header=document.querySelector("body>header"), main=document.querySelector("main");
  if(!header||!main)return;
+ main.id=main.id||'console-main';
+ const skip=document.createElement('a');skip.className='console-skip';skip.href='#'+main.id;skip.textContent='Skip to content';document.body.prepend(skip);skip.addEventListener('click',event=>{event.preventDefault();const target=document.getElementById('console-auth-screen');const destination=target&&!target.hidden?target:main;destination.setAttribute('tabindex','-1');destination.focus();destination.scrollIntoView({block:'start'});});
+ const sidebar=document.querySelector('.console-sidebar'),menu=document.createElement('button');menu.type='button';menu.className='console-menu-toggle';menu.textContent='Menu';menu.setAttribute('aria-expanded','false');sidebar.id='console-navigation';menu.setAttribute('aria-controls',sidebar.id);sidebar.append(menu);menu.addEventListener('click',()=>{const open=sidebar.classList.toggle('menu-open');menu.setAttribute('aria-expanded',String(open));});sidebar.addEventListener('keydown',event=>{if(event.key==='Escape'){sidebar.classList.remove('menu-open');menu.setAttribute('aria-expanded','false');menu.focus();}});
+
  const context=document.createElement("div");context.className="console-context";
  const label=document.createElement("strong");label.textContent="DNS administration";
  context.append(label,document.createTextNode(" · "+location.host));header.prepend(context);
@@ -31,7 +35,7 @@
  const agentToggle=document.createElement("button");agentToggle.type="button";agentToggle.className="auth-secondary";agentToggle.textContent="Agent access";
  const returnButton=document.createElement("button");returnButton.type="button";returnButton.className="auth-return";returnButton.textContent="Back to "+({records:"DNS records",import:"import",followers:"replication status"}[document.body.dataset.consolePage]||"workspace");
  const signout=document.createElement("button");signout.type="button";signout.className="auth-secondary";signout.textContent="Sign out";signout.addEventListener("click",()=>window.secDNSAgent.logout().catch(()=>{}));
- screen.append(brand,surface,agentToggle,returnButton,signout);surface.append(human,agent);if(passkeys)surface.append(passkeys);document.body.append(screen);
+ screen.append(brand,surface,returnButton,signout);surface.append(human,agent,agentToggle);if(passkeys)surface.append(passkeys);document.body.append(screen);
  const selectedNav=document.querySelector(".console-sidebar a[aria-current]");
  let accountOpen=false,agentOpen=false;
  const display=()=>{
@@ -43,6 +47,7 @@
    screen.hidden=true;document.body.classList.remove("auth-screen-open","account-screen-open");document.title=originalTitle;label.textContent="DNS administration";return;
   }
   for(const node of [human,agent,passkeys])if(node&&node.parentElement!==surface)surface.append(node);
+  surface.append(agentToggle);
   const active=window.secDNSAgent?.active;
   const ceremony=!!human.querySelector('#human-recovery-codes:not([hidden]),#human-qr:not([hidden])');
   const show=enabled&&(!active||accountOpen||ceremony);

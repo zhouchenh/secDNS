@@ -8,7 +8,7 @@ import (
 
 func (h *HTTPAdminServer) consoleRoutes(mux *http.ServeMux, base string) {
 	h.nodeUIRoutes(mux, base)
-	for _, asset := range []struct{ name, kind string }{{"console.css", "text/css"}, {"console.js", "text/javascript"}} {
+	for _, asset := range []struct{ name, kind string }{{"console.css", "text/css"}, {"horizon.css", "text/css"}, {"console.js", "text/javascript"}} {
 		data, err := editorAssets.ReadFile("console_ui/" + asset.name)
 		if err != nil {
 			panic(err)
@@ -68,7 +68,7 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 		footer = "3 managed nodes"
 	}
 	sidebar := `<aside class="console-sidebar"><div class="console-brand">sec<span>DNS</span></div><nav aria-label="Main navigation">` + links + `</nav><div class="console-divider"></div>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>` + footer + `</span></div></aside>`
-	head := `<link rel="stylesheet" href="` + escaped + `/ui/console.css"><script defer src="` + escaped + `/ui/console.js"></script>`
+	head := `<link rel="stylesheet" href="` + escaped + `/ui/console.css"><link rel="stylesheet" href="` + escaped + `/ui/horizon.css"><script defer src="` + escaped + `/ui/console.js"></script>`
 	data = bytes.Replace(data, []byte("</head>"), []byte(head+"</head>"), 1)
 	gateway := ""
 	if h.recordGatewayEnabled() {
