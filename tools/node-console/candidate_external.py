@@ -99,7 +99,7 @@ def query(command, deadline):
     return result.stdout
 
 
-def runtime_matches(node, entries, enrolled, deadline):
+def runtime_matches(node, entries, enrolled, deadline, diagnostic=None):
     policies, neighbors, afis = render(node, entries, enrolled)
     addresses = {p['address'] for p in enrolled['peers']}
     def selected(lines):
@@ -139,7 +139,17 @@ def runtime_matches(node, entries, enrolled, deadline):
                 elif len(parts)>2 and parts[0] in ('ip','ipv6') and parts[1]=='prefix-list' and parts[2] in names:found.append(('prefix-list',line))
         return sorted(found)
     expected_definitions=['bgp as-path access-list LOCAL-ONLY permit ^$', *policies]
-    return selected(running.splitlines()) == selected(expected) and definitions(running.splitlines()) == definitions(expected_definitions)
+    actual_neighbors, expected_neighbors = selected(running.splitlines()), selected(expected)
+    actual_policy, expected_policy = definitions(running.splitlines()), definitions(expected_definitions)
+    matches = actual_neighbors == expected_neighbors and actual_policy == expected_policy
+    if diagnostic is not None:
+        # Expected lines contain only validated enrolled inputs. Never persist
+        # arbitrary running lines: FRR may contain neighbor passwords/descriptions.
+        diagnostic.update(matches=matches, missing_neighbors=[x for x in expected_neighbors if x not in actual_neighbors][:128],
+                          missing_policy=[x for x in expected_policy if x not in actual_policy][:128],
+                          unexpected_neighbors=[{'family':x[0], 'sha256':hashlib.sha256(x[1].encode()).hexdigest()} for x in actual_neighbors if x not in expected_neighbors][:128],
+                          unexpected_policy=[{'sha256':hashlib.sha256(repr(x).encode()).hexdigest()} for x in actual_policy if x not in expected_policy][:128])
+    return matches
 
 
 def observe(node, entries, enrolled, deadline=None):
@@ -171,3 +181,40 @@ def observe(node, entries, enrolled, deadline=None):
             except (KeyError, TypeError, ValueError, RuntimeError, OSError, subprocess.SubprocessError): pass
             observations.append(item)
     return observations
+
+
+def failure_diagnostic(node, config, enrolled):
+    """Failure-only, bounded native evidence; never exposes unfiltered FRR text."""
+    deadline = time.monotonic()+4
+    entries = config.get('external_peers', [])
+    result = {'schema':1, 'runtime':{}, 'peers':[], 'complete':True}
+    try: runtime_matches(node, entries, enrolled, deadline, result['runtime'])
+    except Exception: result['runtime']={'available':False};result['complete']=False
+    try: summary=json.loads(query('show bgp summary json', deadline)) if entries else {}
+    except Exception: summary={};result['complete']=False
+    lookup={p['id']:p for p in enrolled['peers']}
+    states={'Idle','Active','Connect','OpenSent','OpenConfirm','Established','Idle (Admin)'}
+    for entry in entries:
+        for family in entry['afis']:
+            item={'id':entry['id'],'family':family,'expected_enabled':entry['enabled'],
+                  'allowed_exports':[p for p in entry['exports'] if (':' in p)==(family==6)],
+                  'state':'Unknown','advertised_prefixes':None,'advertisement_schema_known':False}
+            try:
+                peer=summary['ipv%dUnicast'%family]['peers'][lookup[entry['id']]['address']]
+                item['state']=peer.get('state') if peer.get('state') in states else 'Unknown'
+                for key in ('remoteAs','localAs','pfxRcd','pfxSnt','connectionsEstablished'):
+                    if type(peer.get(key)) is int and 0<=peer[key]<=4294967295:item[key]=peer[key]
+            except (KeyError,TypeError): result['complete']=False
+            try:
+                routes=json.loads(query('show bgp ipv%d unicast neighbors %s advertised-routes json'%(family,lookup[entry['id']]['address']),deadline))
+                values=routes.get('advertisedRoutes')
+                if not isinstance(values,dict) or len(values)>16:raise ValueError('unrecognized advertisements')
+                prefixes=[]
+                for prefix in values:
+                    parsed=ipaddress.ip_network(prefix)
+                    if str(parsed)!=prefix or parsed.version!=family:raise ValueError('noncanonical prefix')
+                    prefixes.append(prefix)
+                item.update(advertised_prefixes=sorted(prefixes),advertisement_schema_known=True)
+            except Exception: result['complete']=False
+            result['peers'].append(item)
+    return result

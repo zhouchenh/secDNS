@@ -238,8 +238,11 @@ def apply(node,request_id,payload):
         receipt['old_profile_health']=[{k:p[k] for k in ('role','family','healthy')} for p in before['profiles']]
         c.atomic(path,receipt)
         unit='secdns-bgp-rollback-'+request_id
+        last_checks={}
+        apply_stage='watchdog'
         try:
             c.run(['systemd-run','--unit='+unit,'--on-active=120s','--timer-property=AccuracySec=1s','/usr/bin/python3',str(c.BASE/'candidate_status.py'),'bgp-rollback',node,request_id])
+            apply_stage='withdrawal'
             c.atomic(c.BASE/'maintenance.json',{'withdraw':True})
             # Existing health controller drains before private daemon replacement.
             deadline=time.monotonic()+8
@@ -249,9 +252,11 @@ def apply(node,request_id,payload):
                 if time.monotonic()>deadline:raise RuntimeError('withdrawal not observed')
                 time.sleep(.5)
             if external.digest(external.policy(node)) != receipt['external_policy_digest']: raise RuntimeError('external enrollment changed')
+            apply_stage='install'
             atomic_text(c.BASE/'bgp.conf',render(node,config,enrollment));c.atomic(c.BASE/'bgp-console.json',config)
             restart()
             c.atomic(c.BASE/'maintenance.json',{'withdraw':receipt['old_withdraw']})
+            apply_stage='convergence'
             deadline=time.monotonic()+40
             while True:
                 result=c.snapshot(node)
@@ -260,11 +265,20 @@ def apply(node,request_id,payload):
                 flags={(a['role'],a['family']):a['enabled'] for a in config['announcements']}
                 profiles_ok=all(p['healthy'] is True and p['advertised']==(flags[p['role'],p['family']] and not receipt['old_withdraw']) for p in result['profiles'])
                 if external.digest(external.policy(node)) != receipt['external_policy_digest']: raise RuntimeError('external enrollment changed')
+                last_checks={'fresh':not result['stale'],'mesh_peers_match':peers_ok,'profiles_match':profiles_ok}
                 if not result['stale'] and peers_ok and profiles_ok and external_converged(node, config, result):break
                 if time.monotonic()>deadline:raise RuntimeError('configuration did not converge')
                 time.sleep(1)
             receipt.update(status='confirmed',confirmed=True);c.atomic(path,receipt)
         except Exception:
+            # Evidence is captured before recovery changes runtime state. A failed
+            # read or receipt write must never prevent the existing rollback.
+            try:
+                receipt['failure_diagnostic']=external.failure_diagnostic(node,config,enrollment)
+                receipt['failure_diagnostic']['last_checks']=last_checks
+                receipt['failure_diagnostic']['stage']=apply_stage
+                c.atomic(path,receipt)
+            except Exception: pass
             rollback_locked(node,receipt,path)
             result=c.snapshot(node)
         finally:

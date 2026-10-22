@@ -127,7 +127,7 @@ class ExternalTests(unittest.TestCase):
             self.assertNotIn('2001:db8:85:1::1',text.call_args.args[1])
             self.assertTrue(all(x.args[0].name!='external-policy.json' for x in atomic.call_args_list))
 
-    def test_apply_policy_change_after_preflight_withdraws_and_never_commits_peer(self):
+    def _exercise_apply_policy_change(self, failure_mode=None):
         with tempfile.TemporaryDirectory() as folder:
             root=pathlib.Path(folder);(root/'console-receipts').mkdir();(root/'bgp.conf').write_text('old mesh')
             enrolled=policy();current=[enrolled]
@@ -140,8 +140,13 @@ class ExternalTests(unittest.TestCase):
                 if str(path).replace('\\','/')=='/proc/self/stat':return '1 (worker) '+' '.join(['1']*20)
                 return original(path,*args,**kwargs)
             snapshot=dict(stale=False,maintenance={'withdraw':False},profiles=[])
+            def diagnostic(*args):
+                if failure_mode=='read':raise OSError('synthetic read failure')
+                return {'schema':1}
+            def persist(path,value):
+                if failure_mode=='write' and path.parent.name=='console-receipts' and 'failure_diagnostic' in value:raise OSError('synthetic write failure')
             def preflight(*args):current[0]=dict(schema=1,node='amd103',peers=[])
-            with patch.object(e.c,'BASE',root),patch.object(e,'policy',side_effect=lambda node:current[0]),patch.object(b,'test_client',return_value=None),patch.object(b.c,'identity'),patch.object(b.c,'secure'),patch.object(b.c,'fcntl',fake),patch.object(b,'lock_file',lock),patch.object(b.c,'snapshot',return_value=snapshot),patch.object(b,'preflight',side_effect=preflight),patch.object(b.c,'run'),patch.object(b.c,'atomic') as atomic,patch.object(b,'atomic_text') as text,patch.object(b,'restart'),patch.object(pathlib.Path,'read_text',read_text):
+            with patch.object(e.c,'BASE',root),patch.object(e,'policy',side_effect=lambda node:current[0]),patch.object(b,'test_client',return_value=None),patch.object(b.c,'identity'),patch.object(b.c,'secure'),patch.object(b.c,'fcntl',fake),patch.object(b,'lock_file',lock),patch.object(b.c,'snapshot',return_value=snapshot),patch.object(b,'preflight',side_effect=preflight),patch.object(b.c,'run'),patch.object(b.c,'atomic',side_effect=persist) as atomic,patch.object(e,'failure_diagnostic',side_effect=diagnostic),patch.object(b,'atomic_text') as text,patch.object(b,'restart'),patch.object(pathlib.Path,'read_text',read_text):
                 old=b.get('amd103');proposed=copy.deepcopy(old['config']);proposed['external_peers']=[entry()]
                 with self.assertRaisesRegex(RuntimeError,'reconciliation'):
                     b.apply('amd103','11111111-1111-4111-8111-111111111111',dict(expected_revision=old['revision'],config=proposed))
@@ -152,5 +157,30 @@ class ExternalTests(unittest.TestCase):
                 self.assertEqual(receipts[0]['status'],'pending')
                 self.assertEqual(receipts[0]['external_policy_digest'],e.digest(enrolled))
                 self.assertEqual(atomic.call_args_list[-1].args[1],{'withdraw':False})
+
+    def test_apply_policy_change_after_preflight_withdraws_and_never_commits_peer(self):
+        self._exercise_apply_policy_change()
+
+    def test_diagnostic_read_and_persistence_failure_do_not_block_rollback(self):
+        for mode in ('read','write'):
+            with self.subTest(mode=mode):self._exercise_apply_policy_change(mode)
+
+    def test_failure_diagnostic_is_bounded_and_redacts_unrelated_native_text(self):
+        p=entry();p.update(enabled=True,exports=['203.0.113.53/32'])
+        config=b.default_config('amd103');config['external_peers']=[p]
+        with patch.object(b,'test_client',return_value=None):running=b.render('amd103',config,policy())
+        running+='neighbor 2001:db8:85:1::1 password DO-NOT-RECORD-SECRET\n'
+        def query(command,deadline):
+            if command=='show running-config':return running
+            if command=='show bgp summary json':return json.dumps({'ipv%dUnicast'%f:{'peers':{'2001:db8:85:1::1':{'state':'Established','remoteAs':8501,'description':'DO-NOT-RECORD-SECRET'}}} for f in (4,6)})
+            return json.dumps({'advertisedRoutes':{'0.0.0.0/0':{}}}) if 'ipv4' in command else json.dumps({'advertisedRoutes':{}})
+        with patch.object(e,'query',side_effect=query):result=e.failure_diagnostic('amd103',config,policy())
+        self.assertNotIn('DO-NOT-RECORD-SECRET',json.dumps(result))
+        self.assertFalse(result['runtime']['matches'])
+        self.assertEqual(result['peers'][0]['advertised_prefixes'],['0.0.0.0/0'])
+        self.assertEqual(result['peers'][0]['state'],'Established')
+        with patch.object(e.time,'monotonic',side_effect=[0]+[4]*10),patch.object(e.subprocess,'run') as run:
+            result=e.failure_diagnostic('amd103',config,policy())
+            self.assertFalse(result['complete']);run.assert_not_called()
 
 if __name__=='__main__':unittest.main()
