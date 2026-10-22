@@ -110,7 +110,8 @@ func (d *DoH) refreshURLs(query *dns.Msg, depth int) <-chan struct{} {
 
 func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	trace := diagnostics.Begin(query, "doh.resolve")
-	defer trace.End("complete")
+	protocol := 0
+	defer func() { trace.EndProtocol("complete", protocol) }()
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
@@ -153,8 +154,9 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		}
 	}
 	type result struct {
-		msg *dns.Msg
-		err error
+		msg      *dns.Msg
+		protocol int
+		err      error
 	}
 	results := make(chan result, len(urls))
 	for _, urlString := range urls {
@@ -196,7 +198,7 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 				return
 			}
 			outcome = "response"
-			results <- result{msg: msg}
+			results <- result{msg: msg, protocol: response.ProtoMajor}
 		}(urlString)
 	}
 	var last error
@@ -204,6 +206,7 @@ func (d *DoH) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		select {
 		case r := <-results:
 			if r.err == nil {
+				protocol = r.protocol
 				return r.msg, nil
 			}
 			last = r.err
