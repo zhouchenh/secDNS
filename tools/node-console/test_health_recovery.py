@@ -12,7 +12,7 @@ class RecoveryTests(unittest.TestCase):
         for primary,fallback,delay,expected in [(True,False,.3,True),(False,True,0,True),(False,False,0,False),(True,False,0,True)]:
             names=[];active=[0];maximum=[0];lock=threading.Lock()
             def fake(c,e,transport,timeout,diagnostic):
-                first='sslip.io' in e['query_name']
+                first=e['query_name'].endswith('.1-1-1-1.sslip.io.')
                 with lock:
                     names.append(e['query_name']);active[0]+=1;maximum[0]=max(maximum[0],active[0])
                 try:
