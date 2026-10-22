@@ -37,14 +37,34 @@ def validate(node, obj):
     if {(a['role'],a['family']) for a in announcements}!={(r,f) for r in ('normal','dns64') for f in (4,6)}: raise ValueError('fixed announcements')
     return dict(local_asn=obj['local_asn'],router_id=obj['router_id'],peers=sorted(obj['peers'],key=lambda p:p['address']),announcements=sorted(announcements,key=lambda a:(a['role'],a['family'])))
 
+def test_client():
+    """Root-enrolled receive-only test client; never accepted from browser input."""
+    path=c.BASE/'test-client.json'
+    if not path.exists(): return None
+    value=c.read(path)
+    if not isinstance(value,dict) or set(value)!={'schema','name','asn','ipv4','ipv6'} or type(value['schema']) is not int or value['schema']!=1 or value['name']!='secdns-test-client109' or type(value['asn']) is not int or value['asn']!=65109:
+        raise ValueError('fixed test client identity')
+    import ipaddress
+    for family,subnet in ((4,'100.91.1.0/24'),(6,'2001:470:f9d1:9001::/64')):
+        address=value['ipv'+str(family)]
+        parsed=ipaddress.ip_address(address)
+        network=ipaddress.ip_network(subnet)
+        if parsed.version!=family or str(parsed)!=address or parsed not in network or parsed==network.network_address or (family==4 and parsed==network.broadcast_address) or address in {a for pair in c.ADDRESSES.values() for a in pair} or parsed.is_multicast or parsed.is_unspecified:
+            raise ValueError('test client address scope')
+    return value
+
+
 def get(node):
     path=c.BASE/'bgp-console.json'
     config=validate(node,c.read(path) if path.exists() else default_config(node))
-    revision=hashlib.sha256(json.dumps(config,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    client=test_client()
+    revision_input=config if client is None else dict(config=config,test_client=client)
+    revision=hashlib.sha256(json.dumps(revision_input,sort_keys=True,separators=(',',':')).encode()).hexdigest()
     return dict(schema=1,node=node,revision=revision,config=config)
 
 def render(node, config):
     config=validate(node,config)
+    client=test_client()
     lines=['hostname secdns-'+node,'log stdout warnings','bgp as-path access-list LOCAL-ONLY permit ^$']
     for f in (4,6):
         kind='ip' if f==4 else 'ipv6'
@@ -53,17 +73,25 @@ def render(node, config):
         preference={'cix106':300,'intel108':200,'amd103':100}[name]
         for f in (4,6): lines += [f'route-map IN-{name}-{f} permit 10',f' match {"ip" if f==4 else "ipv6"} address prefix-list EXACT{f}',f' set local-preference {preference}']
     for f in (4,6): lines += [f'route-map OUT-{f} permit 10',f' match {"ip" if f==4 else "ipv6"} address prefix-list EXACT{f}',' match as-path LOCAL-ONLY']
+    if client: lines += ['route-map TEST-CLIENT-DENY deny 10']
     lines += [f'router bgp {config["local_asn"]}',f' bgp router-id {config["router_id"]}',' no bgp default ipv4-unicast',' bgp graceful-restart-disable']
     for p in config['peers']:
         a=p['address'];f=p['family']
         lines += [f' neighbor {a} remote-as {p["remote_asn"]}',f' neighbor {a} port 1179',f' neighbor {a} update-source {c.ADDRESSES[node][0 if f==4 else 1]}',f' neighbor {a} timers {p["keepalive_seconds"]} {p["hold_seconds"]}']
         if not p['enabled']: lines.append(f' neighbor {a} shutdown')
+    if client:
+        for f in (4,6):
+            address=client['ipv'+str(f)]
+            lines += [f' neighbor {address} remote-as {client["asn"]}',f' neighbor {address} port 1179',f' neighbor {address} update-source {c.ADDRESSES[node][0 if f==4 else 1]}',f' neighbor {address} timers 3 9']
     for f in (4,6):
         lines.append(f' address-family ipv{f} unicast')
         for p in config['peers']:
             if p['family']!=f: continue
             a=p['address'];name=next(n for n,aa in c.ADDRESSES.items() if a in aa)
             lines += [f'  neighbor {a} activate',f'  neighbor {a} route-map IN-{name}-{f} in',f'  neighbor {a} route-map OUT-{f} out']
+        if client:
+            address=client['ipv'+str(f)]
+            lines += [f'  neighbor {address} activate',f'  neighbor {address} route-map TEST-CLIENT-DENY in',f'  neighbor {address} route-map OUT-{f} out']
         lines.append(' exit-address-family')
     return '\n'.join(lines)+'\n'
 
