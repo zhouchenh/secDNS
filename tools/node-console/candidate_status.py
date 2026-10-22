@@ -95,8 +95,12 @@ def snapshot(node):
         for family in (4, 6):
             afi = summary['ipv%dUnicast' % family]
             expected = {a[0 if family == 4 else 1] for n, a in ADDRESSES.items() if n != node}
-            if afi['as'] != NODES[node] or set(afi['peers']) != expected: raise ValueError('unexpected candidate peers')
+            client=candidate_bgp.test_client()
+            client_address=client['ipv'+str(family)] if client else None
+            all_expected=expected | ({client_address} if client else set())
+            if afi['as'] != NODES[node] or set(afi['peers']) != all_expected: raise ValueError('unexpected candidate peers')
             for address, p in afi['peers'].items():
+                if address==client_address: continue # read-only observer is outside cohort health/quorum
                 # FRR addresses are validated before forming a read-only command.
                 import ipaddress
                 ipaddress.ip_address(address)
