@@ -7,6 +7,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
+	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"golang.org/x/sync/singleflight"
 	"math/rand"
@@ -419,7 +420,13 @@ func (c *Cache) fetchAndStore(query *dns.Msg, depth int, key string) (*dns.Msg, 
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
+	queued := diagnostics.Begin(query, "cache.slot_wait")
 	release, err := c.acquireUpstreamSlot()
+	outcome := "acquired"
+	if err != nil {
+		outcome = "error"
+	}
+	queued.End(outcome)
 	if err != nil {
 		return nil, err
 	}
