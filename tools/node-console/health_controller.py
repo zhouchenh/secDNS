@@ -20,6 +20,8 @@ def validate(c):
     for key in ('fixture', 'vty_socket'):
         if not pathlib.Path(c[key]).is_absolute():
             raise ValueError('absolute owned paths required')
+    if 'query_helper' in c and not pathlib.Path(c['query_helper']).is_absolute():
+        raise ValueError('absolute owned query helper required')
     entries = c['entries']
     if {(e['role'], e['family']) for e in entries} != {(r, f) for r in ('normal', 'dns64') for f in (4, 6)} or len(entries) != 4:
         raise ValueError('four independent role/family entries required')
@@ -56,9 +58,18 @@ def probe(c, e, transport, timeout=2, diagnostic=None):
     host = e['probe_address']
     endpoint = ('[' + host + ']' if ':' in host else host) + ':' + str(e['probe_port'])
     try:
-        r = subprocess.run([c['fixture'], 'query', transport, endpoint, e['query_name'], e['query_type']], capture_output=True, text=True, timeout=timeout, check=True)
+        helper=c.get('query_helper')
+        args=[helper or c['fixture'], 'query', transport, endpoint, e['query_name'], e['query_type']]
+        if helper:args.append(str(round(timeout*1000)))
+        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout+(.25 if helper else 0), check=not bool(helper))
         reply = json.loads(r.stdout)
         if not isinstance(reply,dict):
+            detail['outcome']='invalid_response'
+            return False
+        if helper and r.returncode!=0:
+            detail['outcome']=reply.get('outcome') if reply.get('outcome') in ('timeout','network_error','invalid_arguments') else 'invalid_response'
+            return False
+        if helper and reply.get('outcome')!='response':
             detail['outcome']='invalid_response'
             return False
         healthy = semantic(reply, e)
@@ -66,6 +77,9 @@ def probe(c, e, transport, timeout=2, diagnostic=None):
         return healthy
     except subprocess.TimeoutExpired:
         detail['outcome'] = 'timeout'
+        return False
+    except json.JSONDecodeError:
+        detail['outcome'] = 'invalid_response'
         return False
     except (subprocess.SubprocessError, OSError, ValueError):
         return False
@@ -124,7 +138,7 @@ def upstream_attempts(c, entry, transport, timeout):
     if not (completed.is_set() and values[0]):
         fallback=threading.Thread(target=attempt,args=(1,),daemon=True)
         fallback.start();threads.append(fallback)
-    for thread in threads:thread.join(max(0,timeout+.5-(time.monotonic()-started)))
+    for thread in threads:thread.join(max(0,timeout+.75-(time.monotonic()-started)))
     if any(thread.is_alive() for thread in threads):raise RuntimeError('stalled upstream attempts')
     return any(values),[domains[i] for i,value in enumerate(values) if value],[d for d in details if d is not None]
 

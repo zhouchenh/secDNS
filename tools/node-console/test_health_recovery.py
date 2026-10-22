@@ -44,6 +44,18 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(h.next_round_delay({'interval_seconds':3},.2,[gate]),2.8)
         self.assertTrue(gate.observe(False));self.assertFalse(gate.observe(False))
         self.assertFalse(gate.observe(True));self.assertTrue(gate.observe(True))
+    def test_configured_query_budget_and_startup_grace(self):
+        entry={'probe_address':'127.0.0.1','probe_port':53,'query_name':'x.test.','query_type':'A','expected':'1.1.1.1'}
+        for outcome in ('timeout','network_error','invalid_arguments','unexpected'):
+            detail={}
+            response=types.SimpleNamespace(stdout=json.dumps({'outcome':outcome}),returncode=1)
+            with patch.object(h.subprocess,'run',return_value=response) as run:
+                self.assertFalse(h.probe({'fixture':'old','query_helper':'new'},entry,'tcp',1,detail))
+            self.assertEqual(run.call_args.args[0],['new','query','tcp','127.0.0.1:53','x.test.','A','1000'])
+            self.assertEqual(run.call_args.kwargs['timeout'],1.25)
+            self.assertFalse(run.call_args.kwargs['check'])
+            self.assertEqual(detail['outcome'],outcome if outcome!='unexpected' else 'invalid_response')
+
     def test_probe_diagnostic_preserves_rcode_timeout_without_payload(self):
         entry={'probe_address':'127.0.0.1','probe_port':53,'query_name':'x.test.','query_type':'A','expected':'1.1.1.1'}
         for response,expected in [(types.SimpleNamespace(stdout=json.dumps({'rcode':2,'question':[]})),'unexpected_answer'),(subprocess.TimeoutExpired('query',1),'timeout')]:
