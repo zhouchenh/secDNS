@@ -4,6 +4,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
+	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"net"
 	"sync"
@@ -29,6 +30,8 @@ func (d *DNS64) TypeName() string {
 }
 
 func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
+	trace := diagnostics.Begin(query, "dns64.resolve")
+	defer trace.End("complete")
 	if depth < 0 {
 		return nil, resolver.ErrLoopDetected
 	}
@@ -42,7 +45,9 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		return d.synthesize(query, depth)
 	}
 	pending := d.speculate(query, depth)
+	leg := diagnostics.Begin(query, "dns64.aaaa")
 	reply, err := d.Resolver.Resolve(query, depth-1)
+	leg.End("complete")
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +98,9 @@ func (d *DNS64) speculate(query *dns.Msg, depth int) <-chan speculativeResult {
 	result := make(chan speculativeResult, 1)
 	go func() {
 		defer func() { <-speculativeGlobalSlots; <-d.speculativeSlots }()
+		leg := diagnostics.Begin(copied, "dns64.speculative_a")
 		reply, err := d.Resolver.Resolve(copied, depth-1)
+		leg.End("complete")
 		result <- speculativeResult{reply, err}
 	}()
 	return result

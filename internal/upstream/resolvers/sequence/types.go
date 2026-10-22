@@ -4,6 +4,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
+	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 )
 
@@ -33,7 +34,13 @@ func (seq *Sequence) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 			err = ErrNilResolver
 			continue
 		}
+		attempt := diagnostics.Begin(query, "sequence.attempt")
 		msg, err = r.Resolve(query, depth-1)
+		outcome := "response"
+		if err != nil {
+			outcome = "error"
+		}
+		attempt.End(outcome)
 		if err != nil {
 			continue
 		}
