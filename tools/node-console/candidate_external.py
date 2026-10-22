@@ -140,6 +140,12 @@ def runtime_matches(node, entries, enrolled, deadline, diagnostic=None):
         return sorted(found)
     expected_definitions=['bgp as-path access-list LOCAL-ONLY permit ^$', *policies]
     actual_neighbors, expected_neighbors = selected(running.splitlines()), selected(expected)
+    # FRR omits the default BGP transport port from running-config. Accept that
+    # omission only for an expected 179; any explicit port remains exact-checked.
+    expected_neighbors = [item for item in expected_neighbors
+                          if not (item[0] == 0 and item[1].endswith(' port 179')
+                                  and not any(actual[1].startswith(item[1][:-3])
+                                              for actual in actual_neighbors))]
     actual_policy, expected_policy = definitions(running.splitlines()), definitions(expected_definitions)
     matches = actual_neighbors == expected_neighbors and actual_policy == expected_policy
     if diagnostic is not None:
