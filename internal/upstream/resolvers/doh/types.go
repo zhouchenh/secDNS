@@ -257,6 +257,9 @@ func (d *DoH) initClient() {
 	d.queryClient = &client{
 		httpClient: &http.Client{
 			Transport: &http.Transport{
+				// Custom dialing and SNI otherwise disable automatic HTTP/2 negotiation.
+				// Multiplexing lets canceled queries release streams without closing healthy TLS connections.
+				ForceAttemptHTTP2: true,
 				DialContext: (&net.Dialer{
 					LocalAddr: &net.TCPAddr{IP: d.SendThrough},
 				}).DialContext,
