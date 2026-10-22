@@ -49,6 +49,17 @@ func TestEraUIManualPreview(t *testing.T) {
 			}
 		}
 		raw["profiles"] = profiles
+		raw["peers"] = []any{
+			map[string]any{"address": "192.0.2.101", "family": 4, "state": "Established", "prefixes": []string{"192.0.2.53/32", "192.0.2.64/32"}},
+			map[string]any{"address": "192.0.2.102", "family": 4, "state": "Established", "prefixes": []string{"192.0.2.53/32", "192.0.2.64/32"}},
+			map[string]any{"address": "2001:db8:1234:5678:abcd:ef01:2345:6789", "family": 6, "state": "Established", "prefixes": []string{"2001:db8:1234:5678::53/128", "2001:db8:1234:5678::64/128"}},
+			map[string]any{"address": "2001:db8:9876:5432:ffff:eeee:dddd:cccc", "family": 6, "state": "Established", "prefixes": []string{"2001:db8:1234:5678::53/128", "2001:db8:1234:5678::64/128"}},
+		}
+		if node == os.Getenv("SECDNS_ERA_STALE_NODE") {
+			raw["stale"] = true
+			raw["observed_at"] = time.Now().Add(-time.Minute).UTC()
+		}
+
 		if action != "status" {
 			raw["operation"] = map[string]any{"request_id": id, "action": action, "confirmed": true, "status": "confirmed"}
 		}
