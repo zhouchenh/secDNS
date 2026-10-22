@@ -64,7 +64,15 @@ def query_trace(raw):
         if any(type(item.get(k)) is not int or item[k]<0 for k in fields):return None
         if item['ended_unix_ms']<item['started_unix_ms'] or item['duration_ms']>10000:return None
         if item.get('outcome') not in ('response','exchange_error'):return None
-        return {k:item[k] for k in ('correlation',*fields,'outcome')}
+        result={k:item[k] for k in ('correlation',*fields,'outcome')}
+        extra=('dial_ended_unix_ms','write_started_unix_ms','write_ended_unix_ms')
+        for k in extra:
+            if k in item:
+                if type(item[k]) is not int or not item['started_unix_ms']<=item[k]<=item['ended_unix_ms']:return None
+                result[k]=item[k]
+        if ('write_started_unix_ms' in item)!=('write_ended_unix_ms' in item):return None
+        if 'write_started_unix_ms' in item and item['write_started_unix_ms']>item['write_ended_unix_ms']:return None
+        return result
     except (ValueError,TypeError):return None
 
 

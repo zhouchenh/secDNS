@@ -26,6 +26,7 @@ func execute(args []string, output io.Writer) int {
 		_ = json.NewEncoder(output).Encode(map[string]string{"outcome": outcome})
 		return 1
 	}
+
 	if len(args) != 6 || args[0] != "query" || (args[1] != "udp" && args[1] != "tcp") {
 		return fail("invalid_arguments")
 	}
@@ -57,13 +58,26 @@ func execute(args []string, output io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 	started := time.Now()
-	response, _, err := client.ExchangeContext(ctx, q, args[2])
-	if token := diagnostics.CorrelationToken(q); token != "" {
+	token := diagnostics.CorrelationToken(q)
+	var response *dns.Msg
+	var timing wireTimes
+	if token != "" {
+		response, err = exchangeTraced(ctx, client, q, args[2], &timing)
+	} else {
+		response, _, err = client.ExchangeContext(ctx, q, args[2])
+	}
+	if token != "" {
 		outcome := "response"
 		if err != nil {
 			outcome = "exchange_error"
 		}
-		defer emitExchange(os.Stderr, map[string]interface{}{"kind": "secdns-query-exchange", "correlation": token, "started_unix_ms": started.UnixMilli(), "ended_unix_ms": time.Now().UnixMilli(), "duration_ms": time.Since(started).Milliseconds(), "outcome": outcome})
+		record := map[string]interface{}{"kind": "secdns-query-exchange", "correlation": token, "started_unix_ms": started.UnixMilli(), "ended_unix_ms": time.Now().UnixMilli(), "duration_ms": time.Since(started).Milliseconds(), "outcome": outcome}
+		record["dial_ended_unix_ms"] = timing.DialEnded.UnixMilli()
+		if !timing.WriteStarted.IsZero() {
+			record["write_started_unix_ms"] = timing.WriteStarted.UnixMilli()
+			record["write_ended_unix_ms"] = timing.WriteEnded.UnixMilli()
+		}
+		defer emitExchange(os.Stderr, record)
 	}
 	if err != nil {
 		var network net.Error

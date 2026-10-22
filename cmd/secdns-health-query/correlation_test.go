@@ -31,12 +31,20 @@ func TestWireCorrelation(t *testing.T) {
 			raw, _ := io.ReadAll(read)
 			read.Close()
 			var event struct {
-				Correlation string `json:"correlation"`
-				Duration    int64  `json:"duration_ms"`
-				Outcome     string `json:"outcome"`
+				DialEnded    int64  `json:"dial_ended_unix_ms"`
+				WriteStarted int64  `json:"write_started_unix_ms"`
+				WriteEnded   int64  `json:"write_ended_unix_ms"`
+				Started      int64  `json:"started_unix_ms"`
+				Ended        int64  `json:"ended_unix_ms"`
+				Correlation  string `json:"correlation"`
+				Duration     int64  `json:"duration_ms"`
+				Outcome      string `json:"outcome"`
 			}
 			if err := json.Unmarshal(raw, &event); err != nil {
 				t.Fatal(string(raw), err)
+			}
+			if !(event.Started <= event.DialEnded && event.DialEnded <= event.WriteStarted && event.WriteStarted <= event.WriteEnded && event.WriteEnded <= event.Ended) {
+				t.Fatal("wire timing order", event)
 			}
 			if event.Correlation == "" || event.Correlation != <-tokens {
 				t.Fatal("wire token mismatch")

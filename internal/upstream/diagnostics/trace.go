@@ -47,7 +47,7 @@ var aggregates = map[string]*aggregate{}
 var events chan event
 
 func init() {
-	for _, phase := range []string{"doh.resolve", "doh.slot_wait", "doh.http", "doh.failed_refresh", "dns64.resolve", "dns64.aaaa", "dns64.speculative_a", "cache.slot_wait", "sequence.attempt", "listener.handler", "listener.write"} {
+	for _, phase := range []string{"doh.resolve", "doh.slot_wait", "doh.http", "doh.failed_refresh", "dns64.resolve", "dns64.aaaa", "dns64.speculative_a", "cache.slot_wait", "sequence.attempt", "listener.handler", "listener.write", "listener.read"} {
 		aggregates[phase] = &aggregate{}
 	}
 	seconds, e := strconv.Atoi(os.Getenv("SECDNS_RESOLVER_TRACE_SECONDS"))
@@ -132,4 +132,19 @@ func (s Span) End(outcome string) {
 		}
 	}
 	send(event{Token: s.token, ID: s.id, Phase: s.phase, State: "end", At: time.Now().UnixMilli(), Duration: time.Since(s.start).Milliseconds(), DNSID: s.dnsid, Qtype: s.qtype, Outcome: outcome})
+}
+
+// RecordBoundary records a completed socket read boundary without retaining bytes.
+func RecordBoundary(q *dns.Msg, phase string, at time.Time, outcome string) {
+	if events == nil || time.Now().After(deadline) {
+		return
+	}
+	token := CorrelationToken(q)
+	if token == "" {
+		return
+	}
+	if stat := aggregates[phase]; stat != nil {
+		stat.Count.Add(1)
+	}
+	send(event{ID: serial.Add(1), Token: token, Phase: phase, State: "point", At: at.UnixMilli(), Outcome: outcome})
 }

@@ -7,5 +7,8 @@ class TraceTests(unittest.TestCase):
   self.assertNotIn('secret',h.query_trace(json.dumps(v)))
   for change in ({'correlation':'private.example'},{'duration_ms':True},{'duration_ms':10001},{'ended_unix_ms':9},{'outcome':'raw network message'}):
    self.assertIsNone(h.query_trace(json.dumps(dict(v,**change))))
+  v.update(dial_ended_unix_ms=11,write_started_unix_ms=12,write_ended_unix_ms=13)
+  self.assertEqual(h.query_trace(json.dumps(v))['write_ended_unix_ms'],13)
+  for change in ({'write_ended_unix_ms':11},{'dial_ended_unix_ms':True},{'write_ended_unix_ms':21}):self.assertIsNone(h.query_trace(json.dumps(dict(v,**change))))
   for raw in ('', '[]', 'x'*2049, '{}'):self.assertIsNone(h.query_trace(raw))
 if __name__=='__main__':unittest.main()
