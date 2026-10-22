@@ -192,7 +192,7 @@ class UpstreamHealth:
                 for i,value in enumerate(healthy):
                     if value:self.last_success[i]=started
                 self.sources=[sorted(set(sources[i]+sources[i+1])) for i in range(0,8,2)]
-                self.attempts=[dict(attempt) for group in attempts for attempt in group]
+                self.attempts=[dict(attempt,round_started_monotonic=started) for group in attempts for attempt in group]
             time.sleep(next_round_delay(settings,time.monotonic()-started,self.gates))
 
     def snapshot(self, include_diagnostics=False):
