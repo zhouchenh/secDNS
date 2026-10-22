@@ -110,6 +110,8 @@
   window.addEventListener("beforeunload",event=>{if(model.dirty()||model.pending){event.preventDefault();event.returnValue="";}});
   $("close-editor").addEventListener("click",()=>{if(model.formDirty&&!confirm("Discard unfinished fields? Staged changes are retained."))return;edit(null,true);$("new-record").focus();});
   $("record-type-filter").addEventListener("change",render);
+  $("pending-only").addEventListener("change",render);
+  $("reset-filters").addEventListener("click",()=>{$("filter").value="";$("record-type-filter").value="";$("pending-only").checked=false;render();$("filter").focus();});
   function render() {
     $("workspace").hidden = !model.base;
     $("connection").textContent = connected ? (model.fresh?"Records loaded":"Refresh needed") : "Disconnected";
@@ -125,6 +127,7 @@
     const filter = $("filter").value.toLowerCase(), typeFilter=$("record-type-filter").value; let count = 0;
     for (const record of model.draft) {
       if (typeFilter && record.type!==typeFilter) continue;
+      if ($("pending-only").checked) {const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(original&&JSON.stringify(original)===JSON.stringify(record))continue;}
       if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
       const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; title.textContent = record.name; info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
       for (const value of record.values) {const d = document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;valueCell.append(d);}
@@ -136,7 +139,9 @@
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
     $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;
-    $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No records match your search or type filter.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
+    $("results-count").textContent=`${count} of ${model.draft.length} records`+($("pending-only").checked?" | Pending additions and edits; removals appear in Review changes.":" | Changes are reviewed before they are applied.");
+    $("reset-filters").hidden=!filter&&!typeFilter&&!$("pending-only").checked;
+    $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No records match these filters. Reset filters to see all records.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
   $("delete-cancel").addEventListener("click",()=>$("delete-dialog").close());
