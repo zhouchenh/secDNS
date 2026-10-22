@@ -122,7 +122,7 @@ def snapshot(node):
     for i, e in enumerate(h['entries']):
         targets = [p for p in peers if p['family'] == e['family'] and p['state'] == 'Established' and e['prefix'] in p['prefixes']]
         profiles.append({'role': e['role'], 'family': e['family'], 'prefix': e['prefix'], 'enabled':enabled[e['role'],e['family']], 'healthy': heartbeat['healthy'][i] if fresh else None, 'local_healthy':heartbeat.get('local_healthy',heartbeat['healthy'])[i] if fresh else None, 'upstream_healthy':heartbeat.get('upstream_healthy',[None]*4)[i] if fresh else None, 'upstream_age_seconds':heartbeat.get('upstream_age_seconds') if fresh else None, 'reason':heartbeat.get('reasons',['upstream checks not configured']*4)[i] if fresh else 'health observation stale', 'advertised': bool(targets)})
-    return {'schema': 1, 'node': node, 'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'reachable': True, 'stale': bool(errors), 'errors': errors, 'heartbeat_age_seconds': age, 'daemon': {'active': props.get('ActiveState') == 'active', 'pid': int(props.get('MainPID', 0))}, 'maintenance': maintenance, 'profiles': profiles, 'peers': peers}
+    return {'schema': 1, 'node': node, 'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'reachable': True, 'stale': bool(errors), 'errors': errors, 'heartbeat_age_seconds': age, 'health_settings_revision':heartbeat.get('health_settings_revision') if fresh else None, 'upstream_worker_failed':heartbeat.get('upstream_worker_failed',False) if fresh else None, 'daemon': {'active': props.get('ActiveState') == 'active', 'pid': int(props.get('MainPID', 0))}, 'maintenance': maintenance, 'profiles': profiles, 'peers': peers}
 
 def operate(node, action, request_id):
     if action not in ('drain', 'resume') or not re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', request_id): raise ValueError('invalid operation')
@@ -137,7 +137,7 @@ def operate(node, action, request_id):
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         for pending in receipts.glob('*.json'):
             transaction=read(pending)
-            if transaction.get('action')=='bgp-apply' and transaction.get('status')=='pending':raise ValueError('pending BGP transaction')
+            if transaction.get('action') in ('bgp-apply','health-apply') and transaction.get('status')=='pending':raise ValueError('pending settings transaction')
         path = receipts/(request_id+'.json')
         if path.exists():
             old = read(path)
@@ -166,19 +166,26 @@ def operate(node, action, request_id):
 def main():
     if len(sys.argv) not in (3, 4): raise ValueError('arguments')
     action, node = sys.argv[1:3]
-    if action.startswith('bgp-'):
+    if action.startswith(('bgp-','health-')):
         import candidate_bgp as bgp
+        import candidate_health
+        health_action=action.startswith('health-')
+        if health_action:bgp=candidate_health
+        prefix='health-' if health_action else 'bgp-'
         identity(node)
-        if action=='bgp-get' and len(sys.argv)==3:result=bgp.get(node)
-        elif action=='bgp-rollback' and len(sys.argv)==4:
+        if action==prefix+'get' and len(sys.argv)==3:result=bgp.get(node)
+        elif action==prefix+'rollback' and len(sys.argv)==4:
             bgp.rollback(node,sys.argv[3]);result={'schema':1,'node':node,'rolled_back':True}
-        elif action in ('bgp-validate','bgp-apply'):
+        elif action in (prefix+'validate',prefix+'apply'):
             raw=sys.stdin.read(16385)
             if len(raw)>16384:raise ValueError('payload size')
             payload=json.loads(raw)
-            if action=='bgp-apply' and len(sys.argv)==4:result=bgp.apply(node,sys.argv[3],payload)
-            elif action=='bgp-validate' and len(sys.argv)==3:
-                old,config=bgp.read_request(node,payload);bgp.preflight(node,config);result=dict(schema=1,node=node,revision=old['revision'],config=config,valid=True)
+            if action==prefix+'apply' and len(sys.argv)==4:result=bgp.apply(node,sys.argv[3],payload)
+            elif action==prefix+'validate' and len(sys.argv)==3:
+                old,config=bgp.read_request(node,payload)
+                if not health_action:bgp.preflight(node,config)
+                result=dict(schema=1,node=node,revision=old['revision'],config=config,valid=True)
+                if health_action:result['derived']={'stale_seconds':candidate_health.settings.stale_seconds(config)}
             else:raise ValueError('arguments')
         else:raise ValueError('arguments')
         print(json.dumps(result));return

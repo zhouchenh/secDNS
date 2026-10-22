@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import threading
+import health_settings
 
 LABS = [ipaddress.ip_network(x) for x in ('192.0.2.0/24', '198.51.100.0/24', '203.0.113.0/24', '2001:db8::/32')]
 
@@ -77,18 +78,23 @@ def probe_round(c, timeout=3):
     return [results[i] and results[i+1] for i in range(0, 8, 2)]
 
 class UpstreamGate:
-    def __init__(self):self.enabled=False;self.good=0;self.bad=0
+    def __init__(self,failures=2,recoveries=2):
+        self.enabled=False;self.good=0;self.bad=0;self.failures=failures;self.recoveries=recoveries
     def observe(self,healthy):
         self.good=self.good+1 if healthy else 0
         self.bad=self.bad+1 if not healthy else 0
-        if self.good>=2:self.enabled=True
-        if self.bad>=2:self.enabled=False
+        if self.good>=self.recoveries:self.enabled=True
+        if self.bad>=self.failures:self.enabled=False
         return self.enabled
 
 class UpstreamHealth:
     """Independent WAN worker; the local heartbeat loop never waits for WAN."""
-    def __init__(self,c):
+    def __init__(self,c,settings_path=None):
         self.config=c
+        self.settings_path=settings_path
+        self.settings=health_settings.load(settings_path)
+        self.settings_revision=None
+        self.active_revision=None
         self.lock=threading.Lock()
         self.observed=None
         self.results=[False]*4
@@ -101,6 +107,18 @@ class UpstreamHealth:
     def run(self):
         while True:
             started=time.monotonic()
+            # Load only between rounds. In-flight results retain their own revision.
+            try: settings=health_settings.load(self.settings_path)
+            except (OSError,ValueError):
+                with self.lock: self.observed=None;self.results=[False]*4;self.settings_revision=None
+                return
+            revision=health_settings.revision(settings)
+            with self.lock:
+                if revision!=self.active_revision:
+                    self.gates=[UpstreamGate(settings['failure_threshold'],settings['recovery_threshold']) for _ in range(4)]
+                    self.results=[False]*4;self.observed=None;self.settings_revision=None
+                    self.last_success=[None]*4;self.sources=[[] for _ in range(4)]
+                self.settings=settings;self.active_revision=revision
             results=[False]*8
             sources=['']*8
             def query(index,entry,transport):
@@ -110,30 +128,31 @@ class UpstreamHealth:
                     probe_entry=dict(entry)
                     probe_entry['query_name']='secdnshealth'+os.urandom(12).hex()+'.1-1-1-1.'+domain+'.'
                     probe_entry['expected']='1.1.1.1' if entry['role']=='normal' else '64:ff9b::101:101'
-                    if probe(self.config,probe_entry,transport,timeout=2.5):
+                    if probe(self.config,probe_entry,transport,timeout=settings['probe_timeout_ms']/1000):
                         results[index]=True;sources[index]=domain;return
             threads=[threading.Thread(target=query,args=(i*2+j,e,p),daemon=True) for i,e in enumerate(self.config['entries']) for j,p in enumerate(('udp','tcp'))]
             for thread in threads:thread.start()
-            for thread in threads:thread.join(max(0,6-(time.monotonic()-started)))
+            for thread in threads:thread.join(max(0,(2*settings['probe_timeout_ms']+500)/1000-(time.monotonic()-started)))
             if any(thread.is_alive() for thread in threads):
                 # Stop the worker rather than accumulating orphan probe rounds.
                 # Main loop eventually marks this observation stale and withdraws.
                 return
             with self.lock:
                 self.observed=started
+                self.settings_revision=revision
                 healthy=[results[i] and results[i+1] for i in range(0,8,2)]
                 self.results=[gate.observe(value) for gate,value in zip(self.gates,healthy)]
                 for i,value in enumerate(healthy):
                     if value:self.last_success[i]=started
                 self.sources=[sorted(set(sources[i:i+2])-{''}) for i in range(0,8,2)]
-            time.sleep(max(0,15-(time.monotonic()-started)))
+            time.sleep(max(0,settings['interval_seconds']-(time.monotonic()-started)))
 
     def snapshot(self):
         with self.lock:
             age=None if self.observed is None else time.monotonic()-self.observed
-            fresh=age is not None and 0<=age<=35
+            fresh=age is not None and 0<=age<=health_settings.stale_seconds(self.settings)
             success_ages=[None if value is None else time.monotonic()-value for value in self.last_success]
-            return (list(self.results) if fresh else [False]*4),age,fresh,success_ages,list(self.sources)
+            return (list(self.results) if fresh else [False]*4),age,fresh,success_ages,list(self.sources),self.settings_revision
 
 def announcement_flags(config_path,entries):
     if config_path is None:return [True]*4
@@ -206,7 +225,7 @@ def route(c, e, enable):
 def run(c, maintenance_path=None):
     c = validate(c)
     gates = [Gate() for _ in c['entries']]
-    upstream=UpstreamHealth(c)
+    upstream=UpstreamHealth(c,maintenance_path.parent/'health-settings.json' if maintenance_path else None)
     # Always start withdrawn; previous process state is never trusted.
     for e in c['entries']:
         route(c, e, False)
@@ -214,7 +233,7 @@ def run(c, maintenance_path=None):
     while True:
         started = time.monotonic()
         local = probe_round(c)
-        upstream_ok,upstream_age,upstream_fresh,upstream_success_ages,upstream_sources=upstream.snapshot()
+        upstream_ok,upstream_age,upstream_fresh,upstream_success_ages,upstream_sources,settings_revision=upstream.snapshot()
         observations=[a and b for a,b in zip(local,upstream_ok)]
         # No heartbeat/advertisement from a stale observation round.
         require_fresh(started, time.monotonic())
@@ -226,7 +245,7 @@ def run(c, maintenance_path=None):
                 route(c, e, enabled)
         sequence += 1
         reasons=['local DNS check failed' if not local[i] else ('upstream observation stale' if not upstream_fresh else ('external DNS canary failed' if not upstream_ok[i] else 'ready')) for i in range(4)]
-        print(json.dumps({'type': 'health', 'sequence': sequence, 'observed_monotonic': started, 'healthy': observations, 'local_healthy':local,'upstream_healthy':upstream_ok if upstream_fresh else [None]*4,'upstream_age_seconds':upstream_age,'upstream_success_ages':upstream_success_ages,'upstream_sources':upstream_sources,'reasons':reasons,'maintenance': withdrawn, 'advertised': [g.enabled for g in gates]}), flush=True)
+        print(json.dumps({'type': 'health', 'sequence': sequence, 'observed_monotonic': started, 'healthy': observations, 'local_healthy':local,'upstream_healthy':upstream_ok if upstream_fresh else [None]*4,'upstream_age_seconds':upstream_age,'upstream_success_ages':upstream_success_ages,'upstream_sources':upstream_sources,'health_settings_revision':settings_revision,'upstream_worker_failed':not upstream.thread.is_alive(),'reasons':reasons,'maintenance': withdrawn, 'advertised': [g.enabled for g in gates]}), flush=True)
         time.sleep(max(0, 1 - (time.monotonic() - started)))
 
 

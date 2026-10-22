@@ -16,7 +16,7 @@ NODES = {
     'intel108': ('100.91.1.84', 'era-secdns-intel108_ed25519', 'lxc-three-node-prep-r3/intel108-known-hosts'),
 }
 SSH = 'C:/Windows/System32/OpenSSH/ssh.exe'
-ACTIONS = ('status', 'drain', 'resume', 'bgp-get', 'bgp-validate', 'bgp-apply')
+ACTIONS = ('status', 'drain', 'resume', 'bgp-get', 'bgp-validate', 'bgp-apply', 'health-apply', 'health-get', 'health-validate')
 
 
 def canonical_request_id(value):
@@ -87,18 +87,18 @@ def mutation_lock(state=None):
 def invoke(action, node, request_id=None, payload=None, *, guard=False):
     if action not in ACTIONS or node not in NODES:
         raise ValueError('unknown candidate action')
-    if action in ('drain', 'resume', 'bgp-apply'):
+    if action in ('drain', 'resume', 'bgp-apply', 'health-apply'):
         if not canonical_request_id(request_id):
             raise ValueError('invalid request identifier')
     elif request_id is not None:
         raise ValueError('unexpected request identifier')
     if guard and action != 'status':
         raise ValueError('invalid guard action')
-    observation = action in ('status', 'bgp-get', 'bgp-validate')
+    observation = action in ('status', 'bgp-get', 'bgp-validate', 'health-get', 'health-validate')
     # Interactive observations fit inside the API's 30-second deadline. The
     # two cohort checks retain their original budget before a bounded mutation.
     interactive_status = action == 'status' and not guard
-    deadline = (25 if interactive_status else 12) if observation else (100 if action == 'bgp-apply' else 30)
+    deadline = (25 if interactive_status else 12) if observation else (100 if action in ('bgp-apply','health-apply') else 30)
     keepalives = 8 if interactive_status else 2
     paths = platform_paths()
     host, key, trust = NODES[node]
@@ -118,19 +118,19 @@ def main():
     action, node = sys.argv[1:3]
     if node not in NODES or action not in ACTIONS: raise ValueError('unknown candidate action')
     payload=None
-    if action in ('bgp-validate','bgp-apply'):
+    if action in ('bgp-validate','bgp-apply','health-validate','health-apply'):
         raw=sys.stdin.read(16385)
         if len(raw)>16384:raise ValueError('payload size')
         payload=json.loads(raw)
         if not isinstance(payload,dict) or set(payload)!={'expected_revision','config'}:raise ValueError('payload fields')
-    if action in ('status','bgp-get','bgp-validate'):
+    if action in ('status','bgp-get','bgp-validate', 'health-get', 'health-validate'):
         if len(sys.argv) != 3: raise ValueError('arguments')
         return invoke(action, node,payload=payload)
     if len(sys.argv) != 4 or not canonical_request_id(sys.argv[3]): raise ValueError('invalid request identifier')
     # All GUI changes serialize across nodes so two simultaneous drains cannot
     # each rely on the other node. One private lock serves this console process family.
     with mutation_lock():
-        if action in ('drain','bgp-apply'):
+        if action in ('drain','bgp-apply', 'health-apply'):
             safe = False
             for other in NODES:
                 if other == node: continue

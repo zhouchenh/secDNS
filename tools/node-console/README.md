@@ -97,3 +97,12 @@ key while its sole writer is stopped. Preserve immutable authentication store
 identity; do not initialize another owner or enroll MFA again. The admin HTTP
 listener does not itself terminate TLS. Deployment must keep existing DNS and
 replication listeners unchanged. Portability tests do not authorize deployment.
+## Health settings (candidate upstream checks)
+
+The Health settings dialog manages only the existing upstream canary worker. It uses the same human session, CSRF checks, fixed node inventory, durable operation receipts, and serialized candidate mutation guard as BGP settings. Record-agent tokens do not gain routing or health-control privileges.
+
+Supported integer settings: interval 3–15 seconds, per-provider probe timeout 500–2500 ms, failure threshold 2–3 rounds, recovery threshold 2–5 rounds. Two sequential fallback timeouts plus 500 ms overhead must fit within the interval. The read-only stale bound is `2*interval + ceil(2*timeout/1000) + 1` seconds. Existing nodes without a settings file retain 15 s / 2500 ms / 2 / 2; the recommended test configuration is 3 s / 1000 ms / 2 / 2.
+
+Eight profile/transport workers run concurrently; each tries the two fixed canary domains sequentially and stops on its first success. Healthy load is approximately 8/3 queries per second per node at the recommended setting (five times the previous 8/15). There is no overlapping round: if subprocess teardown exceeds the bounded round budget, the worker stops and its observations expire. Local DNS semantic checks and their recovery gate are unchanged.
+
+Settings load only between upstream rounds, with gates reset on a revision change. This can briefly withdraw the node's routes. A successful apply requires a completed round bearing the new revision and restoration of the baseline eligible health/advertisements. Rollback likewise requires the old revision and baseline recovery. The independent rollback timer is scheduled before the file change; request interruption is not evidence of failure. An uncertain response must be reconciled, never automatically retried. No DNS process restart, account change, or arbitrary canary/endpoint configuration is part of a settings apply.

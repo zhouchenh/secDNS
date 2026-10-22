@@ -114,6 +114,7 @@ func (h *HTTPAdminServer) runNode(ctx context.Context, action, node, id string) 
 }
 func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
 	h.nodeBGPRoutes(mux, base)
+	h.nodeHealthRoutes(mux, base)
 	if !h.nodesEnabled() {
 		return
 	}
