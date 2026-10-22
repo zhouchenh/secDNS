@@ -12,6 +12,7 @@ import (
 )
 
 type event struct {
+	Protocol string `json:"protocol,omitempty"`
 	Token    string `json:"correlation,omitempty"`
 	ID       uint64 `json:"id"`
 	Phase    string `json:"phase"`
@@ -120,7 +121,16 @@ func Begin(q *dns.Msg, phase string) Span {
 	}
 	return s
 }
-func (s Span) End(outcome string) {
+func (s Span) End(outcome string) { s.EndProtocol(outcome, 0) }
+
+// EndProtocol adds only the negotiated HTTP version, never response data.
+func (s Span) EndProtocol(outcome string, major int) {
+	protocol := ""
+	if major == 1 {
+		protocol = "h1"
+	} else if major == 2 {
+		protocol = "h2"
+	}
 	if s.id == 0 {
 		return
 	}
@@ -131,7 +141,7 @@ func (s Span) End(outcome string) {
 		for old := stat.MaxMS.Load(); duration > old && !stat.MaxMS.CompareAndSwap(old, duration); old = stat.MaxMS.Load() {
 		}
 	}
-	send(event{Token: s.token, ID: s.id, Phase: s.phase, State: "end", At: time.Now().UnixMilli(), Duration: time.Since(s.start).Milliseconds(), DNSID: s.dnsid, Qtype: s.qtype, Outcome: outcome})
+	send(event{Token: s.token, ID: s.id, Phase: s.phase, State: "end", At: time.Now().UnixMilli(), Duration: time.Since(s.start).Milliseconds(), DNSID: s.dnsid, Qtype: s.qtype, Outcome: outcome, Protocol: protocol})
 }
 
 // RecordBoundary records a completed socket read boundary without retaining bytes.

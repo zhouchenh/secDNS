@@ -39,3 +39,21 @@ func TestTraceBoundedAndRedacted(t *testing.T) {
 		t.Fatal("duration cap")
 	}
 }
+
+func TestProtocolDiagnosticAllowlist(t *testing.T) {
+	events = make(chan event, 4)
+	deadline = time.Now().Add(time.Second)
+	emitted.Store(0)
+	defer func() { events = nil; deadline = time.Time{}; emitted.Store(0) }()
+	for _, tc := range []struct {
+		major int
+		want  string
+	}{{1, "h1"}, {2, "h2"}, {0, ""}, {999, ""}} {
+		s := Begin(nil, "doh.resolve")
+		s.EndProtocol("complete", tc.major)
+		e := <-events
+		if e.Protocol != tc.want || e.Outcome != "complete" {
+			t.Fatalf("event=%+v", e)
+		}
+	}
+}
