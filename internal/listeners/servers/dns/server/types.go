@@ -5,6 +5,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/zhouchenh/go-descriptor"
 	"github.com/zhouchenh/secDNS/internal/common"
+	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"github.com/zhouchenh/secDNS/pkg/listeners/server"
 	"net"
 	"net/netip"
@@ -56,7 +57,9 @@ func (d *DNSServer) ServePeer(handler func(query *dns.Msg, peer netip.Addr) (rep
 
 func (d *DNSServer) serve(handler func(w dns.ResponseWriter, query *dns.Msg) *dns.Msg, errorHandler func(err error)) {
 	handleIfError(dns.ListenAndServe(net.JoinHostPort(d.Listen.String(), strconv.Itoa(int(d.Port))), d.Protocol, dns.HandlerFunc(func(w dns.ResponseWriter, query *dns.Msg) {
+		span := diagnostics.Begin(query, "listener.handler")
 		reply := handler(w, query)
+		span.End("returned")
 		if reply == nil {
 			reply = new(dns.Msg)
 			reply.SetRcode(query, dns.RcodeServerFailure)
@@ -65,7 +68,14 @@ func (d *DNSServer) serve(handler func(w dns.ResponseWriter, query *dns.Msg) *dn
 		case "udp", "udp4", "udp6":
 			reply = clampUDPResponse(reply, query)
 		}
-		handleIfError(w.WriteMsg(reply), errorHandler)
+		writeSpan := diagnostics.Begin(query, "listener.write")
+		writeErr := w.WriteMsg(reply)
+		outcome := "written"
+		if writeErr != nil {
+			outcome = "write_error"
+		}
+		writeSpan.End(outcome)
+		handleIfError(writeErr, errorHandler)
 	})), errorHandler)
 }
 

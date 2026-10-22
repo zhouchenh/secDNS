@@ -4,14 +4,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/miekg/dns"
+	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"net"
 	"testing"
 	"time"
 )
 
 func localServer(t *testing.T, network string, delay time.Duration) string {
+	return localServerObserved(t, network, delay, nil)
+}
+func localServerObserved(t *testing.T, network string, delay time.Duration, tokens chan string) string {
 	t.Helper()
 	server := &dns.Server{Net: network, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, q *dns.Msg) {
+		if tokens != nil {
+			tokens <- diagnostics.CorrelationToken(q)
+		}
 		time.Sleep(delay)
 		r := new(dns.Msg)
 		r.SetReply(q)

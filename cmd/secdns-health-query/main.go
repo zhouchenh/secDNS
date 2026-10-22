@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/miekg/dns"
+	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"io"
 	"net"
 	"os"
@@ -55,7 +56,15 @@ func execute(args []string, output io.Writer) int {
 	client := &dns.Client{Net: args[1], Timeout: time.Duration(timeout) * time.Millisecond}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
 	defer cancel()
+	started := time.Now()
 	response, _, err := client.ExchangeContext(ctx, q, args[2])
+	if token := diagnostics.CorrelationToken(q); token != "" {
+		outcome := "response"
+		if err != nil {
+			outcome = "exchange_error"
+		}
+		defer emitExchange(os.Stderr, map[string]interface{}{"kind": "secdns-query-exchange", "correlation": token, "started_unix_ms": started.UnixMilli(), "ended_unix_ms": time.Now().UnixMilli(), "duration_ms": time.Since(started).Milliseconds(), "outcome": outcome})
+	}
 	if err != nil {
 		var network net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &network) && network.Timeout()) {
@@ -76,3 +85,15 @@ func execute(args []string, output io.Writer) int {
 	return 0
 }
 func main() { os.Exit(execute(os.Args[1:], os.Stdout)) }
+
+// Emit after stdout, bounded to 5ms. A blocked diagnostic pipe cannot hold the
+// helper beyond this small part of its existing 250ms process-startup allowance.
+// One write goroutine per helper process; os.Exit terminates it if still blocked.
+func emitExchange(w io.Writer, value interface{}) {
+	done := make(chan struct{})
+	go func() { _ = json.NewEncoder(w).Encode(value); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Millisecond):
+	}
+}

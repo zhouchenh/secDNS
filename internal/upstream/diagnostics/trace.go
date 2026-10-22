@@ -12,6 +12,7 @@ import (
 )
 
 type event struct {
+	Token    string `json:"correlation,omitempty"`
 	ID       uint64 `json:"id"`
 	Phase    string `json:"phase"`
 	State    string `json:"state"`
@@ -22,6 +23,7 @@ type event struct {
 	Outcome  string `json:"outcome,omitempty"`
 }
 type Span struct {
+	token        string
 	id           uint64
 	phase        string
 	start        time.Time
@@ -45,7 +47,7 @@ var aggregates = map[string]*aggregate{}
 var events chan event
 
 func init() {
-	for _, phase := range []string{"doh.resolve", "doh.slot_wait", "doh.http", "doh.failed_refresh", "dns64.resolve", "dns64.aaaa", "dns64.speculative_a", "cache.slot_wait", "sequence.attempt"} {
+	for _, phase := range []string{"doh.resolve", "doh.slot_wait", "doh.http", "doh.failed_refresh", "dns64.resolve", "dns64.aaaa", "dns64.speculative_a", "cache.slot_wait", "sequence.attempt", "listener.handler", "listener.write"} {
 		aggregates[phase] = &aggregate{}
 	}
 	seconds, e := strconv.Atoi(os.Getenv("SECDNS_RESOLVER_TRACE_SECONDS"))
@@ -97,8 +99,19 @@ func Begin(q *dns.Msg, phase string) Span {
 	if events == nil || time.Now().After(deadline) {
 		return Span{}
 	}
+	token := CorrelationToken(q)
+	if os.Getenv("SECDNS_QUERY_TRACE_ONLY") == "1" {
+		if token == "" {
+			return Span{}
+		}
+		switch phase {
+		case "listener.handler", "listener.write", "dns64.resolve", "doh.resolve", "cache.slot_wait", "sequence.attempt":
+		default:
+			return Span{}
+		}
+	}
 	active.Add(1)
-	s := Span{id: serial.Add(1), phase: phase, start: time.Now()}
+	s := Span{id: serial.Add(1), phase: phase, start: time.Now(), token: token}
 	if q != nil {
 		s.dnsid = q.Id
 		if len(q.Question) > 0 {
@@ -118,5 +131,5 @@ func (s Span) End(outcome string) {
 		for old := stat.MaxMS.Load(); duration > old && !stat.MaxMS.CompareAndSwap(old, duration); old = stat.MaxMS.Load() {
 		}
 	}
-	send(event{ID: s.id, Phase: s.phase, State: "end", At: time.Now().UnixMilli(), Duration: time.Since(s.start).Milliseconds(), DNSID: s.dnsid, Qtype: s.qtype, Outcome: outcome})
+	send(event{Token: s.token, ID: s.id, Phase: s.phase, State: "end", At: time.Now().UnixMilli(), Duration: time.Since(s.start).Milliseconds(), DNSID: s.dnsid, Qtype: s.qtype, Outcome: outcome})
 }
