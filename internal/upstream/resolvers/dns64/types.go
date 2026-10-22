@@ -6,12 +6,16 @@ import (
 	"github.com/zhouchenh/secDNS/internal/common"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"net"
+	"sync"
 )
 
 type DNS64 struct {
 	Resolver           resolver.Resolver
 	Prefix             net.IP
 	IgnoreExistingAAAA bool
+	SpeculativeA       bool
+	speculativeOnce    sync.Once
+	speculativeSlots   chan struct{}
 }
 
 var typeOfDNS64 = descriptor.TypeOfNew(new(*DNS64))
@@ -37,6 +41,7 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if d.IgnoreExistingAAAA {
 		return d.synthesize(query, depth)
 	}
+	pending := d.speculate(query, depth)
 	reply, err := d.Resolver.Resolve(query, depth-1)
 	if err != nil {
 		return nil, err
@@ -47,7 +52,51 @@ func (d *DNS64) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if reply == nil || !isNoErrorReply(reply) || hasAAAA(reply) {
 		return reply, nil
 	}
+	if pending != nil {
+		result := <-pending
+		if result.err != nil {
+			return nil, result.err
+		}
+		return d.synthesizeReply(result.reply)
+	}
 	return d.synthesize(query, depth)
+}
+
+// Speculation is bounded separately from ordinary caller-driven resolution.
+// The resolver API has no cancellation: abandoned A work holds both slots until
+// completion, and sends into a buffered channel even if AAAA already won.
+var speculativeGlobalSlots = make(chan struct{}, 128)
+
+type speculativeResult struct {
+	reply *dns.Msg
+	err   error
+}
+
+func (d *DNS64) speculate(query *dns.Msg, depth int) <-chan speculativeResult {
+	if !d.SpeculativeA {
+		return nil
+	}
+	d.speculativeOnce.Do(func() { d.speculativeSlots = make(chan struct{}, 32) })
+	select {
+	case d.speculativeSlots <- struct{}{}:
+	default:
+		return nil
+	}
+	select {
+	case speculativeGlobalSlots <- struct{}{}:
+	default:
+		<-d.speculativeSlots
+		return nil
+	}
+	copied := query.Copy()
+	copied.Question[0].Qtype = dns.TypeA
+	result := make(chan speculativeResult, 1)
+	go func() {
+		defer func() { <-speculativeGlobalSlots; <-d.speculativeSlots }()
+		reply, err := d.Resolver.Resolve(copied, depth-1)
+		result <- speculativeResult{reply, err}
+	}()
+	return result
 }
 
 // synthesize resolves the A records for the query name and rewrites them as AAAA
@@ -60,6 +109,10 @@ func (d *DNS64) synthesize(query *dns.Msg, depth int) (*dns.Msg, error) {
 	if err != nil {
 		return nil, err
 	}
+	return d.synthesizeReply(reply)
+}
+
+func (d *DNS64) synthesizeReply(reply *dns.Msg) (*dns.Msg, error) {
 	if reply == nil {
 		return nil, nil
 	}
@@ -161,6 +214,13 @@ func init() {
 						},
 					},
 					descriptor.DefaultValue{Value: net.IP{0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"SpeculativeA"},
+				ValueSource: descriptor.ValueSources{
+					descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"speculativeA"}, AssignableKind: descriptor.KindBool},
+					descriptor.DefaultValue{Value: false},
 				},
 			},
 			descriptor.ObjectFiller{
