@@ -128,7 +128,14 @@ def runtime_matches(node, entries, enrolled, deadline):
             else:
                 block=None
                 parts=line.split()
-                if line.startswith('bgp as-path access-list LOCAL-ONLY '):found.append(('as-path',line))
+                if line.startswith('bgp as-path access-list LOCAL-ONLY '):
+                    # FRR 10.3 renders the implicit sequence as "seq 5".
+                    # Ignore only this rule identifier, not action, regex, or
+                    # multiplicity: additional rules still fail exact equality.
+                    match = re.fullmatch(r'bgp as-path access-list LOCAL-ONLY seq ([1-9][0-9]{0,9}) (permit|deny) (.+)', line)
+                    if match and int(match[1]) <= 4294967295:
+                        line = 'bgp as-path access-list LOCAL-ONLY '+match[2]+' '+match[3]
+                    found.append(('as-path',line))
                 elif len(parts)>2 and parts[0] in ('ip','ipv6') and parts[1]=='prefix-list' and parts[2] in names:found.append(('prefix-list',line))
         return sorted(found)
     expected_definitions=['bgp as-path access-list LOCAL-ONLY permit ^$', *policies]

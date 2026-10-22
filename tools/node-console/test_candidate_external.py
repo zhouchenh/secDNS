@@ -96,6 +96,26 @@ class ExternalTests(unittest.TestCase):
             e.query('show bgp summary json',5.25)
             self.assertEqual(run.call_args.kwargs['timeout'],.25)
 
+    def test_native_frr_as_path_sequence_is_semantically_exact(self):
+        # Captured AMD FRR 10.3 rollback readback, 2026-10-22:
+        native='bgp as-path access-list LOCAL-ONLY seq 5 permit ^$'
+        with patch.object(e,'query',return_value=native):
+            self.assertTrue(e.runtime_matches('amd103',[],policy(),999))
+        for bad in (native.replace('permit','deny'),native.replace('^$','.*'),
+                    native+'\n'+native.replace('seq 5','seq 10'),
+                    native.replace('seq 5','seq 0'),native.replace('seq 5','seq 4294967296'),
+                    native.replace('LOCAL-ONLY','OTHER')):
+            with patch.object(e,'query',return_value=bad):
+                self.assertFalse(e.runtime_matches('amd103',[],policy(),999))
+        p=entry();p.update(enabled=True,exports=['203.0.113.53/32'])
+        config=b.default_config('amd103');config['external_peers']=[p]
+        with patch.object(b,'test_client',return_value=None):text=b.render('amd103',config,policy())
+        text=text.replace('bgp as-path access-list LOCAL-ONLY permit ^$',native)
+        with patch.object(e,'query',return_value=text):
+            self.assertTrue(e.runtime_matches('amd103',[p],policy(),999))
+        with patch.object(e,'query',return_value=text.replace('route-map EXTERNAL-DENY deny 10','route-map EXTERNAL-DENY permit 10')):
+            self.assertFalse(e.runtime_matches('amd103',[p],policy(),999))
+
     def test_revocation_removes_external_without_restoring_authority(self):
         config=b.default_config('amd103');config['external_peers']=[entry()]
         receipt=dict(node='amd103',action='bgp-apply',status='pending',old_config=config,old_withdraw=False,external_policy_digest='old')
