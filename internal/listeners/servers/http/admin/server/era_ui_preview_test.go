@@ -7,6 +7,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/recordstore"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -176,9 +177,57 @@ func TestEraUISignInPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.agent.origin = "http://127.0.0.1:5195"
-	server := &http.Server{Handler: h.routes()}
+	routes := h.routes()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "Visual fixture: submissions disabled", http.StatusMethodNotAllowed)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/auth/human.js") {
+			capture := httptest.NewRecorder()
+			routes.ServeHTTP(capture, r)
+			for key, values := range capture.Header() {
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
+			}
+			w.Header().Del("Content-Length")
+			script := capture.Body.String()
+			marker := strings.LastIndex(script, "})();")
+			if capture.Code != http.StatusOK || marker < 0 {
+				t.Error("missing real auth renderer")
+				http.Error(w, "fixture unavailable", 500)
+				return
+			}
+			script = script[:marker] + eraAuthVisualStates + script[marker:]
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(script))
+			return
+		}
+		routes.ServeHTTP(w, r)
+	})}
 	go server.Serve(listener)
 	defer server.Close()
 	t.Log("Disposable sign-in preview http://127.0.0.1:5195/admin/ui/")
 	time.Sleep(90 * time.Minute)
 }
+
+// Test-only visual inputs drive the existing renderer, without authentication requests.
+// This constant is compiled only into the opt-in loopback test binary, never secDNS.
+const eraAuthVisualStates = `
+ const visual=new URLSearchParams(location.search).get('auth_visual');
+ if(['mfa','setup','recovery','expired','error','loading'].includes(visual)){
+  const fixtureLabel=document.createElement('p');fixtureLabel.textContent='Disposable visual fixture — submissions disabled';card.prepend(fixtureLabel);
+  document.addEventListener('submit',event=>{event.preventDefault();event.stopImmediatePropagation();},true);
+  const showVisual=()=>{step='start';replacement=false;setupRequired=false;mode.value='login';busy=false;
+   if(visual==='mfa')step='otp';
+   if(visual==='setup'){setupRequired=true;mode.value='setup';}
+   if(visual==='recovery')mode.value='code';
+   if(visual==='expired')note.textContent='Sign-in timed out. Enter your username and password to start again.';
+   if(visual==='error')note.textContent='Sign-in could not be completed. Check your details or wait before trying again.';
+   if(visual==='loading'){busy=true;note.textContent='Checking sign-in…';}
+   render();
+  };
+  window.addEventListener('authstate',()=>queueMicrotask(showVisual));if(window.secDNSAgent.state)queueMicrotask(showVisual);
+ }
+`
