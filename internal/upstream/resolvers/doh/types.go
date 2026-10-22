@@ -79,7 +79,7 @@ func (d *DoH) acquireRequestSlot(ctx context.Context) (func(), error) {
 
 // refreshURLs coalesces failed-request bootstrap work. The Resolver interface
 // cannot cancel bootstrap lookups, so at most one such worker may exist per
-// DoH instance, including after any caller's deadline. Queries never wait for it.
+// DoH instance, including after any caller's deadline. Warm queries never wait for it.
 // Empty results never replace a previously usable endpoint snapshot.
 func (d *DoH) refreshURLs(query *dns.Msg, depth int) <-chan struct{} {
 	d.refreshMutex.Lock()
