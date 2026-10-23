@@ -25,7 +25,8 @@ import (
 	"time"
 )
 
-// Real secDNS routes + real Facade apphost transport. Only the node runner is synthetic.
+// Actual secDNS routes/auth/storage and Facade apphost transport over loopback TLS.
+// Listeners, certificates, identities, data and node/BGP/health runner results are disposable fixtures.
 func TestFacadeRealTLS(t *testing.T) {
 	helper := os.Getenv("SECDNS_FACADE_HELPER")
 	if helper == "" {
@@ -94,6 +95,12 @@ func TestFacadeRealTLS(t *testing.T) {
 	keyPath := filepath.Join(dir, "key.pem")
 	must(os.WriteFile(certPath, certPEM, 0600))
 	must(os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600))
+	if reuse := os.Getenv("SECDNS_FACADE_BROWSER_CERT_DIR"); reuse != "" && os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST") != "" {
+		certPath = filepath.Join(reuse, "cert.pem")
+		keyPath = filepath.Join(reuse, "key.pem")
+		certPEM, err = os.ReadFile(certPath)
+		must(err)
+	}
 	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	must(err)
 	if os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST") != "" {
@@ -199,12 +206,15 @@ func TestFacadeRealTLS(t *testing.T) {
 			t.Fatalf("%s %s got %d want %d", method, path, resp.StatusCode, status)
 		}
 		for _, c := range resp.Cookies() {
+			if c.Name != "__Host-secdns_session" || !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Domain != "" {
+				t.Fatal("unsafe cookie")
+			}
 			if c.MaxAge < 0 {
+				if c.Value != "" {
+					t.Fatal("logout cookie value not cleared")
+				}
 				cookie = nil
 			} else {
-				if !c.Secure || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode || c.Path != "/" || c.Domain != "" {
-					t.Fatal("unsafe cookie")
-				}
 				cookie = c
 			}
 		}
