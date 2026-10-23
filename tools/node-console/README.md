@@ -177,3 +177,19 @@ requires exact old configuration, healthy profiles and external runtime readback
 
 The existing receive-only CT109 peer remains separately enrolled and unchanged.
 OSPF has no model, renderer, API or setup controls in this implementation.
+
+### Candidate routing supervisor
+
+`supervisor.py` is the foreground systemd routing supervisor (use
+`KillMode=control-group`). Its health checker may start only after a successful
+read-only VTY query observes the expected BGP instance, router ID and both unicast
+address families. A socket alone does not prove bgpd has loaded its configuration.
+The original four-second startup deadline still applies; a dead daemon, incomplete
+configuration or failed query cannot enable the checker. Startup failure terminates
+the owned routing children, and existing heartbeat and route-error handling remain
+fail-closed. This file is installed separately from the admin binary; changing it
+in the repository does not automatically update running candidates.
+
+Run its local regressions with `python -m unittest test_supervisor` from this
+directory. Candidate qualification must also exercise routing-service restarts
+and prove final restoration; unit tests alone do not establish runtime readiness.
