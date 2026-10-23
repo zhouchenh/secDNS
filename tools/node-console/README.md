@@ -211,6 +211,15 @@ GUI apply/restart and checker failure. Do not claim uninterrupted individual
 reachability across a zebra failure. This contract does not create OSPF services,
 change production routers, or imply that the BGP GUI configures OSPF.
 
+Candidate BGP renders `no bgp ipv6-auto-ra`: DNS service nodes must not implicitly
+advertise themselves as IPv6 gateways when FRR enables extended-next-hop peers.
+The startup readiness check requires this guard in native running configuration
+when it is present in the supplied file. Existing files without the guard remain
+readable, so upgrading source alone is not runtime containment. Deployment must
+validate installed FRR support, update each candidate configuration, and verify
+native running configuration plus actual RA/route state. This setting does not
+remove explicitly configured interface RAs or legitimate upstream-router RAs.
+
 ### Candidate routing supervisor
 
 `supervisor.py` is the foreground systemd routing supervisor (use

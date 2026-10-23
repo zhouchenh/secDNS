@@ -53,7 +53,10 @@ def bgp_identity(config):
     afis = {'address-family ipv4 unicast', 'address-family ipv6 unicast'}
     if len(routers) != 1 or len(ids) != 1 or not afis <= lines:
         raise ValueError('expected one configured BGP instance with both service families')
-    return routers | ids | afis
+    # Preserve compatibility with an existing configuration, but require the
+    # explicit safety setting to be loaded whenever the renderer supplied it.
+    guards = {'no bgp ipv6-auto-ra'} & lines
+    return routers | ids | afis | guards
 
 
 def wait_bgp_ready(state, expected, children, deadline):

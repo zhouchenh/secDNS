@@ -21,6 +21,14 @@ class Tests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 s.bgp_identity(config)
 
+    def test_auto_ra_guard_is_required_when_configured(self):
+        expected = s.bgp_identity(self.CONFIG + ' no bgp ipv6-auto-ra\n')
+        self.assertIn('no bgp ipv6-auto-ra', expected)
+        child = Mock(); child.poll.return_value = None
+        with patch.object(s.subprocess, 'run', return_value=Mock(returncode=0, stdout=self.CONFIG, stderr='')), patch.object(s.time, 'sleep'), patch.object(s.time, 'monotonic', side_effect=[1, 2, 4]):
+            with self.assertRaisesRegex(RuntimeError, 'deadline'):
+                s.wait_bgp_ready('/owned/state', expected, {'bgpd':child}, 4)
+
     def test_socket_ready_but_config_loading_does_not_start_checker(self):
         child = Mock(); child.poll.return_value = None
         responses = [Mock(returncode=0, stdout='', stderr=''),
