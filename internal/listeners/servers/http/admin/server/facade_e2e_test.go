@@ -90,6 +90,9 @@ func TestFacadeRealTLS(t *testing.T) {
 	must(os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600))
 	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
 	must(err)
+	if os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST") != "" {
+		facadeBrowserNodeFixtures(h)
+	}
 	routes := h.routes()
 	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Forwarded-For") != "127.0.0.1" || r.Header.Get("X-Real-IP") != "127.0.0.1" || r.Header.Get("X-Forwarded-Proto") != "https" || r.Header.Get("Forwarded") != "" {
