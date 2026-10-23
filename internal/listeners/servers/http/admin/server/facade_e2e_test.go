@@ -32,6 +32,9 @@ func TestFacadeRealTLS(t *testing.T) {
 	}
 	h, grant := humanTestServer(t)
 	h.agent.origin = "https://secdns.aircloud.pro"
+	if os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST") != "" {
+		h.agent.origin = "https://secdns.localhost"
+	}
 	h.UI = true
 	now := time.Now()
 	h.agent.now = func() time.Time { return now }
@@ -67,8 +70,15 @@ func TestFacadeRealTLS(t *testing.T) {
 		}
 		return out, nil
 	}
-	key, _ := rsa.GenerateKey(rand.Reader, 2048)
-	cert := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "disposable E2E"}, DNSNames: []string{"secdns.aircloud.pro", "backend.invalid"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	must(err)
+	cert := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "disposable E2E"}, DNSNames: []string{"secdns.aircloud.pro", "secdns.localhost", "backend.invalid"}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true}
 	der, e := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
 	if e != nil {
 		t.Fatal(e)
@@ -76,9 +86,10 @@ func TestFacadeRealTLS(t *testing.T) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	certPath := filepath.Join(dir, "cert.pem")
 	keyPath := filepath.Join(dir, "key.pem")
-	os.WriteFile(certPath, certPEM, 0600)
-	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600)
-	pair, _ := tls.LoadX509KeyPair(certPath, keyPath)
+	must(os.WriteFile(certPath, certPEM, 0600))
+	must(os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}), 0600))
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	must(err)
 	routes := h.routes()
 	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Forwarded-For") != "127.0.0.1" || r.Header.Get("X-Real-IP") != "127.0.0.1" || r.Header.Get("X-Forwarded-Proto") != "https" || r.Header.Get("Forwarded") != "" {
@@ -91,10 +102,17 @@ func TestFacadeRealTLS(t *testing.T) {
 	defer backend.Close()
 	start := func(name string) string {
 		cfg := filepath.Join(dir, name+".json")
-		raw, _ := json.Marshal([]map[string]any{{"host": "secdns.aircloud.pro", "upstream": backend.URL, "tls_server_name": name, "ca_file": certPath, "allow_cidrs": []string{"127.0.0.1/32"}}})
-		os.WriteFile(cfg, raw, 0600)
-		cmd := exec.Command(helper, cfg, certPath, keyPath)
-		stdout, _ := cmd.StdoutPipe()
+		raw, _ := json.Marshal([]map[string]any{{"host": strings.TrimPrefix(h.agent.origin, "https://"), "upstream": backend.URL, "tls_server_name": name, "ca_file": certPath, "allow_cidrs": []string{"127.0.0.1/32"}}})
+		must(os.WriteFile(cfg, raw, 0600))
+		ctx, cancel := context.WithTimeout(context.Background(), 21*time.Minute)
+		t.Cleanup(cancel)
+		args := []string{cfg, certPath, keyPath}
+		if os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST") != "" {
+			args = append(args, "127.0.0.1:443")
+		}
+		cmd := exec.CommandContext(ctx, helper, args...)
+		stdout, err := cmd.StdoutPipe()
+		must(err)
 		cmd.Stderr = os.Stderr
 		if e := cmd.Start(); e != nil {
 			t.Fatal(e)
@@ -114,6 +132,18 @@ func TestFacadeRealTLS(t *testing.T) {
 			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		}}, Timeout: 10 * time.Second}
 	}
+	if manifest := os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST"); manifest != "" {
+		h.agent.now = time.Now
+		raw, err := json.Marshal(map[string]any{"url": h.agent.origin + "/admin/ui/", "edge_address": address, "certificate": certPath, "grant": grant, "username": "owner", "password": "Disposable E2E password phrase 8573!", "expires_at": time.Now().Add(20 * time.Minute)})
+		must(err)
+		must(os.WriteFile(manifest, raw, 0600))
+		defer os.Remove(manifest)
+		t.Log("Disposable browser fixture ready; manifest written to requested local path; expires in 20 minutes")
+		timer := time.NewTimer(20 * time.Minute)
+		defer timer.Stop()
+		<-timer.C
+		return
+	}
 	client := clientFor(address, "secdns.aircloud.pro")
 	var cookie *http.Cookie
 	csrf := ""
@@ -123,7 +153,8 @@ func TestFacadeRealTLS(t *testing.T) {
 		if body == nil {
 			raw = nil
 		}
-		r, _ := http.NewRequest(method, h.agent.origin+path, strings.NewReader(string(raw)))
+		r, err := http.NewRequest(method, h.agent.origin+path, strings.NewReader(string(raw)))
+		must(err)
 		r.Header.Set("Origin", origin)
 		r.Header.Set("Sec-Fetch-Site", "same-origin")
 		r.Header.Set("Content-Type", "application/json")
@@ -141,7 +172,8 @@ func TestFacadeRealTLS(t *testing.T) {
 			t.Fatal(e)
 		}
 		defer resp.Body.Close()
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		must(err)
 		if resp.StatusCode != status {
 			t.Fatalf("%s %s got %d want %d: %s", method, path, resp.StatusCode, status, b)
 		}

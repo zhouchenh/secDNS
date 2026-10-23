@@ -14,7 +14,11 @@ func main() {
 		panic(e)
 	}
 	defer r.Close()
-	l, e := net.Listen("tcp", "127.0.0.1:0")
+	listen := "127.0.0.1:0"
+	if len(os.Args) > 4 {
+		listen = os.Args[4]
+	}
+	l, e := net.Listen("tcp", listen)
 	if e != nil {
 		panic(e)
 	}
