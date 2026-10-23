@@ -1,0 +1,20 @@
+[Unit]
+Description=secDNS staged identity OSPF companion
+BindsTo=secdns-candidate-routing.service
+PartOf=secdns-candidate-routing.service
+After=secdns-candidate-routing.service secdns-staging-identity.service
+Requires=secdns-staging-identity.service
+
+[Service]
+Type=simple
+PrivateMounts=yes
+BindPaths=/opt/secdns-managed-ospf/etc:/etc/frr
+BindPaths=/opt/secdns-managed-ospf/history:/var/lib/frr
+ExecStart=/usr/bin/python3 -u /opt/secdns-managed-ospf/managed_ospf.py /opt/secdns-managed-ospf
+KillMode=mixed
+TimeoutStopSec=25
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=secdns-candidate-routing.service
