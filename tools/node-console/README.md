@@ -178,6 +178,39 @@ requires exact old configuration, healthy profiles and external runtime readback
 The existing receive-only CT109 peer remains separately enrolled and unchanged.
 OSPF has no model, renderer, API or setup controls in this implementation.
 
+### Staged loopback peering and OSPF companion services
+
+An operator-owned external enrollment may additionally contain `ebgp_multihop`
+(an integer from 2 to 255) and `next_hop`. The latter must equal the canonical
+`local_source`, and requires `allowed_afis` to contain only the transport family.
+Use separate IPv4 and IPv6 enrollments for family-matched loopback sessions.
+These fields are read-only in the console; browser drafts cannot grant transport
+authority. Existing enrollments without either optional field retain their prior
+behavior. Configuration revisions include these fields, and runtime verification
+checks the rendered multihop and explicit export next-hop statements.
+
+OSPF is an independently managed companion, not an implicit side effect of BGP
+GUI apply. Its interface addresses, ospfd/ospf6d configuration and service units
+must be owned by the deployment, outside `bgp.conf`. Never hand-edit BGP transport
+statements: GUI apply regenerates that file from enrollment and draft settings.
+The DNS checker owns only the four enrolled service VIP network statements; it
+must not remove the individual host addresses advertised by OSPF.
+
+Use the existing single zebra instance and ZAPI socket, not a second competing
+zebra. Restrict OSPF-to-kernel imports with zebra protocol filters to the exact
+approved router loopbacks for each family, with an explicit final deny. No default,
+LAN aggregate, or broad redistribution is permitted by this staged contract.
+The deployment must validate native FRR syntax and actual kernel route results.
+
+The current BGP supervisor restarts zebra during GUI configuration apply and
+stops zebra when its checker fails. Separate OSPF daemons therefore must reconnect
+to that ZAPI socket and republish their permitted routes after zebra recovery.
+Candidate qualification must measure OSPF adjacency, host-address presence,
+router-loopback reachability, kernel import filtering and recovery across both
+GUI apply/restart and checker failure. Do not claim uninterrupted individual
+reachability across a zebra failure. This contract does not create OSPF services,
+change production routers, or imply that the BGP GUI configures OSPF.
+
 ### Candidate routing supervisor
 
 `supervisor.py` is the foreground systemd routing supervisor (use

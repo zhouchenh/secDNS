@@ -26,6 +26,8 @@ type nodeExternalEnrollment struct {
 	Port            int      `json:"port"`
 	AllowedAFIs     []int    `json:"allowed_afis"`
 	AllowedExports  []string `json:"allowed_exports"`
+	EBGPMultihop    *int     `json:"ebgp_multihop,omitempty"`
+	NextHop         string   `json:"next_hop,omitempty"`
 }
 type nodeExternalPolicy struct {
 	Schema int                      `json:"schema"`

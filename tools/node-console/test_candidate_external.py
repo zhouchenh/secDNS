@@ -21,6 +21,35 @@ def entry():
 
 
 class ExternalTests(unittest.TestCase):
+    def test_loopback_policy_is_root_owned_and_family_matched(self):
+        enrolled=policy();peer=enrolled['peers'][0]
+        peer.update(allowed_afis=[6],allowed_exports=['2001:db8:53::53/128'],ebgp_multihop=2,next_hop=peer['local_source'])
+        with tempfile.TemporaryDirectory() as folder:
+            root=pathlib.Path(folder);(root/'external-policy.json').write_text('{}')
+            with patch.object(e.c,'BASE',root),patch.object(e.c,'read',return_value=enrolled),patch.object(b,'test_client',return_value=None):
+                self.assertEqual(e.policy('amd103'),enrolled)
+                for key,value in [('ebgp_multihop',True),('ebgp_multihop',1),('ebgp_multihop',256),('next_hop','fe80::1'),('next_hop','2001:db8::9'),('allowed_afis',[4,6]),('unexpected',2)]:
+                    bad=copy.deepcopy(enrolled);bad['peers'][0][key]=value
+                    with patch.object(e.c,'read',return_value=bad),self.assertRaises(ValueError):e.policy('amd103')
+        for key,value in [('ebgp_multihop',2),('next_hop',peer['local_source'])]:
+            draft=entry();draft[key]=value
+            with self.assertRaises(ValueError):e.validate('amd103',[draft],enrolled)
+
+    def test_loopback_render_and_runtime_readback_both_families(self):
+        for family,source,remote,prefix in [(4,'100.66.53.101','100.94.192.11','203.0.113.53/32'),(6,'2001:470:f9d1:6653::101','2001:470:f9d1:abcd::2','2001:db8:53::53/128')]:
+            enrolled=policy();peer=enrolled['peers'][0]
+            peer.update(address=remote,transport_family=family,local_source=source,allowed_afis=[family],allowed_exports=[prefix],ebgp_multihop=2,next_hop=source)
+            draft=entry();draft.update(afis=[family],exports=[prefix],enabled=True)
+            config=b.default_config('amd103');config['external_peers']=[draft]
+            with patch.object(b,'test_client',return_value=None):text=b.render('amd103',config,enrolled)
+            command='set '+('ip next-hop' if family==4 else 'ipv6 next-hop global')+' '+source
+            self.assertIn(command,text);self.assertIn('neighbor '+remote+' ebgp-multihop 2',text)
+            self.assertNotIn('extended-nexthop',text);self.assertNotIn('redistribute',text)
+            with patch.object(e,'query',return_value=text):self.assertTrue(e.runtime_matches('amd103',[draft],enrolled,999))
+            for old,new in [('ebgp-multihop 2','ebgp-multihop 3'),(command,command+'1')]:
+                with patch.object(e,'query',return_value=text.replace(old,new)):
+                    self.assertFalse(e.runtime_matches('amd103',[draft],enrolled,999))
+
     def test_policy_literals_and_collision(self):
         with tempfile.TemporaryDirectory() as folder:
             root=pathlib.Path(folder);(root/'external-policy.json').write_text('{}')

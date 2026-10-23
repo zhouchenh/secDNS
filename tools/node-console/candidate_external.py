@@ -19,7 +19,7 @@ def policy(node):
     if client: addresses.update((client['ipv4'], client['ipv6']))
     for p in value['peers']:
         keys = {'id', 'address', 'transport_family', 'local_source', 'local_asn', 'remote_asn', 'port', 'allowed_afis', 'allowed_exports'}
-        if not isinstance(p, dict) or set(p) != keys or not isinstance(p['id'], str) or not re.fullmatch('[a-z][a-z0-9-]{0,31}', p['id']) or p['id'] in ids:
+        if not isinstance(p, dict) or not keys <= set(p) or set(p) - keys - {'ebgp_multihop', 'next_hop'} or not isinstance(p['id'], str) or not re.fullmatch('[a-z][a-z0-9-]{0,31}', p['id']) or p['id'] in ids:
             raise ValueError('external enrollment identity')
         ids.add(p['id'])
         for key in ('address', 'local_source'):
@@ -38,6 +38,10 @@ def policy(node):
             raise ValueError('external AFIs')
         if not isinstance(p['allowed_exports'], list) or any(not isinstance(x, str) or x not in c.PREFIXES or (6 if ':' in x else 4) not in p['allowed_afis'] for x in p['allowed_exports']) or len(set(p['allowed_exports'])) != len(p['allowed_exports']):
             raise ValueError('external exports')
+        if 'ebgp_multihop' in p and (type(p['ebgp_multihop']) is not int or not 2 <= p['ebgp_multihop'] <= 255):
+            raise ValueError('external multihop')
+        if 'next_hop' in p and (p['next_hop'] != p['local_source'] or p['allowed_afis'] != [p['transport_family']]):
+            raise ValueError('external next hop must be the family-matched local source')
     return value
 
 
@@ -78,6 +82,8 @@ def render(node, entries, enrolled):
         neighbors += [f' neighbor {a} remote-as {p["remote_asn"]}', f' neighbor {a} port {p["port"]}', f' neighbor {a} update-source {p["local_source"]}', f' neighbor {a} timers {entry["keepalive_seconds"]} {entry["hold_seconds"]}']
         if p['local_asn'] != c.NODES[node]:
             neighbors.append(f' neighbor {a} local-as {p["local_asn"]} no-prepend replace-as')
+        if 'ebgp_multihop' in p:
+            neighbors.append(f' neighbor {a} ebgp-multihop {p["ebgp_multihop"]}')
         if p['transport_family'] == 6 and 4 in entry['afis']: neighbors.append(f' neighbor {a} capability extended-nexthop')
         if not entry['enabled']: neighbors.append(f' neighbor {a} shutdown')
         for family in entry['afis']:
@@ -86,6 +92,8 @@ def render(node, entries, enrolled):
             if prefixes:
                 for i, prefix in enumerate(prefixes): policies.append(f'{kind} prefix-list {name} seq {(i+1)*10} permit {prefix}')
                 policies += [f'route-map {name} permit 10', f' match {kind} address prefix-list {name}', ' match as-path LOCAL-ONLY']
+                if 'next_hop' in p:
+                    policies.append(f' set {"ip next-hop" if family == 4 else "ipv6 next-hop global"} {p["next_hop"]}')
             else: policies.append(f'route-map {name} deny 10')
             afis[family] += [f'  neighbor {a} activate', f'  neighbor {a} route-map EXTERNAL-DENY in', f'  neighbor {a} route-map {name} out']
     return policies, neighbors, afis
