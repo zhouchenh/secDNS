@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -55,6 +56,9 @@ type HTTPAdminServer struct {
 	Token                 string // bearer token; required (the listener fails closed without it)
 	UI                    bool   // optional embedded UI; disabled by default
 	FollowerStatusOnly    bool   // explicit status-only listener; never binds a record store
+	// TrustedProxySources is an opt-in exact socket-source allowlist for browser
+	// authentication client identity. Forwarded metadata is otherwise ignored.
+	TrustedProxySources []netip.Addr
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
 	SourcePolicyExplain       bool
@@ -105,6 +109,40 @@ func validSnapshotReaderToken(value string) bool {
 		}
 	}
 	return true
+}
+
+func trustedProxySourcesValue(original interface{}) (interface{}, bool) {
+	config, ok := original.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	rawValues, present := config["trustedProxySources"]
+	if !present {
+		return []netip.Addr(nil), true
+	}
+	values, ok := rawValues.([]interface{})
+	if !ok || len(values) == 0 || len(values) > 8 {
+		return nil, false
+	}
+	addresses := make([]netip.Addr, 0, len(values))
+	seen := map[netip.Addr]bool{}
+	for _, value := range values {
+		raw, ok := value.(string)
+		if !ok || raw == "" || strings.TrimSpace(raw) != raw {
+			return nil, false
+		}
+		address, err := netip.ParseAddr(raw)
+		if err != nil || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() {
+			return nil, false
+		}
+		address = address.Unmap()
+		if seen[address] {
+			return nil, false
+		}
+		seen[address] = true
+		addresses = append(addresses, address)
+	}
+	return addresses, true
 }
 
 func (h *HTTPAdminServer) ValidateSnapshotReaders() error {
@@ -574,6 +612,13 @@ func init() {
 						AssignableKind: descriptor.KindString,
 					},
 					descriptor.DefaultValue{Value: ""},
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"TrustedProxySources"},
+				ValueSource: descriptor.ObjectAtPath{
+					ObjectPath:     descriptor.Root,
+					AssignableKind: descriptor.AssignmentFunction(trustedProxySourcesValue),
 				},
 			},
 			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAdapterExecutable"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAdapterExecutable"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAdapterScript"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAdapterScript"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAuditDirectory"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAuditDirectory"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityURL"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityURL"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},

@@ -23,6 +23,10 @@ Setup collects a username, display name and password, then shows an authenticato
 - Seeds use AES-GCM under a domain-separated key derived from the separate local authentication key, with realm/node binding. They are shown only during pending enrollment. Starting replacement leaves the current factor and sessions working until confirmation; confirmation replaces the factor/codes and invalidates older human sessions.
 - Persistent account and socket-source buckets apply increasing delays after five attempts, capped at 512 seconds. They survive restart; no forwarded header controls source identity. At most 1,024 buckets are retained, with stale entries removed after a day. Capacity fails closed. A malicious client can temporarily delay account access; local operator recovery remains separate.
 
+An explicitly configured trusted reverse proxy can supply the socket-source
+identity under the strict tuple described in [Facade admin edge](facade-admin-edge.md).
+Without that opt-in, forwarded headers still do not control source identity.
+
 ## Sessions and account security
 
 Password verification creates only a five-minute, source-bound MFA ceremony. A valid unused authenticator code completes login. Human sessions use the same Secure/HttpOnly/SameSite-Strict host cookie as agent sessions, but retain distinct principal identity and permissions. Human idle expiry is 30 minutes and absolute expiry is 12 hours; restart invalidates all process-local sessions. The UI warns two minutes before expiry. Background reads do not renew idle expiry. Existing origin, Fetch Metadata, CSRF, scope and mixed-credential checks remain enforced. Long-lived agent credentials are never converted into human authority.

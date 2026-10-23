@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -118,10 +119,48 @@ func TestAdminAuthDuplicateBindings(t *testing.T) {
 		`{"adminAuthStores":{"a":{"path":"x","path":"y"}}}`,
 		`{"listeners":[{"authStore":"a","authStore":"b"}]}`,
 		`{"listeners":[{"publicOrigin":"https://a.invalid","publicOrigin":"https://b.invalid"}]}`,
+		`{"listeners":[{"config":{"trustedProxySources":["127.0.0.1"],"trustedProxySources":["127.0.0.2"]}}]}`,
 	} {
 		if validateAdminAuthSyntax([]byte(raw)) == nil {
 			t.Fatal("duplicate accepted")
 		}
+	}
+}
+
+func TestTrustedProxyRequiresExplicitBrowserAuthOrigin(t *testing.T) {
+	raw, c, _ := authFixture(t)
+	h := c.Listeners[0].(*admin.HTTPAdminServer)
+	h.TrustedProxySources = []netip.Addr{netip.MustParseAddr("127.0.0.1")}
+	if _, e := parseAdminBindings(raw, c); e != nil {
+		t.Fatal(e)
+	}
+	delete(raw["listeners"].([]interface{})[0].(map[string]interface{}), "publicOrigin")
+	if _, e := parseAdminBindings(raw, c); e == nil {
+		t.Fatal("trusted proxy admitted without exact public origin")
+	}
+	delete(raw["listeners"].([]interface{})[0].(map[string]interface{}), "authStore")
+	if _, e := parseAdminBindings(raw, c); e == nil {
+		t.Fatal("trusted proxy admitted without auth binding")
+	}
+}
+
+func TestTrustedProxySyntaxRefusals(t *testing.T) {
+	for _, value := range []string{
+		`[]`,
+		`["127.0.0.1","::ffff:127.0.0.1"]`,
+		`["0.0.0.0"]`,
+		`["ff02::1"]`,
+		`["127.0.0.0/8"]`,
+		`[" 127.0.0.1"]`,
+		`[42]`,
+	} {
+		raw := []byte(`{"listeners":[{"config":{"trustedProxySources":` + value + `}}]}`)
+		if validateAdminAuthSyntax(raw) == nil {
+			t.Fatalf("invalid trusted sources admitted: %s", value)
+		}
+	}
+	if e := validateAdminAuthSyntax([]byte(`{"listeners":[{"config":{"trustedProxySources":["127.0.0.1","2001:db8::10"]}}]}`)); e != nil {
+		t.Fatal(e)
 	}
 }
 
