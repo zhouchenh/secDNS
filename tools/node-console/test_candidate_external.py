@@ -116,6 +116,35 @@ class ExternalTests(unittest.TestCase):
         with patch.object(e,'query',return_value=text.replace('route-map EXTERNAL-DENY deny 10','route-map EXTERNAL-DENY permit 10')):
             self.assertFalse(e.runtime_matches('amd103',[p],policy(),999))
 
+    def test_native_default_port_omission_only_equates_to_179(self):
+        # AMD r4 failure_diagnostic recorded this as its sole missing line;
+        # both AFIs were Established, exact exports present, imports zero.
+        missing=' neighbor 2001:db8:85:1::1 port 179\n'
+        fixture=json.loads((pathlib.Path(__file__).with_name('fixtures')/'amd-r4-default-port.json').read_text(encoding='utf-8'))
+        config,enrolled=fixture['config'],fixture['policy'];p=config['external_peers'][0]
+        diagnostic=fixture['failure_diagnostic']
+        self.assertEqual(diagnostic['runtime']['missing_neighbors'],[[0,missing.strip()]])
+        self.assertFalse(diagnostic['runtime']['unexpected_neighbors'])
+        self.assertFalse(diagnostic['runtime']['missing_policy'])
+        self.assertFalse(diagnostic['runtime']['unexpected_policy'])
+        self.assertTrue(all(diagnostic['last_checks'].values()))
+        with patch.object(b,'test_client',return_value=None):text=b.render('amd103',config,enrolled)
+        native=text.replace(missing,'').replace('LOCAL-ONLY permit ^$','LOCAL-ONLY seq 5 permit ^$')
+        for running in (text,native):
+            with patch.object(e,'query',return_value=running):
+                self.assertTrue(e.runtime_matches('amd103',[p],enrolled,999))
+        for running in (text.replace('::1 port 179','::1 port 1179'),
+                        native.replace(' neighbor 2001:db8:85:1::1 remote-as 8501\n',''),
+                        native.replace('timers 1 5','timers 1 9'),
+                        text+missing, text+missing.replace('179','1179')):
+            with patch.object(e,'query',return_value=running):
+                self.assertFalse(e.runtime_matches('amd103',[p],enrolled,999))
+        nondefault=copy.deepcopy(enrolled);nondefault['peers'][0]['port']=1179
+        with patch.object(e,'query',return_value=native):
+            self.assertFalse(e.runtime_matches('amd103',[p],nondefault,999))
+        with patch.object(e,'query',return_value=text):
+            self.assertFalse(e.runtime_matches('amd103',[p],nondefault,999))
+
     def test_revocation_removes_external_without_restoring_authority(self):
         config=b.default_config('amd103');config['external_peers']=[entry()]
         receipt=dict(node='amd103',action='bgp-apply',status='pending',old_config=config,old_withdraw=False,external_policy_digest='old')
