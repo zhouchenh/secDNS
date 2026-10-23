@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -133,20 +134,20 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 		if !ok {
 			return nil, adminauth.ErrInvalid
 		}
+		var h *admin.HTTPAdminServer
+		if index < len(c.Listeners) {
+			h, _ = c.Listeners[index].(*admin.HTTPAdminServer)
+		}
 		name, p := m["authStore"]
 		originRaw, op := m["publicOrigin"]
 		rpRaw, rpp := m["passkeyRPID"]
 		if !p {
-			if op || rpp {
+			if op || rpp || h != nil && len(h.TrustedProxySources) != 0 {
 				return nil, adminauth.ErrInvalid
 			}
 			continue
 		}
-		if index >= len(c.Listeners) {
-			return nil, adminauth.ErrInvalid
-		}
-		h, ok := c.Listeners[index].(*admin.HTTPAdminServer)
-		if !ok {
+		if h == nil {
 			return nil, adminauth.ErrInvalid
 		}
 		n, ok := name.(string)
@@ -172,6 +173,9 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 			if !ok || adminauth.ValidatePasskeyOrigin(origin, rp) != nil {
 				return nil, adminauth.ErrInvalid
 			}
+		}
+		if len(h.TrustedProxySources) != 0 && origin == "" {
+			return nil, adminauth.ErrInvalid
 		}
 		if h.RecordAuthorityURL != "" && origin == "" {
 			return nil, adminauth.ErrInvalid
@@ -214,6 +218,27 @@ func validateAdminAuthSyntax(raw []byte) error {
 			if raw, ok := entry["config"]; ok {
 				var cfg map[string]json.RawMessage
 				if json.Unmarshal(raw, &cfg) == nil {
+					if proxyRaw, proxySet := cfg["trustedProxySources"]; proxySet {
+						if _, e := authObject(raw, map[string]bool{"trustedProxySources": true}); e != nil {
+							return e
+						}
+						var values []string
+						if json.Unmarshal(proxyRaw, &values) != nil || len(values) == 0 || len(values) > 8 {
+							return adminauth.ErrInvalid
+						}
+						seen := map[netip.Addr]bool{}
+						for _, raw := range values {
+							address, e := netip.ParseAddr(raw)
+							if e != nil || raw == "" || strings.TrimSpace(raw) != raw || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() {
+								return adminauth.ErrInvalid
+							}
+							address = address.Unmap()
+							if seen[address] {
+								return adminauth.ErrInvalid
+							}
+							seen[address] = true
+						}
+					}
 					_, urlSet := cfg["recordAuthorityURL"]
 					_, tokenSet := cfg["recordAuthorityToken"]
 					_, fileSet := cfg["recordAuthorityTokenFile"]
