@@ -82,7 +82,9 @@ def render(node, config, enrollment=None):
     if client: lines += ['route-map TEST-CLIENT-DENY deny 10']
     policies, external_neighbors, external_afis = external.render(node, config.get('external_peers', []), enrollment)
     lines += policies
-    lines += [f'router bgp {config["local_asn"]}',f' bgp router-id {config["router_id"]}',' no bgp default ipv4-unicast',' bgp graceful-restart-disable']
+    # DNS service peers must never make their management LAN an IPv6 gateway.
+    # FRR can otherwise enable zebra RAs automatically for extended-next-hop peers.
+    lines += [f'router bgp {config["local_asn"]}',f' bgp router-id {config["router_id"]}',' no bgp default ipv4-unicast',' no bgp ipv6-auto-ra',' bgp graceful-restart-disable']
     lines += external_neighbors
     for p in config['peers']:
         a=p['address'];f=p['family']

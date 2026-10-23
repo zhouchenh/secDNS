@@ -66,6 +66,14 @@ class BGPTests(unittest.TestCase):
         self.assertNotIn('0.0.0.0/0',text)
         self.assertIn('match as-path LOCAL-ONLY',text)
 
+    def test_every_candidate_disables_automatic_router_advertisements(self):
+        for node in b.c.NODES:
+            text=b.render(node,b.default_config(node))
+            lines=[line.strip() for line in text.splitlines()]
+            self.assertEqual(lines.count('no bgp ipv6-auto-ra'),1)
+            self.assertNotIn('bgp ipv6-auto-ra',lines)
+            self.assertNotIn('ipv6 nd',text)
+
     def test_upstream_failure_and_recovery_hysteresis(self):
         gate=h.UpstreamGate()
         self.assertFalse(gate.observe(True));self.assertTrue(gate.observe(True))
