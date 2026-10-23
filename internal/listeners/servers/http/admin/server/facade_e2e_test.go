@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,11 @@ func TestFacadeRealTLS(t *testing.T) {
 		h.agent.origin = "https://secdns.localhost"
 	}
 	h.UI = true
+	h.TrustedProxySources = []netip.Addr{netip.MustParseAddr("127.0.0.1")}
+	clientSource := "127.0.0.2"
+	if os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST") != "" {
+		clientSource = "127.0.0.1"
+	}
 	now := time.Now()
 	h.agent.now = func() time.Time { return now }
 	dir := t.TempDir()
@@ -95,8 +101,11 @@ func TestFacadeRealTLS(t *testing.T) {
 	}
 	routes := h.routes()
 	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Forwarded-For") != "127.0.0.1" || r.Header.Get("X-Real-IP") != "127.0.0.1" || r.Header.Get("X-Forwarded-Proto") != "https" || r.Header.Get("Forwarded") != "" {
+		if r.Header.Get("X-Forwarded-For") != clientSource || r.Header.Get("X-Real-IP") != clientSource || r.Header.Get("X-Forwarded-Proto") != "https" || r.Header.Get("Forwarded") != "" {
 			t.Error("forwarding metadata not sanitized")
+		}
+		if h.humanSource(r) != clientSource {
+			t.Error("secDNS did not use forwarded client identity")
 		}
 		routes.ServeHTTP(w, r)
 	}))
@@ -105,7 +114,7 @@ func TestFacadeRealTLS(t *testing.T) {
 	defer backend.Close()
 	start := func(name string) string {
 		cfg := filepath.Join(dir, name+".json")
-		raw, _ := json.Marshal([]map[string]any{{"host": strings.TrimPrefix(h.agent.origin, "https://"), "upstream": backend.URL, "tls_server_name": name, "ca_file": certPath, "allow_cidrs": []string{"127.0.0.1/32"}}})
+		raw, _ := json.Marshal([]map[string]any{{"host": strings.TrimPrefix(h.agent.origin, "https://"), "upstream": backend.URL, "tls_server_name": name, "ca_file": certPath, "allow_cidrs": []string{clientSource + "/32"}}})
 		must(os.WriteFile(cfg, raw, 0600))
 		ctx, cancel := context.WithTimeout(context.Background(), 21*time.Minute)
 		t.Cleanup(cancel)
@@ -132,8 +141,29 @@ func TestFacadeRealTLS(t *testing.T) {
 	roots.AppendCertsFromPEM(certPEM)
 	clientFor := func(addr, sni string) *http.Client {
 		return &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: sni}, DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return (&net.Dialer{}).DialContext(ctx, network, addr)
+			return (&net.Dialer{LocalAddr: &net.TCPAddr{IP: net.ParseIP(clientSource)}}).DialContext(ctx, network, addr)
 		}}, Timeout: 10 * time.Second}
+	}
+	// A directly connected trusted socket with a malformed tuple must fail before authentication/body parsing.
+	direct := httptest.NewUnstartedServer(routes)
+	direct.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
+	direct.StartTLS()
+	defer direct.Close()
+	directClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: "backend.invalid"}}, Timeout: 10 * time.Second}
+	directReq, err := http.NewRequest("POST", direct.URL+"/admin/auth/setup/begin", strings.NewReader("{}"))
+	must(err)
+	directReq.Host = strings.TrimPrefix(h.agent.origin, "https://")
+	directReq.Header.Set("Origin", h.agent.origin)
+	directReq.Header.Set("Sec-Fetch-Site", "same-origin")
+	directReq.Header.Set("Content-Type", "application/json")
+	for k, v := range map[string]string{"X-Forwarded-For": "127.0.0.2", "X-Real-IP": "127.0.0.3", "X-Forwarded-Proto": "https", "X-Forwarded-Host": directReq.Host, "X-Forwarded-Port": "443"} {
+		directReq.Header.Set(k, v)
+	}
+	directResponse, err := directClient.Do(directReq)
+	must(err)
+	directResponse.Body.Close()
+	if directResponse.StatusCode != 403 {
+		t.Fatalf("malformed direct trusted tuple returned %d", directResponse.StatusCode)
 	}
 	client := clientFor(address, strings.TrimPrefix(h.agent.origin, "https://"))
 	var cookie *http.Cookie
