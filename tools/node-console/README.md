@@ -235,3 +235,61 @@ in the repository does not automatically update running candidates.
 Run its local regressions with `python -m unittest test_supervisor` from this
 directory. Candidate qualification must also exercise routing-service restarts
 and prove final restoration; unit tests alone do not establish runtime readiness.
+
+### Managed OSPF companion (candidate carrier)
+
+`managed_ospf.py` and `secdns-managed-ospf.service` are a root-enrolled carrier,
+not an extension of browser configuration authority. Install the Python file
+under `/opt/secdns-managed-ospf`, with reviewed `ospfd.conf`, `ospf6d.conf` and
+`policy.conf`, all root:frr 0640. Precreate `state` and `history` as frr:frr
+0750, and `etc` as root:frr 0750, containing empty root:frr 0640 `frr.conf` and
+`vtysh.conf`. Keep the parent root:frr 0750. The service binds only its `etc`
+and `history` privately over `/etc/frr` and `/var/lib/frr`; `/run/frr` remains
+shared deliberately for the existing zebra management backend. Never run a
+second zebra. Reject a conflicting or stale mgmtd socket before starting.
+
+Enrollment (`enrollment.json`, root-owned, not writable by group/others) has
+exactly these fields:
+
+* `interface`, `management_ipv4`, `local_link_local`: current management interface
+  and explicitly enrolled DHCP IPv4 / interface-scoped IPv6 link-local values.
+* `identity_interface`, `identity_addresses`: dedicated dummy with exactly one
+  IPv4 /32 and two IPv6 /128 unicast identities, excluding implicit link-local.
+* `zebra_state`: absolute existing candidate zebra state directory.
+* `files`: SHA256 values keyed by `ospfd.conf`, `ospf6d.conf`, `policy.conf`.
+* `firewall_sha256`: `firewall_digest()` of native JSON for the separately owned
+  `inet secdns_staged_ospf` table. Kernel-assigned handles/metainfo are excluded.
+
+The mgmtd configuration must contain the reviewed exact-loopback prefix lists
+`SD_ALLOW4`/`SD_ALLOW6`, maps `SD_STAGE4`/`SD_STAGE6`, and both OSPF protocol
+attachments. There is no broad import/default acceptance. The manager compares
+native map bodies against the enrolled file as well as zebra attachments before
+starting OSPF. It stops its OSPF children on address, firewall, policy or zebra
+incarnation mismatch. A different DHCP lease is **not** automatically accepted;
+the node becomes not ready until a reviewed enrollment/ACL update. DHCP and
+interface addresses themselves are never changed by this process.
+
+Keep the enrolled policy outside private `/etc/frr`, in `policy.conf`; do not
+create `etc/mgmtd.conf`. After frontend readiness, the manager explicitly loads
+the reviewed commands only if OSPF attachments and owned names are unused. On
+normal shutdown it stops OSPF, removes only its unchanged policy, then stops
+mgmtd. Partial configuration or changed ownership fails closed for operator
+reconciliation. Preserve existing OSPFv3 sequence state when provisioning the
+private persistent history directory; do not roll sequence state backward.
+
+The identity unit and firewall ownership must be established separately. DNS
+health does not remove identity addresses. `BindsTo`, `After` and `PartOf` order
+the companion around planned routing restarts; enabling its `WantedBy` link is
+required for routing-start propagation. `KillMode=mixed` gives the manager time
+to stop OSPF before mgmtd; systemd kills leftover children only after timeout.
+Native qualification must verify actual restart propagation, abrupt zebra and
+mgmtd loss, permitted route recovery, and DHCP mismatch behavior. Polling is not
+an instantaneous crash gate; the prior isolated kernel fixture is evidence of
+tested FRR reconnect behavior, not a guarantee against all races. A SIGKILL
+leaving stale backend sockets fails closed and requires ownership reconciliation.
+
+Run local checks with `python -m unittest test_managed_ospf`. This carrier has
+no production prefix activation, account/database access, DNS restart, or GUI
+deployment side effects. Installation and native lifecycle qualification remain
+separate reviewed runtime work.
+
