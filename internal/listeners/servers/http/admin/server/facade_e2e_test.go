@@ -132,19 +132,7 @@ func TestFacadeRealTLS(t *testing.T) {
 			return (&net.Dialer{}).DialContext(ctx, network, addr)
 		}}, Timeout: 10 * time.Second}
 	}
-	if manifest := os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST"); manifest != "" {
-		h.agent.now = time.Now
-		raw, err := json.Marshal(map[string]any{"url": h.agent.origin + "/admin/ui/", "edge_address": address, "certificate": certPath, "grant": grant, "username": "owner", "password": "Disposable E2E password phrase 8573!", "expires_at": time.Now().Add(20 * time.Minute)})
-		must(err)
-		must(os.WriteFile(manifest, raw, 0600))
-		defer os.Remove(manifest)
-		t.Log("Disposable browser fixture ready; manifest written to requested local path; expires in 20 minutes")
-		timer := time.NewTimer(20 * time.Minute)
-		defer timer.Stop()
-		<-timer.C
-		return
-	}
-	client := clientFor(address, "secdns.aircloud.pro")
+	client := clientFor(address, strings.TrimPrefix(h.agent.origin, "https://"))
 	var cookie *http.Cookie
 	csrf := ""
 	request := func(method, path string, body any, status int, origin string, sendCSRF bool) map[string]any {
@@ -175,7 +163,7 @@ func TestFacadeRealTLS(t *testing.T) {
 		b, err := io.ReadAll(resp.Body)
 		must(err)
 		if resp.StatusCode != status {
-			t.Fatalf("%s %s got %d want %d: %s", method, path, resp.StatusCode, status, b)
+			t.Fatalf("%s %s got %d want %d", method, path, resp.StatusCode, status)
 		}
 		for _, c := range resp.Cookies() {
 			if c.MaxAge < 0 {
@@ -203,6 +191,19 @@ func TestFacadeRealTLS(t *testing.T) {
 	secret := enrollment["secret"].(string)
 	request("POST", "/admin/auth/login/totp", map[string]string{"challenge": enrollment["challenge"].(string), "code": nodeTestOTP(secret, now)}, 200, origin, false)
 	request("POST", "/admin/auth/logout", nil, 200, origin, true)
+	if manifest := os.Getenv("SECDNS_FACADE_BROWSER_MANIFEST"); manifest != "" {
+		h.agent.now = time.Now
+		raw, err := json.Marshal(map[string]any{"url": h.agent.origin + "/admin/ui/", "edge_address": address, "certificate": certPath, "totp_secret": secret, "username": "owner", "password": "Disposable E2E password phrase 8573!", "expires_at": time.Now().Add(20 * time.Minute)})
+		must(err)
+		must(os.WriteFile(manifest, raw, 0600))
+		defer os.Remove(manifest)
+		t.Log("Disposable browser fixture ready; manifest written to requested local path; expires in 20 minutes")
+		timer := time.NewTimer(20 * time.Minute)
+		defer timer.Stop()
+		<-timer.C
+		return
+	}
+
 	now = now.Add(30 * time.Second)
 	challenge := request("POST", "/admin/auth/login/password", map[string]string{"username": "owner", "password": pass}, 200, origin, false)
 	if cookie != nil {
