@@ -61,8 +61,6 @@ type Cache struct {
 	rng         *rand.Rand
 	rngMutex    sync.Mutex
 
-	domainStats sync.Map
-
 	upstreamLimiter *requestLimiter
 }
 
@@ -89,14 +87,6 @@ type Stats struct {
 	HitRate   float64 // Cache hit rate (hits / total requests)
 }
 
-// DomainStats captures per-domain cache behavior.
-type DomainStats struct {
-	Hits        uint64
-	Misses      uint64
-	Prefetches  uint64
-	StaleServed uint64
-}
-
 var typeOfCache = descriptor.TypeOfNew(new(*Cache))
 
 const cacheControlOptionCode = 0xFDE9
@@ -109,13 +99,6 @@ const (
 	defaultMaxQueuedRequests     = 512
 	defaultRequestQueueTimeout   = time.Second
 )
-
-type domainStatsCounters struct {
-	hits        uint64
-	misses      uint64
-	prefetches  uint64
-	staleServed uint64
-}
 
 type cacheControlDirectives struct {
 	skipCache       bool
@@ -215,12 +198,9 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 		return c.Resolver.Resolve(query, depth-1)
 	}
 
-	qName := strings.ToLower(query.Question[0].Name)
-
 	// Try cache lookup
 	if response, entry, _, stale, found := c.get(key); found {
 		atomic.AddUint64(&c.hits, 1)
-		c.recordDomainHit(qName, stale)
 		// Set the query ID to match the incoming query
 		response.Id = query.Id
 		if stale {
@@ -233,7 +213,6 @@ func (c *Cache) Resolve(query *dns.Msg, depth int) (*dns.Msg, error) {
 
 	// Cache miss - query upstream
 	atomic.AddUint64(&c.misses, 1)
-	c.recordDomainMiss(qName)
 	value, err, _ := c.requests.Do(key, func() (interface{}, error) {
 		return c.fetchAndStore(query.Copy(), depth-1, key)
 	})
@@ -881,10 +860,18 @@ func (c *Cache) cleanupExpired() {
 		hasMoreExpired := false
 		now := time.Now()
 
+		// With ServeStale an entry stays servable for StaleDuration after expiry. Treat that grace as part of
+		// the item's due time instead of popping it early and skipping it: a skipped item was never re-queued,
+		// so the entry was orphaned from the queue and never swept (unbounded growth with unique names).
+		grace := time.Duration(0)
+		if c.ServeStale {
+			grace = c.StaleDuration
+		}
+
 		c.mutex.Lock()
 		for c.queue.Len() > 0 {
 			item := c.queue[0]
-			if item.expiresAt.After(now) {
+			if item.expiresAt.Add(grace).After(now) {
 				break
 			}
 			heap.Pop(&c.queue)
@@ -902,9 +889,6 @@ func (c *Cache) cleanupExpired() {
 			if !entry.ExpiresAt.Equal(item.expiresAt) {
 				continue
 			}
-			if c.ServeStale && time.Since(entry.ExpiresAt) <= c.StaleDuration {
-				continue
-			}
 			delete(c.entries, item.key)
 			c.lru.Remove(entry.lruNode)
 			removed++
@@ -914,7 +898,7 @@ func (c *Cache) cleanupExpired() {
 		}
 		if c.queue.Len() > 0 {
 			next := c.queue[0]
-			if !next.expiresAt.After(time.Now()) {
+			if !next.expiresAt.Add(grace).After(time.Now()) {
 				hasMoreExpired = true
 			}
 		}
@@ -970,65 +954,6 @@ func (c *Cache) Clear() {
 	c.queue = expirationHeap{}
 }
 
-// DomainStatsFor returns statistics for a specific domain.
-func (c *Cache) DomainStatsFor(name string) DomainStats {
-	entry, ok := c.domainStats.Load(strings.ToLower(name))
-	if !ok {
-		return DomainStats{}
-	}
-	stats := entry.(*domainStatsCounters)
-	return DomainStats{
-		Hits:        atomic.LoadUint64(&stats.hits),
-		Misses:      atomic.LoadUint64(&stats.misses),
-		Prefetches:  atomic.LoadUint64(&stats.prefetches),
-		StaleServed: atomic.LoadUint64(&stats.staleServed),
-	}
-}
-
-// AllDomainStats returns a snapshot of every tracked domain.
-func (c *Cache) AllDomainStats() map[string]DomainStats {
-	snapshot := make(map[string]DomainStats)
-	c.domainStats.Range(func(key, value interface{}) bool {
-		stats := value.(*domainStatsCounters)
-		snapshot[key.(string)] = DomainStats{
-			Hits:        atomic.LoadUint64(&stats.hits),
-			Misses:      atomic.LoadUint64(&stats.misses),
-			Prefetches:  atomic.LoadUint64(&stats.prefetches),
-			StaleServed: atomic.LoadUint64(&stats.staleServed),
-		}
-		return true
-	})
-	return snapshot
-}
-
-func (c *Cache) recordDomainHit(name string, stale bool) {
-	stats := c.domainStatsEntry(name)
-	atomic.AddUint64(&stats.hits, 1)
-	if stale {
-		atomic.AddUint64(&stats.staleServed, 1)
-	}
-}
-
-func (c *Cache) recordDomainMiss(name string) {
-	stats := c.domainStatsEntry(name)
-	atomic.AddUint64(&stats.misses, 1)
-}
-
-func (c *Cache) recordPrefetch(name string) {
-	stats := c.domainStatsEntry(name)
-	atomic.AddUint64(&stats.prefetches, 1)
-}
-
-func (c *Cache) domainStatsEntry(name string) *domainStatsCounters {
-	key := strings.ToLower(name)
-	if entry, ok := c.domainStats.Load(key); ok {
-		return entry.(*domainStatsCounters)
-	}
-	stats := &domainStatsCounters{}
-	actual, _ := c.domainStats.LoadOrStore(key, stats)
-	return actual.(*domainStatsCounters)
-}
-
 func (c *Cache) maybePrefetch(key string, entry *Entry, query *dns.Msg, depth int) {
 	if entry == nil || query == nil {
 		return
@@ -1065,15 +990,12 @@ func (c *Cache) maybePrefetch(key string, entry *Entry, query *dns.Msg, depth in
 	if !atomic.CompareAndSwapUint32(&entry.prefetching, 0, 1) {
 		return
 	}
-	go func(name, cacheKey string, e *Entry) {
+	go func(cacheKey string, e *Entry) {
 		defer atomic.StoreUint32(&e.prefetching, 0)
-		_, err, _ := c.requests.Do(cacheKey, func() (interface{}, error) {
+		_, _, _ = c.requests.Do(cacheKey, func() (interface{}, error) {
 			return c.fetchAndStore(query, depth, cacheKey)
 		})
-		if err == nil {
-			c.recordPrefetch(name)
-		}
-	}(strings.ToLower(query.Question[0].Name), key, entry)
+	}(key, entry)
 }
 
 type expirationItem struct {

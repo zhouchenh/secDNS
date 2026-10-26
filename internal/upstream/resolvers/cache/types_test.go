@@ -775,35 +775,6 @@ func TestCacheUpstreamLimiterQueuesAndDrops(t *testing.T) {
 	}
 }
 
-func TestCacheDomainStats(t *testing.T) {
-	response := new(dns.Msg)
-	response.SetQuestion("example.com.", dns.TypeA)
-	response.Answer = []dns.RR{
-		&dns.A{
-			Hdr: dns.RR_Header{
-				Name:   "example.com.",
-				Rrtype: dns.TypeA,
-				Class:  dns.ClassINET,
-				Ttl:    5,
-			},
-			A: []byte{1, 1, 1, 1},
-		},
-	}
-	mock := &mockResolver{response: response}
-	cache := newTestCache(mock)
-
-	query := new(dns.Msg)
-	query.SetQuestion("example.com.", dns.TypeA)
-
-	cache.Resolve(query, 10) // miss
-	cache.Resolve(query, 10) // hit
-
-	stats := cache.DomainStatsFor("example.com.")
-	if stats.Hits != 1 || stats.Misses != 1 {
-		t.Fatalf("unexpected stats: %+v", stats)
-	}
-}
-
 type blockingResolver struct {
 	start   chan struct{}
 	unblock chan struct{}
