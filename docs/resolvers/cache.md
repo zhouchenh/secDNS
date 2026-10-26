@@ -109,7 +109,7 @@ Default: `30`
 
 > `defaultPositiveTTL`: Number | String _(Optional)_
 
-Fallback TTL used when positive answers do not contain any TTLs. Helpful when upstream resolvers omit TTLs.
+Deprecated; accepted for compatibility but no longer used. Positive answers are cached for the minimum TTL across their non-OPT records (answer, authority and additional sections), clamped by `minTTL`/`maxTTL`. Record TTLs at or above this value are honoured, not replaced by `defaultFallbackTTL`. TTLs with the most significant bit set are treated as 0 (RFC 2181 section 8).
 
 Acceptable formats:
 * Number: e.g., `3600`
@@ -119,7 +119,7 @@ Default: `3600` (1 hour)
 
 > `defaultFallbackTTL`: Number | String _(Optional)_
 
-TTL used when no records contain TTL information at all (e.g., empty authority sections).
+TTL used for a positive response that carries no non-OPT records at all (no record TTL to take).
 
 Acceptable formats:
 * Number: e.g., `300`

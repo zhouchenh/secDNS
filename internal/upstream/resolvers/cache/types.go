@@ -10,6 +10,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"golang.org/x/sync/singleflight"
+	"math"
 	"math/rand"
 	"net"
 	"strconv"
@@ -32,7 +33,7 @@ type Cache struct {
 	CleanupInterval       time.Duration     // How often to run cleanup (default 60s)
 	ServeStale            bool              // Serve stale responses while refreshing
 	StaleDuration         time.Duration     // How long stale responses are valid
-	DefaultPositiveTTL    time.Duration     // Default TTL for positive responses lacking TTLs
+	DefaultPositiveTTL    time.Duration     // Retained for config compatibility; unused (record TTLs are never capped by it)
 	DefaultFallbackTTL    time.Duration     // Fallback TTL when no records contain TTL
 	TTLJitterPercent      float64           // Randomize expirations to avoid thundering herd
 	PrefetchThreshold     uint64            // Access count threshold for background refresh
@@ -620,33 +621,34 @@ func (c *Cache) extractTTL(response *dns.Msg) uint32 {
 		return c.getTTLForNegativeResponse(response)
 	}
 
-	// For positive responses, find minimum TTL in answer section
-	defaultTTL := c.DefaultPositiveTTL
-	if defaultTTL == 0 {
-		defaultTTL = time.Hour
-	}
-	minTTL := uint32(defaultTTL.Seconds())
+	// For positive responses, take the minimum TTL over all non-OPT records. The fallback
+	// applies only when no record carries a TTL; a large record TTL is never replaced by
+	// the fallback (MaxTTL is the cap). TTLs with the most significant bit set are treated
+	// as 0 (RFC 2181 section 8).
+	minTTL := uint32(math.MaxUint32)
 	found := false
+	consider := func(ttl uint32) {
+		if ttl > math.MaxInt32 {
+			ttl = 0
+		}
+		found = true
+		if ttl < minTTL {
+			minTTL = ttl
+		}
+	}
 
 	for _, rr := range response.Answer {
-		if rr.Header().Ttl < minTTL {
-			minTTL = rr.Header().Ttl
-			found = true
-		}
+		consider(rr.Header().Ttl)
 	}
 
 	// Also check authority and additional sections
 	for _, rr := range response.Ns {
-		if rr.Header().Ttl < minTTL {
-			minTTL = rr.Header().Ttl
-			found = true
-		}
+		consider(rr.Header().Ttl)
 	}
 	for _, rr := range response.Extra {
 		// Skip OPT records (they don't have real TTL)
-		if rr.Header().Rrtype != dns.TypeOPT && rr.Header().Ttl < minTTL {
-			minTTL = rr.Header().Ttl
-			found = true
+		if rr.Header().Rrtype != dns.TypeOPT {
+			consider(rr.Header().Ttl)
 		}
 	}
 
