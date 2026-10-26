@@ -1,0 +1,171 @@
+{
+  "source": "AMD FRR 10.3 r4, 2026-10-22; failure captured before rollback",
+  "config": {
+    "local_asn": 65101,
+    "router_id": "100.91.1.82",
+    "peers": [
+      {
+        "address": "100.91.1.83",
+        "family": 4,
+        "remote_asn": 65102,
+        "enabled": true,
+        "keepalive_seconds": 3,
+        "hold_seconds": 9
+      },
+      {
+        "address": "100.91.1.84",
+        "family": 4,
+        "remote_asn": 65103,
+        "enabled": true,
+        "keepalive_seconds": 3,
+        "hold_seconds": 9
+      },
+      {
+        "address": "2001:470:f9d1:9001:45:52ff:fe41:106",
+        "family": 6,
+        "remote_asn": 65102,
+        "enabled": true,
+        "keepalive_seconds": 3,
+        "hold_seconds": 9
+      },
+      {
+        "address": "2001:470:f9d1:9001:45:52ff:fe41:108",
+        "family": 6,
+        "remote_asn": 65103,
+        "enabled": true,
+        "keepalive_seconds": 3,
+        "hold_seconds": 9
+      }
+    ],
+    "announcements": [
+      {
+        "role": "dns64",
+        "family": 4,
+        "enabled": true
+      },
+      {
+        "role": "dns64",
+        "family": 6,
+        "enabled": true
+      },
+      {
+        "role": "normal",
+        "family": 4,
+        "enabled": true
+      },
+      {
+        "role": "normal",
+        "family": 6,
+        "enabled": true
+      }
+    ],
+    "external_peers": [
+      {
+        "id": "switch17-fixture",
+        "name": "Switch17.fixture@IPv6",
+        "enabled": true,
+        "afis": [
+          4,
+          6
+        ],
+        "keepalive_seconds": 1,
+        "hold_seconds": 5,
+        "exports": [
+          "203.0.113.53/32",
+          "203.0.113.64/32",
+          "2001:db8:53::53/128",
+          "2001:db8:53::64/128"
+        ]
+      }
+    ]
+  },
+  "policy": {
+    "schema": 1,
+    "node": "amd103",
+    "peers": [
+      {
+        "id": "switch17-fixture",
+        "address": "2001:db8:85:1::1",
+        "transport_family": 6,
+        "local_source": "2001:db8:85:1::",
+        "local_asn": 8505,
+        "remote_asn": 8501,
+        "port": 179,
+        "allowed_afis": [
+          4,
+          6
+        ],
+        "allowed_exports": [
+          "203.0.113.53/32",
+          "203.0.113.64/32",
+          "2001:db8:53::53/128",
+          "2001:db8:53::64/128"
+        ]
+      }
+    ]
+  },
+  "failure_diagnostic": {
+    "schema": 1,
+    "runtime": {
+      "matches": false,
+      "missing_neighbors": [
+        [
+          0,
+          "neighbor 2001:db8:85:1::1 port 179"
+        ]
+      ],
+      "missing_policy": [],
+      "unexpected_neighbors": [],
+      "unexpected_policy": []
+    },
+    "peers": [
+      {
+        "id": "switch17-fixture",
+        "family": 4,
+        "expected_enabled": true,
+        "allowed_exports": [
+          "203.0.113.53/32",
+          "203.0.113.64/32"
+        ],
+        "state": "Established",
+        "advertised_prefixes": [
+          "203.0.113.53/32",
+          "203.0.113.64/32"
+        ],
+        "advertisement_schema_known": true,
+        "remoteAs": 8501,
+        "localAs": 8505,
+        "pfxRcd": 0,
+        "pfxSnt": 2,
+        "connectionsEstablished": 1
+      },
+      {
+        "id": "switch17-fixture",
+        "family": 6,
+        "expected_enabled": true,
+        "allowed_exports": [
+          "2001:db8:53::53/128",
+          "2001:db8:53::64/128"
+        ],
+        "state": "Established",
+        "advertised_prefixes": [
+          "2001:db8:53::53/128",
+          "2001:db8:53::64/128"
+        ],
+        "advertisement_schema_known": true,
+        "remoteAs": 8501,
+        "localAs": 8505,
+        "pfxRcd": 0,
+        "pfxSnt": 2,
+        "connectionsEstablished": 1
+      }
+    ],
+    "complete": true,
+    "last_checks": {
+      "fresh": true,
+      "mesh_peers_match": true,
+      "profiles_match": true
+    },
+    "stage": "convergence"
+  }
+}

@@ -97,10 +97,13 @@ def snapshot(node):
             expected = {a[0 if family == 4 else 1] for n, a in ADDRESSES.items() if n != node}
             client=candidate_bgp.test_client()
             client_address=client['ipv'+str(family)] if client else None
-            all_expected=expected | ({client_address} if client else set())
-            if afi['as'] != NODES[node] or set(afi['peers']) != all_expected: raise ValueError('unexpected candidate peers')
+            external_policy=candidate_bgp.external.policy(node)
+            external_lookup={p['id']:p for p in external_policy['peers']}
+            external_addresses={external_lookup[p['id']]['address'] for p in settings.get('external_peers',[]) if family in p['afis']}
+            all_expected=expected | ({client_address} if client else set()) | external_addresses
+            if afi['as'] != NODES[node] or not (expected | ({client_address} if client else set())) <= set(afi['peers']) or not set(afi['peers']) <= all_expected: raise ValueError('unexpected candidate peers')
             for address, p in afi['peers'].items():
-                if address==client_address: continue # read-only observer is outside cohort health/quorum
+                if address==client_address or address in external_addresses: continue # read-only observer is outside cohort health/quorum
                 # FRR addresses are validated before forming a read-only command.
                 import ipaddress
                 ipaddress.ip_address(address)
@@ -173,7 +176,9 @@ def main():
         if health_action:bgp=candidate_health
         prefix='health-' if health_action else 'bgp-'
         identity(node)
-        if action==prefix+'get' and len(sys.argv)==3:result=bgp.get(node)
+        if action==prefix+'get' and len(sys.argv)==3:
+            result=bgp.get(node)
+            if not health_action: result['external_status']=bgp.external.observe(node,result['config'].get('external_peers',[]),result['external_policy'])
         elif action==prefix+'rollback' and len(sys.argv)==4:
             bgp.rollback(node,sys.argv[3]);result={'schema':1,'node':node,'rolled_back':True}
         elif action in (prefix+'validate',prefix+'apply'):
@@ -183,7 +188,7 @@ def main():
             if action==prefix+'apply' and len(sys.argv)==4:result=bgp.apply(node,sys.argv[3],payload)
             elif action==prefix+'validate' and len(sys.argv)==3:
                 old,config=bgp.read_request(node,payload)
-                if not health_action:bgp.preflight(node,config)
+                if not health_action:bgp.preflight(node,config,old['external_policy'])
                 result=dict(schema=1,node=node,revision=old['revision'],config=config,valid=True)
                 if health_action:result['derived']={'stale_seconds':candidate_health.settings.stale_seconds(config)}
             else:raise ValueError('arguments')

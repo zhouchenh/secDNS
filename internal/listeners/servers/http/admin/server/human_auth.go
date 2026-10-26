@@ -5,6 +5,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/zhouchenh/secDNS/internal/adminauth"
@@ -51,16 +54,78 @@ func humanBody(w http.ResponseWriter, r *http.Request, fields ...string) (map[st
 	}
 	return out, nil
 }
-func humanSource(r *http.Request) string {
+func socketSource(r *http.Request) (netip.Addr, bool) {
 	host, _, e := net.SplitHostPort(r.RemoteAddr)
 	if e != nil {
+		return netip.Addr{}, false
+	}
+	ip, e := netip.ParseAddr(host)
+	if e != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, false
+	}
+	return ip.Unmap(), true
+}
+
+func singleForwardedHeader(r *http.Request, name string) (string, bool) {
+	values := r.Header.Values(name)
+	if len(values) != 1 || values[0] == "" || strings.TrimSpace(values[0]) != values[0] {
+		return "", false
+	}
+	return values[0], true
+}
+
+func forwardedAddress(r *http.Request, name string) (netip.Addr, bool) {
+	raw, ok := singleForwardedHeader(r, name)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	ip, e := netip.ParseAddr(raw)
+	if e != nil || ip.Zone() != "" || ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, false
+	}
+	return ip.Unmap(), true
+}
+
+func (h *HTTPAdminServer) trustedSocketSource(ip netip.Addr) bool {
+	for _, trusted := range h.TrustedProxySources {
+		if ip == trusted {
+			return true
+		}
+	}
+	return false
+}
+
+// humanSource uses forwarded identity only for an explicitly configured socket
+// peer and only when the complete Facade metadata tuple is singular and
+// internally consistent. A malformed tuple from a trusted peer fails closed.
+func (h *HTTPAdminServer) humanSource(r *http.Request) string {
+	socket, ok := socketSource(r)
+	if !ok {
 		return ""
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
+	if !h.trustedSocketSource(socket) {
+		return socket.String()
+	}
+	if h.agent == nil || h.agent.origin == "" {
 		return ""
 	}
-	return ip.String()
+	origin, e := url.Parse(h.agent.origin)
+	if e != nil || origin.Scheme != "https" || origin.Host == "" || r.Host != origin.Host {
+		return ""
+	}
+	port := origin.Port()
+	if port == "" {
+		port = "443"
+	}
+	proto, protoOK := singleForwardedHeader(r, "X-Forwarded-Proto")
+	host, hostOK := singleForwardedHeader(r, "X-Forwarded-Host")
+	forwardedPort, portOK := singleForwardedHeader(r, "X-Forwarded-Port")
+	forwarded, forwardedOK := forwardedAddress(r, "X-Forwarded-For")
+	real, realOK := forwardedAddress(r, "X-Real-IP")
+	if !protoOK || proto != "https" || !hostOK || host != origin.Host || !portOK || forwardedPort != port || !forwardedOK || !realOK || forwarded != real {
+		return ""
+	}
+	return forwarded.String()
 }
 func (h *HTTPAdminServer) humanRoutes(mux *http.ServeMux, base string) {
 	h.humanSecurityRoutes(mux, base)
@@ -80,7 +145,7 @@ func (h *HTTPAdminServer) humanRoutes(mux *http.ServeMux, base string) {
 				agentError(w, 403, "origin_required")
 				return
 			}
-			source := humanSource(r)
+			source := h.humanSource(r)
 			if source == "" {
 				agentError(w, 403, "authentication")
 				return
@@ -166,10 +231,15 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, 200, map[string]any{"events": events})
 	})
-	protected := func(recent bool, fields []string, fn func(http.ResponseWriter, *http.Request, map[string]string, string, string, time.Time)) http.HandlerFunc {
+	protected := func(recent bool, fields []string, fn func(http.ResponseWriter, *http.Request, map[string]string, string, string, string, time.Time)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			if h.agent == nil || !h.browserRequest(r, true) || len(r.Header.Values("Authorization")) != 0 {
 				agentError(w, 403, "origin_required")
+				return
+			}
+			source := h.humanSource(r)
+			if source == "" {
+				agentError(w, 403, "authentication")
 				return
 			}
 			token, _ := cookieValue(r)
@@ -192,11 +262,11 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 				return
 			}
 			defer clear(b)
-			fn(w, r, b, token, csrf, now)
+			fn(w, r, b, token, csrf, source, now)
 		}
 	}
-	mux.HandleFunc("POST "+base+"/auth/totp/begin", protected(true, []string{}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
-		en, e := h.agent.human.BeginReplacement(token, csrf, humanSource(r), now)
+	mux.HandleFunc("POST "+base+"/auth/totp/begin", protected(true, []string{}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf, source string, now time.Time) {
+		en, e := h.agent.human.BeginReplacement(token, csrf, source, now)
 		if e != nil {
 			authenticationError(w, e)
 			return
@@ -204,8 +274,8 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 		w.Header().Set("Cache-Control", "no-store")
 		h.writeEnrollment(w, en)
 	}))
-	mux.HandleFunc("POST "+base+"/auth/totp/confirm", protected(true, []string{"challenge", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
-		result, e := h.agent.human.ConfirmReplacement(token, csrf, b["challenge"], b["code"], humanSource(r), now)
+	mux.HandleFunc("POST "+base+"/auth/totp/confirm", protected(true, []string{"challenge", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf, source string, now time.Time) {
+		result, e := h.agent.human.ConfirmReplacement(token, csrf, b["challenge"], b["code"], source, now)
 		if e != nil {
 			authenticationError(w, e)
 			return
@@ -217,15 +287,15 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 		writeJSON(w, 200, out)
 	}))
 
-	mux.HandleFunc("POST "+base+"/auth/reauth/password-totp", protected(false, []string{"password", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
-		result, e := h.agent.human.Reauthenticate(token, csrf, b["password"], b["code"], humanSource(r), now)
+	mux.HandleFunc("POST "+base+"/auth/reauth/password-totp", protected(false, []string{"password", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf, source string, now time.Time) {
+		result, e := h.agent.human.Reauthenticate(token, csrf, b["password"], b["code"], source, now)
 		if e != nil {
 			authenticationError(w, e)
 			return
 		}
 		humanCookie(w, result)
 	}))
-	mux.HandleFunc("POST "+base+"/auth/password", protected(true, []string{"password"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
+	mux.HandleFunc("POST "+base+"/auth/password", protected(true, []string{"password"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf, source string, now time.Time) {
 		result, e := h.agent.human.ChangePassword(token, csrf, b["password"], now)
 		if e != nil {
 			authenticationError(w, e)
@@ -233,7 +303,7 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 		}
 		humanCookie(w, result)
 	}))
-	mux.HandleFunc("POST "+base+"/auth/recovery-codes/regenerate", protected(true, []string{}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
+	mux.HandleFunc("POST "+base+"/auth/recovery-codes/regenerate", protected(true, []string{}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf, source string, now time.Time) {
 		codes, e := h.agent.human.RegenerateRecovery(token, csrf, now)
 		if e != nil {
 			authenticationError(w, e)
@@ -242,7 +312,7 @@ func (h *HTTPAdminServer) humanSecurityRoutes(mux *http.ServeMux, base string) {
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSON(w, 200, map[string]any{"recovery_codes": codes})
 	}))
-	mux.HandleFunc("POST "+base+"/auth/sessions/revoke-others", protected(true, []string{}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf string, now time.Time) {
+	mux.HandleFunc("POST "+base+"/auth/sessions/revoke-others", protected(true, []string{}, func(w http.ResponseWriter, r *http.Request, b map[string]string, token, csrf, source string, now time.Time) {
 		if e := h.agent.human.RevokeOtherSessions(token, csrf, now); e != nil {
 			authenticationError(w, e)
 			return

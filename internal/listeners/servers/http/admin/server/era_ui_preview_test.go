@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"github.com/zhouchenh/secDNS/internal/recordset"
 	"github.com/zhouchenh/secDNS/internal/recordstore"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -49,6 +52,17 @@ func TestEraUIManualPreview(t *testing.T) {
 			}
 		}
 		raw["profiles"] = profiles
+		raw["peers"] = []any{
+			map[string]any{"address": "192.0.2.101", "family": 4, "state": "Established", "prefixes": []string{"192.0.2.53/32", "192.0.2.64/32"}},
+			map[string]any{"address": "192.0.2.102", "family": 4, "state": "Established", "prefixes": []string{"192.0.2.53/32", "192.0.2.64/32"}},
+			map[string]any{"address": "2001:db8:1234:5678:abcd:ef01:2345:6789", "family": 6, "state": "Established", "prefixes": []string{"2001:db8:1234:5678::53/128", "2001:db8:1234:5678::64/128"}},
+			map[string]any{"address": "2001:db8:9876:5432:ffff:eeee:dddd:cccc", "family": 6, "state": "Established", "prefixes": []string{"2001:db8:1234:5678::53/128", "2001:db8:1234:5678::64/128"}},
+		}
+		if node == os.Getenv("SECDNS_ERA_STALE_NODE") {
+			raw["stale"] = true
+			raw["observed_at"] = time.Now().Add(-time.Minute).UTC()
+		}
+
 		if action != "status" {
 			raw["operation"] = map[string]any{"request_id": id, "action": action, "confirmed": true, "status": "confirmed"}
 		}
@@ -67,6 +81,18 @@ func TestEraUIManualPreview(t *testing.T) {
 			revisions[node] = strings.Repeat("a", 64)
 		}
 		out := nodeBGPResult{Schema: 1, Node: node, Revision: revisions[node], Config: configs[node]}
+		if os.Getenv("SECDNS_EXTERNAL_PREVIEW") == "1" {
+			out.ExternalPolicy = &nodeExternalPolicy{Schema: 1, Node: node, Peers: []nodeExternalEnrollment{}}
+			if node != "intel108" {
+				out.ExternalPolicy.Peers = append(out.ExternalPolicy.Peers, nodeExternalEnrollment{ID: "fixture-switch", Address: "2001:db8:85:1::1", TransportFamily: 6, LocalSource: "2001:db8:85:1::", LocalASN: 8505, RemoteASN: 8501, Port: 179, AllowedAFIs: []int{4, 6}, AllowedExports: []string{"203.0.113.53/32", "203.0.113.64/32", "2001:db8:53::53/128", "2001:db8:53::64/128"}})
+			}
+			for _, p := range configs[node].ExternalPeers {
+				for _, f := range p.AFIs {
+					out.ExternalStatus = append(out.ExternalStatus, nodeExternalObservation{ID: p.ID, Family: f, State: "Idle", Observed: true, Prefixes: []string{}})
+				}
+			}
+		}
+
 		var body nodeBGPRequest
 		if len(payload) > 0 {
 			json.Unmarshal(payload, &body)
@@ -77,7 +103,7 @@ func TestEraUIManualPreview(t *testing.T) {
 		}
 		if action == "bgp-apply" {
 			configs[node] = body.Config
-			revisions[node] = strings.Repeat("b", 64)
+			revisions[node] = fmt.Sprintf("%x", sha256.Sum256(payload))
 			out.BGP = &nodeBGPView{revisions[node], configs[node]}
 			out.Operation = &nodeBGPOperation{RequestID: id, Action: action, Confirmed: true, Status: "confirmed"}
 		}
@@ -134,11 +160,15 @@ func TestEraUIManualPreview(t *testing.T) {
 	if _, err = store.Replace(recordstore.Expected{RulesetID: "design-preview", LineageID: "disposable", Revision: 1}, "preview-seed", records); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:5194")
+	previewAddress := "127.0.0.1:5194"
+	if os.Getenv("SECDNS_EXTERNAL_PREVIEW") == "1" {
+		previewAddress = "127.0.0.1:5196"
+	}
+	listener, err := net.Listen("tcp", previewAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.agent.origin = "http://127.0.0.1:5194"
+	h.agent.origin = "http://" + previewAddress
 	routes := h.routes()
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: s.Token})
@@ -146,7 +176,7 @@ func TestEraUIManualPreview(t *testing.T) {
 	})}
 	go server.Serve(listener)
 	defer server.Close()
-	t.Log("Disposable backend preview http://127.0.0.1:5194/admin/ui/")
+	t.Log("Disposable backend preview http://" + previewAddress + "/admin/ui/")
 	time.Sleep(90 * time.Minute)
 }
 
@@ -165,9 +195,57 @@ func TestEraUISignInPreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.agent.origin = "http://127.0.0.1:5195"
-	server := &http.Server{Handler: h.routes()}
+	routes := h.routes()
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "Visual fixture: submissions disabled", http.StatusMethodNotAllowed)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/auth/human.js") {
+			capture := httptest.NewRecorder()
+			routes.ServeHTTP(capture, r)
+			for key, values := range capture.Header() {
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
+			}
+			w.Header().Del("Content-Length")
+			script := capture.Body.String()
+			marker := strings.LastIndex(script, "})();")
+			if capture.Code != http.StatusOK || marker < 0 {
+				t.Error("missing real auth renderer")
+				http.Error(w, "fixture unavailable", 500)
+				return
+			}
+			script = script[:marker] + eraAuthVisualStates + script[marker:]
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(script))
+			return
+		}
+		routes.ServeHTTP(w, r)
+	})}
 	go server.Serve(listener)
 	defer server.Close()
 	t.Log("Disposable sign-in preview http://127.0.0.1:5195/admin/ui/")
 	time.Sleep(90 * time.Minute)
 }
+
+// Test-only visual inputs drive the existing renderer, without authentication requests.
+// This constant is compiled only into the opt-in loopback test binary, never secDNS.
+const eraAuthVisualStates = `
+ const visual=new URLSearchParams(location.search).get('auth_visual');
+ if(['mfa','setup','recovery','expired','error','loading'].includes(visual)){
+  const fixtureLabel=document.createElement('p');fixtureLabel.textContent='Disposable visual fixture — submissions disabled';card.prepend(fixtureLabel);
+  document.addEventListener('submit',event=>{event.preventDefault();event.stopImmediatePropagation();},true);
+  const showVisual=()=>{step='start';replacement=false;setupRequired=false;mode.value='login';busy=false;
+   if(visual==='mfa')step='otp';
+   if(visual==='setup'){setupRequired=true;mode.value='setup';}
+   if(visual==='recovery')mode.value='code';
+   if(visual==='expired')note.textContent='Sign-in timed out. Enter your username and password to start again.';
+   if(visual==='error')note.textContent='Sign-in could not be completed. Check your details or wait before trying again.';
+   if(visual==='loading'){busy=true;note.textContent='Checking sign-in…';}
+   render();
+  };
+  window.addEventListener('authstate',()=>queueMicrotask(showVisual));if(window.secDNSAgent.state)queueMicrotask(showVisual);
+ }
+`
