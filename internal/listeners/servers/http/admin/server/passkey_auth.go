@@ -83,7 +83,7 @@ func (h *HTTPAdminServer) passkeyRoutes(mux *http.ServeMux, base string) {
 			token, cookie := cookieValue(r)
 			csrf := r.Header.Get("X-SecDNS-CSRF")
 			now := h.agent.now()
-			source := humanSource(r)
+			source := h.humanSource(r)
 			if source == "" {
 				agentError(w, 403, "authentication")
 				return

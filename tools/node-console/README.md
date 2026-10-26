@@ -39,14 +39,14 @@ and reconcile the operation first. The console supplies its own authenticated
 actor audit; remote receipts deliberately contain no account secrets.
 
 Run local tests with `python -m unittest discover -s tools/node-console`.
-This implementation does not edit peer addresses, ASNs, prefixes, production DNS,
-or OSPF settings.
+The fixed mesh identities and production DNS are unchanged. External BGP peers
+use the separate enrollment workflow below. OSPF configuration is unsupported.
 
 ## Candidate BGP configuration
 
 Validate and apply read a JSON object from standard input containing
 `expected_revision` and `config`. The revision is a canonical configuration SHA256.
-Only the four fixed peers' enabled state and keepalive/hold timers, and the four
+For the fixed mesh, only the four peers' enabled state and keepalive/hold timers, and the four
 normal/DNS64 IPv4/IPv6 announcement eligibility flags, can change. At least one
 peer per address family must remain enabled. Addresses, ASNs, router identity,
 synthetic prefix filters and private BGP port 1179 are fixed.
@@ -108,3 +108,188 @@ Eight profile/transport workers run concurrently; each tries the two fixed canar
 Settings load only between upstream rounds, with gates reset on a revision change. This can briefly withdraw the node's routes. A successful apply requires a completed round bearing the new revision and restoration of the baseline eligible health/advertisements. Rollback likewise requires the old revision and baseline recovery. The independent rollback timer is scheduled before the file change; request interruption is not evidence of failure. An uncertain response must be reconciled, never automatically retried. No DNS process restart, account change, or arbitrary canary/endpoint configuration is part of a settings apply.
 
 The deployed health controller uses `query_helper` pointing to the locally built `secdns-health-query` binary. It passes the configured timeout in milliseconds to the DNS exchange itself; the subprocess gets a separate 250 ms startup/cleanup allowance. Structured timeout/network errors are recorded per attempt. The old parity fixture remains available for legacy callers but hardcodes a 700 ms DNS timeout and must not be used to qualify adjustable timeout semantics. Helper-only rollout changes the root-owned health configuration path and restarts the private routing controller, not DNS or the admin service.
+
+## External peers in Routing → BGP settings
+
+An operator first enrolls allowed external routers on the candidate. The browser
+can then **add, edit, or remove** entries referencing those enrolled routers.
+New entries start disabled and export no addresses. Enabling a session and
+selecting service exports are separate choices. Review shows before/after names,
+session state, routing families, timers, and exact service addresses.
+
+An IPv6 transport can carry both IPv4 and IPv6 routing families. External timers
+support keepalive 1–30 seconds and hold 3–90 seconds, with hold at least three times
+keepalive; 1/5 is the new-entry setting. Existing mesh timers are not changed.
+Transport destination, local source, local/remote AS, and port are displayed but
+cannot be changed by a browser request. A per-peer local AS alias does not renumber
+the mesh. Names such as `Switch17.fixture@IPv6` are descriptive, not DNS lookups.
+
+All external imports are denied. Exports must be an enrolled subset of the four
+existing synthetic Normal DNS/DNS64 host prefixes. The outbound policy additionally
+requires a locally originated AS path; learned routes, aggregates and default
+routes cannot be exported. The existing health controller remains the only source
+of service announcements, so an allowed export is still withdrawn when its health
+gate closes. External peers are not members of the mesh health quorum.
+
+Apply briefly drains the node and restarts its routing service, using the existing
+revision check, durable operation receipt, independent rollback and actor audit.
+Success requires exact runtime neighbor/policy readback and per-peer advertised
+routes, not just a healthy mesh. An enabled external session must establish before
+success is confirmed. Unknown observations never mean no advertisements. An
+uncertain result requires inspection; do not submit another apply blindly.
+
+### Operator enrollment (not a browser API)
+
+Install `candidate_external.py` alongside `candidate_bgp.py` and
+`candidate_status.py`. Enrollment is the root-owned, non-group/world-writable
+`external-policy.json` under the existing candidate directory. It contains:
+
+```json
+{
+  "schema": 1,
+  "node": "amd103",
+  "peers": [{
+    "id": "fixture-switch",
+    "address": "2001:db8:85:1::1",
+    "transport_family": 6,
+    "local_source": "2001:db8:85:1::",
+    "local_asn": 8505,
+    "remote_asn": 8501,
+    "port": 179,
+    "allowed_afis": [4, 6],
+    "allowed_exports": ["203.0.113.53/32", "2001:db8:53::53/128"]
+  }]
+}
+```
+
+This example is a disconnected namespace fixture, **not a production ASN
+allocation or router enrollment**. No production targets or automatic enrollment
+ship with the feature. Maximum eight enrolled peers; canonical literal unicast
+addresses only, no mesh/client address collisions. Local-source reachability and
+router-side policy require a separately authorized operator setup.
+
+The whole enrollment is included in the revision. Enrollment changes invalidate
+prepared requests. During an in-flight policy change, recovery removes all external
+sessions, retains the original mesh/test-client configuration, restores the prior
+maintenance flag after restart, and leaves the receipt pending for reconciliation.
+It never rewrites root enrollment to restore revoked authority. Ordinary rollback
+requires exact old configuration, healthy profiles and external runtime readback.
+
+The existing receive-only CT109 peer remains separately enrolled and unchanged.
+OSPF has no model, renderer, API or setup controls in this implementation.
+
+### Staged loopback peering and OSPF companion services
+
+An operator-owned external enrollment may additionally contain `ebgp_multihop`
+(an integer from 2 to 255) and `next_hop`. The latter must equal the canonical
+`local_source`, and requires `allowed_afis` to contain only the transport family.
+Use separate IPv4 and IPv6 enrollments for family-matched loopback sessions.
+These fields are read-only in the console; browser drafts cannot grant transport
+authority. Existing enrollments without either optional field retain their prior
+behavior. Configuration revisions include these fields, and runtime verification
+checks the rendered multihop and explicit export next-hop statements.
+
+OSPF is an independently managed companion, not an implicit side effect of BGP
+GUI apply. Its interface addresses, ospfd/ospf6d configuration and service units
+must be owned by the deployment, outside `bgp.conf`. Never hand-edit BGP transport
+statements: GUI apply regenerates that file from enrollment and draft settings.
+The DNS checker owns only the four enrolled service VIP network statements; it
+must not remove the individual host addresses advertised by OSPF.
+
+Use the existing single zebra instance and ZAPI socket, not a second competing
+zebra. Restrict OSPF-to-kernel imports with zebra protocol filters to the exact
+approved router loopbacks for each family, with an explicit final deny. No default,
+LAN aggregate, or broad redistribution is permitted by this staged contract.
+The deployment must validate native FRR syntax and actual kernel route results.
+
+The current BGP supervisor restarts zebra during GUI configuration apply and
+stops zebra when its checker fails. Separate OSPF daemons therefore must reconnect
+to that ZAPI socket and republish their permitted routes after zebra recovery.
+Candidate qualification must measure OSPF adjacency, host-address presence,
+router-loopback reachability, kernel import filtering and recovery across both
+GUI apply/restart and checker failure. Do not claim uninterrupted individual
+reachability across a zebra failure. This contract does not create OSPF services,
+change production routers, or imply that the BGP GUI configures OSPF.
+
+Candidate BGP renders `no bgp ipv6-auto-ra`: DNS service nodes must not implicitly
+advertise themselves as IPv6 gateways when FRR enables extended-next-hop peers.
+The startup readiness check requires this guard in native running configuration
+when it is present in the supplied file. Existing files without the guard remain
+readable, so upgrading source alone is not runtime containment. Deployment must
+validate installed FRR support, update each candidate configuration, and verify
+native running configuration plus actual RA/route state. This setting does not
+remove explicitly configured interface RAs or legitimate upstream-router RAs.
+
+### Candidate routing supervisor
+
+`supervisor.py` is the foreground systemd routing supervisor (use
+`KillMode=control-group`). Its health checker may start only after a successful
+read-only VTY query observes the expected BGP instance, router ID and both unicast
+address families. A socket alone does not prove bgpd has loaded its configuration.
+The original four-second startup deadline still applies; a dead daemon, incomplete
+configuration or failed query cannot enable the checker. Startup failure terminates
+the owned routing children, and existing heartbeat and route-error handling remain
+fail-closed. This file is installed separately from the admin binary; changing it
+in the repository does not automatically update running candidates.
+
+Run its local regressions with `python -m unittest test_supervisor` from this
+directory. Candidate qualification must also exercise routing-service restarts
+and prove final restoration; unit tests alone do not establish runtime readiness.
+
+### Managed OSPF companion (candidate carrier)
+
+`managed_ospf.py` and `secdns-managed-ospf.service` are a root-enrolled carrier,
+not an extension of browser configuration authority. Install the Python file
+under `/opt/secdns-managed-ospf`, with reviewed `ospfd.conf`, `ospf6d.conf` and
+`policy.conf`, all root:frr 0640. Precreate `state` and `history` as frr:frr
+0750, and `etc` as root:frr 0750, containing empty root:frr 0640 `frr.conf` and
+`vtysh.conf`. Keep the parent root:frr 0750. The service binds only its `etc`
+and `history` privately over `/etc/frr` and `/var/lib/frr`; `/run/frr` remains
+shared deliberately for the existing zebra management backend. Never run a
+second zebra. Reject a conflicting or stale mgmtd socket before starting.
+
+Enrollment (`enrollment.json`, root-owned, not writable by group/others) has
+exactly these fields:
+
+* `interface`, `management_ipv4`, `local_link_local`: current management interface
+  and explicitly enrolled DHCP IPv4 / interface-scoped IPv6 link-local values.
+* `identity_interface`, `identity_addresses`: dedicated dummy with exactly one
+  IPv4 /32 and two IPv6 /128 unicast identities, excluding implicit link-local.
+* `zebra_state`: absolute existing candidate zebra state directory.
+* `files`: SHA256 values keyed by `ospfd.conf`, `ospf6d.conf`, `policy.conf`.
+* `firewall_sha256`: `firewall_digest()` of native JSON for the separately owned
+  `inet secdns_staged_ospf` table. Kernel-assigned handles/metainfo are excluded.
+
+The mgmtd configuration must contain the reviewed exact-loopback prefix lists
+`SD_ALLOW4`/`SD_ALLOW6`, maps `SD_STAGE4`/`SD_STAGE6`, and both OSPF protocol
+attachments. There is no broad import/default acceptance. The manager compares
+native map bodies against the enrolled file as well as zebra attachments before
+starting OSPF. It stops its OSPF children on address, firewall, policy or zebra
+incarnation mismatch. A different DHCP lease is **not** automatically accepted;
+the node becomes not ready until a reviewed enrollment/ACL update. DHCP and
+interface addresses themselves are never changed by this process.
+
+Keep the enrolled policy outside private `/etc/frr`, in `policy.conf`; do not
+create `etc/mgmtd.conf`. After frontend readiness, the manager explicitly loads
+the reviewed commands only if OSPF attachments and owned names are unused. On
+normal shutdown it stops OSPF, removes only its unchanged policy, then stops
+mgmtd. Partial configuration or changed ownership fails closed for operator
+reconciliation. Preserve existing OSPFv3 sequence state when provisioning the
+private persistent history directory; do not roll sequence state backward.
+
+The identity unit and firewall ownership must be established separately. DNS
+health does not remove identity addresses. `BindsTo`, `After` and `PartOf` order
+the companion around planned routing restarts; enabling its `WantedBy` link is
+required for routing-start propagation. `KillMode=mixed` gives the manager time
+to stop OSPF before mgmtd; systemd kills leftover children only after timeout.
+Native qualification must verify actual restart propagation, abrupt zebra and
+mgmtd loss, permitted route recovery, and DHCP mismatch behavior. Polling is not
+an instantaneous crash gate; the prior isolated kernel fixture is evidence of
+tested FRR reconnect behavior, not a guarantee against all races. A SIGKILL
+leaving stale backend sockets fails closed and requires ownership reconciliation.
+
+Run local checks with `python -m unittest test_managed_ospf`. This carrier has
+no production prefix activation, account/database access, DNS restart, or GUI
+deployment side effects. Installation and native lifecycle qualification remain
+separate reviewed runtime work.
+
