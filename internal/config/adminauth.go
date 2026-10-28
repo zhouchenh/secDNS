@@ -142,7 +142,7 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 		originRaw, op := m["publicOrigin"]
 		rpRaw, rpp := m["passkeyRPID"]
 		if !p {
-			if op || rpp || h != nil && (len(h.TrustedProxySources) != 0 || h.TrustedSSO != nil) {
+			if op || rpp || h != nil && (len(h.TrustedProxySources) != 0 || h.TrustedSSO != nil || h.ListenUnix != "") {
 				return nil, adminauth.ErrInvalid
 			}
 			continue
@@ -175,6 +175,10 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 			}
 		}
 		if len(h.TrustedProxySources) != 0 && origin == "" {
+			return nil, adminauth.ErrInvalid
+		}
+		// Every unix-socket peer is treated as the edge proxy: that needs the exact origin.
+		if h.ListenUnix != "" && (origin == "" || !admin.ValidListenUnixPath(h.ListenUnix)) {
 			return nil, adminauth.ErrInvalid
 		}
 		if h.RecordAuthorityURL != "" && origin == "" {
@@ -244,6 +248,11 @@ func validateAdminAuthSyntax(raw []byte) error {
 							seen[address] = true
 						}
 					}
+					if _, unixSet := cfg["listenUnix"]; unixSet {
+						if _, e := authObject(raw, map[string]bool{"listenUnix": true}); e != nil {
+							return e
+						}
+					}
 					if ssoRaw, ssoSet := cfg["trustedSSO"]; ssoSet {
 						if _, e := authObject(raw, map[string]bool{"trustedSSO": true}); e != nil {
 							return e
@@ -256,7 +265,7 @@ func validateAdminAuthSyntax(raw []byte) error {
 						if json.Unmarshal(ssoRaw, &decoded) != nil {
 							return adminauth.ErrInvalid
 						}
-						if _, ok := admin.ParseTrustedSSO(decoded); !ok || len(fields) != 7 {
+						if _, ok := admin.ParseTrustedSSO(decoded); !ok || (len(fields) != 7 && len(fields) != 9) {
 							return adminauth.ErrInvalid
 						}
 					}

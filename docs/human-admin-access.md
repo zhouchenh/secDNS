@@ -51,23 +51,36 @@ so the owner signs in once. It is absent and off by default; without it, any
 `X-Secdns-SSO-*` header is ignored exactly as before.
 
 ```json
-"trustedProxySources": ["127.0.0.1"],
+"listenUnix": "/run/secdns-admin/console.sock",
 "trustedSSO": {
   "headerSecretFile": "/etc/secdns-admin/sso-header-secret",
   "secretHeader": "X-Secdns-SSO-Secret",
   "userHeader": "X-Secdns-SSO-User",
   "rolesHeader": "X-Secdns-SSO-Roles",
   "requiredRole": "secdns-console:access",
-  "allowedUsers": ["owner-username"],
-  "mapsTo": "owner"
+  "allowedUsers": ["<identity-provider subject (sub) of the owner>"],
+  "mapsTo": "owner",
+  "usernameHeader": "X-Secdns-SSO-Username",
+  "allowedUsernames": ["owner-username"]
 }
 ```
 
-All seven keys are required. Header names must start with `X-Secdns-SSO-` and
-be distinct. `mapsTo` must be `owner` (the console has one human owner).
-`trustedSSO` also requires an auth store, the exact HTTPS `publicOrigin` and a
-loopback address in `trustedProxySources`; otherwise the configuration (and
-`-test`) fails. The secret file is read once at load: it must be an absolute,
+The first seven keys are required; `usernameHeader` and `allowedUsernames` are
+an optional pair (a secondary username match). Header names must start with
+`X-Secdns-SSO-` and be distinct. `mapsTo` must be `owner` (the console has one
+human owner). Key `allowedUsers` on the identity provider's immutable subject,
+never on an email address or another user-editable claim.
+
+`trustedSSO` requires an auth store, the exact HTTPS `publicOrigin` and
+`listenUnix`; otherwise the configuration (and `-test`) fails. `listenUnix`
+replaces the TCP listener with a unix socket. Its directory must already exist,
+must not be a symlink and must have no group-write or other-user bits (for
+example `2750 secdns-admin:www-data`, created by the unit); the socket is created
+mode 0660 and inherits the directory group, so only the console, root and the
+edge's group can connect. Every peer on that socket is treated as the trusted
+edge proxy (like a `trustedProxySources` entry, so the forwarding tuple is still
+required). A TCP listener is never trusted for SSO: any local user could bind a
+free loopback port while the console restarts and harvest the secret. The secret file is read once at load: it must be an absolute,
 clean path to a regular, non-symlink file without group/other permission bits,
 holding 32 to 1024 visible ASCII bytes (one trailing newline is ignored). Only
 its SHA-256 digest is kept in memory.
@@ -76,15 +89,18 @@ A request carrying **any** `X-Secdns-SSO-*` header is an assertion and must pass
 every check, or it is refused with 403 `sso_rejected` on every route (never a
 fallback to accept):
 
-- the socket peer is loopback **and** listed in `trustedProxySources`;
+- the request arrived on the `listenUnix` socket (never TCP, not even loopback);
 - exactly one secret header, equal to the file secret (constant-time digest compare);
 - exactly one user header naming an `allowedUsers` entry (exact, case-sensitive);
-- exactly one roles header whose comma-separated list contains `requiredRole`;
+- if configured, exactly one username header naming an `allowedUsernames` entry;
+- exactly one roles header whose comma-separated list contains `requiredRole`
+  exactly (other entries, even with spaces or non-ASCII, are ignored);
 - the complete trusted forwarding tuple (see Facade admin edge) is valid;
 - no other `X-Secdns-SSO-*` header.
 
 Refusals are logged with a fixed reason token (`peer`, `secret`, `user`,
-`user_not_allowed`, `role`, `forwarded`, `unexpected_header`, `unavailable`);
+`user_not_allowed`, `username`, `username_not_allowed`, `role`, `forwarded`,
+`unexpected_header`, `unavailable`);
 header values, the secret and the user name are never logged.
 
 A valid assertion does not authorize requests by itself. `GET <path>/auth/state`
@@ -102,7 +118,16 @@ password+TOTP or passkey reauthentication.
 
 Requests without SSO headers keep the unchanged password+TOTP and passkey
 sign-in; that is the break-glass path when the identity provider or edge is
-unavailable (for example over an SSH tunnel to the loopback listener).
+unavailable. On the host, root reaches it with
+`curl --unix-socket /run/secdns-admin/console.sock` (with the forwarding tuple,
+`Origin` and `Sec-Fetch-Site` headers, as for any trusted proxy). For browser
+access without the identity provider, remove `trustedSSO`/the edge gate (the
+deployment's rollback) rather than opening another listener.
+
+Ending SSO access means revoking it in the identity provider (role or session)
+or removing `trustedSSO`: the console's "sign out other sessions" does not stop
+a new exchange. Rotate the shared secret by regenerating both copies, then
+reloading the edge and restarting the console.
 
 The edge must overwrite or remove every client-supplied `X-Secdns-SSO-*` header,
 send the secret only after its authentication subrequest succeeded, and keep the

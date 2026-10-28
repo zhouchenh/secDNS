@@ -99,12 +99,16 @@ func (h *HTTPAdminServer) trustedSocketSource(ip netip.Addr) bool {
 // peer and only when the complete Facade metadata tuple is singular and
 // internally consistent. A malformed tuple from a trusted peer fails closed.
 func (h *HTTPAdminServer) humanSource(r *http.Request) string {
-	socket, ok := socketSource(r)
-	if !ok {
-		return ""
-	}
-	if !h.trustedSocketSource(socket) {
-		return socket.String()
+	// A peer on the private unix-socket listener is the edge proxy (filesystem
+	// permissions are the boundary), so it is handled like a listed TCP source.
+	if !unixPeer(r) {
+		socket, ok := socketSource(r)
+		if !ok {
+			return ""
+		}
+		if !h.trustedSocketSource(socket) {
+			return socket.String()
+		}
 	}
 	if h.agent == nil || h.agent.origin == "" {
 		return ""

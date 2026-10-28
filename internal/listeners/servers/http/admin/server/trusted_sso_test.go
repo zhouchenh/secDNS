@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -15,7 +17,8 @@ import (
 // Synthetic values only. Assertions below check none of them reach logs or bodies.
 const (
 	ssoTestSecret = "synthetic-sso-header-secret-0123456789abcdefghijklmnop"
-	ssoTestUser   = "owner-sso-synthetic"
+	ssoTestUser   = "0f6a1c3e-5b2d-4e8f-9a7c-synthetic0001" // stands for the IdP subject (sub)
+	ssoTestName   = "owner-sso-synthetic"                   // secondary preferred_username match
 	ssoTestRole   = "secdns-console:access"
 )
 
@@ -57,6 +60,8 @@ func ssoTestConfig(t *testing.T) *TrustedSSO {
 		"requiredRole":     ssoTestRole,
 		"allowedUsers":     []interface{}{ssoTestUser},
 		"mapsTo":           "owner",
+		"usernameHeader":   "X-Secdns-SSO-Username",
+		"allowedUsernames": []interface{}{ssoTestName},
 	})
 	if !ok {
 		t.Fatal("valid trustedSSO refused")
@@ -75,6 +80,7 @@ func ssoTestServer(t *testing.T, enrolled bool) (*HTTPAdminServer, *ssoLogs) {
 		h, _ = humanTestServer(t)
 	}
 	h.TrustedProxySources = []netip.Addr{netip.MustParseAddr("127.0.0.1")}
+	h.ListenUnix = "/run/secdns-admin-test/console.sock"
 	h.TrustedSSO = ssoTestConfig(t)
 	if e := h.LoadTrustedSSOSecret(); e != nil {
 		t.Fatal(e)
@@ -86,13 +92,16 @@ func ssoTestServer(t *testing.T, enrolled bool) (*HTTPAdminServer, *ssoLogs) {
 
 func ssoRequest(h *HTTPAdminServer, method, path, body string) *http.Request {
 	r := httptest.NewRequest(method, "https://example.invalid/admin"+path, strings.NewReader(body))
-	r.RemoteAddr = "127.0.0.1:49152"
+	// as accepted on the private unix-socket listener (see markUnixPeer)
+	r = r.WithContext(context.WithValue(r.Context(), unixPeerKey{}, true))
+	r.RemoteAddr = "@"
 	r.Header.Set("Origin", h.agent.origin)
 	r.Header.Set("Sec-Fetch-Site", "same-origin")
 	r.Header.Set("Content-Type", "application/json")
 	setForwardedTuple(r, "example.invalid", "203.0.113.7")
 	r.Header.Set("X-Secdns-SSO-Secret", ssoTestSecret)
 	r.Header.Set("X-Secdns-SSO-User", ssoTestUser)
+	r.Header.Set("X-Secdns-SSO-Username", ssoTestName)
 	r.Header.Set("X-Secdns-SSO-Roles", "role:other,"+ssoTestRole+", role:x")
 	return r
 }
@@ -106,7 +115,7 @@ func serve(h *HTTPAdminServer, r *http.Request) *httptest.ResponseRecorder {
 func assertNoSSOLeak(t *testing.T, where string, values ...string) {
 	t.Helper()
 	for _, v := range values {
-		for _, secret := range []string{ssoTestSecret, ssoTestUser} {
+		for _, secret := range []string{ssoTestSecret, ssoTestUser, ssoTestName} {
 			if strings.Contains(v, secret) {
 				t.Fatalf("%s leaked an SSO value", where)
 			}
@@ -188,10 +197,11 @@ func TestTrustedSSOHeaderValidationMatrix(t *testing.T) {
 		name, reason string
 		mutate       func(*http.Request)
 	}{
-		{"spoofed-from-outside", "peer", func(r *http.Request) { r.RemoteAddr = "198.51.100.9:49152" }},
-		{"spoofed-from-facade-address", "peer", func(r *http.Request) { r.RemoteAddr = "100.91.1.47:443" }},
-		{"loopback-not-listed", "peer", func(r *http.Request) { r.RemoteAddr = "127.0.0.2:49152" }},
-		{"ipv6-loopback-not-listed", "peer", func(r *http.Request) { r.RemoteAddr = "[::1]:49152" }},
+		{"spoofed-from-outside", "peer", tcpPeer("198.51.100.9:49152")},
+		{"spoofed-from-facade-address", "peer", tcpPeer("100.91.1.47:443")},
+		{"tcp-loopback-listed-proxy", "peer", tcpPeer("127.0.0.1:49152")},
+		{"tcp-loopback-not-listed", "peer", tcpPeer("127.0.0.2:49152")},
+		{"tcp-ipv6-loopback", "peer", tcpPeer("[::1]:49152")},
 		{"wrong-secret", "secret", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Secret", ssoTestSecret+"x") }},
 		{"secret-prefix", "secret", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Secret", ssoTestSecret[:32]) }},
 		{"missing-secret", "secret", func(r *http.Request) { r.Header.Del("X-Secdns-SSO-Secret") }},
@@ -206,7 +216,11 @@ func TestTrustedSSOHeaderValidationMatrix(t *testing.T) {
 		{"missing-role-header", "role", func(r *http.Request) { r.Header.Del("X-Secdns-SSO-Roles") }},
 		{"wrong-role", "role", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Roles", "role:secdns-console:read") }},
 		{"role-substring", "role", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Roles", ssoTestRole+"x") }},
-		{"empty-role-entry", "role", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Roles", ssoTestRole+",,") }},
+		{"role-in-other-case", "role", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Roles", strings.ToUpper(ssoTestRole)) }},
+		{"missing-username", "username", func(r *http.Request) { r.Header.Del("X-Secdns-SSO-Username") }},
+		{"duplicate-username", "username", func(r *http.Request) { r.Header.Add("X-Secdns-SSO-Username", ssoTestName) }},
+		{"wrong-username", "username_not_allowed", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Username", "zhouchenh-renamed") }},
+		{"username-in-user-header", "user_not_allowed", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-User", ssoTestName) }},
 		{"duplicate-role-header", "role", func(r *http.Request) { r.Header.Add("X-Secdns-SSO-Roles", ssoTestRole) }},
 		{"unexpected-sso-header", "unexpected_header", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Email", "x@example.invalid") }},
 		{"only-user-header", "secret", func(r *http.Request) {
@@ -252,11 +266,36 @@ func TestTrustedSSOHeaderValidationMatrix(t *testing.T) {
 	}
 }
 
+// tcpPeer turns a request into one accepted on a TCP listener.
+func tcpPeer(remote string) func(*http.Request) {
+	return func(r *http.Request) {
+		*r = *r.WithContext(context.Background())
+		r.RemoteAddr = remote
+	}
+}
+
+func TestTrustedSSORoleListToleratesUnrelatedEntries(t *testing.T) {
+	h, _ := ssoTestServer(t, true)
+	for _, roles := range []string{
+		ssoTestRole,
+		"Group With Spaces," + ssoTestRole,
+		"rôle:ünïcode, ,," + ssoTestRole + ",x y z",
+	} {
+		r := ssoRequest(h, "GET", "/auth/state", "")
+		r.Header.Set("X-Secdns-SSO-Roles", roles)
+		w := serve(h, r)
+		if w.Code != 200 || !strings.Contains(w.Body.String(), `"sso_login":true`) {
+			t.Fatalf("roles %q: %d %s", roles, w.Code, w.Body.String())
+		}
+	}
+}
+
 func TestTrustedSSOAbsentHeadersKeepBreakGlassLogin(t *testing.T) {
 	h, logs := ssoTestServer(t, true)
 	strip := func(r *http.Request) *http.Request {
 		r.Header.Del("X-Secdns-SSO-Secret")
 		r.Header.Del("X-Secdns-SSO-User")
+		r.Header.Del("X-Secdns-SSO-Username")
 		r.Header.Del("X-Secdns-SSO-Roles")
 		return r
 	}
@@ -396,23 +435,29 @@ func TestTrustedSSOParseRefusals(t *testing.T) {
 		t.Fatal("valid configuration refused")
 	}
 	for name, mutate := range map[string]func(map[string]interface{}){
-		"missing":       func(m map[string]interface{}) { delete(m, "mapsTo") },
-		"extra":         func(m map[string]interface{}) { m["optional"] = true },
-		"prefix":        func(m map[string]interface{}) { m["userHeader"] = "X-Auth-Request-User" },
-		"bare-prefix":   func(m map[string]interface{}) { m["userHeader"] = "X-Secdns-SSO-" },
-		"header-chars":  func(m map[string]interface{}) { m["userHeader"] = "X-Secdns-SSO-User_" },
-		"same-header":   func(m map[string]interface{}) { m["rolesHeader"] = "x-secdns-sso-secret" },
-		"relative":      func(m map[string]interface{}) { m["headerSecretFile"] = "secret" },
-		"dotdot":        func(m map[string]interface{}) { m["headerSecretFile"] = "/etc/../secret" },
-		"maps-to":       func(m map[string]interface{}) { m["mapsTo"] = "Owner" },
-		"role-space":    func(m map[string]interface{}) { m["requiredRole"] = "a b" },
-		"role-empty":    func(m map[string]interface{}) { m["requiredRole"] = "" },
-		"users-string":  func(m map[string]interface{}) { m["allowedUsers"] = "zhouchenh" },
-		"users-empty":   func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{} },
-		"users-dup":     func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{"a", "a"} },
-		"users-number":  func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{1.0} },
-		"user-long":     func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{strings.Repeat("u", 255)} },
-		"secret-number": func(m map[string]interface{}) { m["headerSecretFile"] = 1.0 },
+		"missing":        func(m map[string]interface{}) { delete(m, "mapsTo") },
+		"extra":          func(m map[string]interface{}) { m["optional"] = true },
+		"prefix":         func(m map[string]interface{}) { m["userHeader"] = "X-Auth-Request-User" },
+		"bare-prefix":    func(m map[string]interface{}) { m["userHeader"] = "X-Secdns-SSO-" },
+		"header-chars":   func(m map[string]interface{}) { m["userHeader"] = "X-Secdns-SSO-User_" },
+		"same-header":    func(m map[string]interface{}) { m["rolesHeader"] = "x-secdns-sso-secret" },
+		"relative":       func(m map[string]interface{}) { m["headerSecretFile"] = "secret" },
+		"dotdot":         func(m map[string]interface{}) { m["headerSecretFile"] = "/etc/../secret" },
+		"maps-to":        func(m map[string]interface{}) { m["mapsTo"] = "Owner" },
+		"role-space":     func(m map[string]interface{}) { m["requiredRole"] = "a b" },
+		"role-empty":     func(m map[string]interface{}) { m["requiredRole"] = "" },
+		"users-string":   func(m map[string]interface{}) { m["allowedUsers"] = "zhouchenh" },
+		"users-empty":    func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{} },
+		"users-dup":      func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{"a", "a"} },
+		"users-number":   func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{1.0} },
+		"user-long":      func(m map[string]interface{}) { m["allowedUsers"] = []interface{}{strings.Repeat("u", 255)} },
+		"secret-number":  func(m map[string]interface{}) { m["headerSecretFile"] = 1.0 },
+		"username-only":  func(m map[string]interface{}) { m["usernameHeader"] = "X-Secdns-SSO-Username" },
+		"usernames-only": func(m map[string]interface{}) { m["allowedUsernames"] = []interface{}{"zhouchenh"} },
+		"username-same-header": func(m map[string]interface{}) {
+			m["usernameHeader"] = "X-Secdns-SSO-User"
+			m["allowedUsernames"] = []interface{}{"zhouchenh"}
+		},
 	} {
 		m := base()
 		mutate(m)
@@ -422,5 +467,139 @@ func TestTrustedSSOParseRefusals(t *testing.T) {
 	}
 	if _, ok := ParseTrustedSSO(nil); ok {
 		t.Fatal("null accepted")
+	}
+}
+
+func unixTestClient(path string) *http.Client {
+	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	}}}
+}
+
+func TestListenUnixServesAndMarksPeer(t *testing.T) {
+	h, logs := ssoTestServer(t, true)
+	dir := filepath.Join(t.TempDir(), "run")
+	if e := os.Mkdir(dir, 0750); e != nil {
+		t.Fatal(e)
+	}
+	os.Chmod(dir, 0750)
+	h.ListenUnix = filepath.ToSlash(filepath.Join(dir, "console.sock"))
+	listener, e := h.listenUnix()
+	if e != nil {
+		t.Fatal(e)
+	}
+	srv := h.httpServer()
+	go srv.Serve(listener)
+	t.Cleanup(func() { srv.Close() })
+	info, e := os.Stat(filepath.Join(dir, "console.sock"))
+	if e != nil || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0660 {
+		t.Fatalf("socket mode: %v %v", e, info)
+	}
+	client := unixTestClient(filepath.Join(dir, "console.sock"))
+	do := func(r *http.Request) (*http.Response, string) {
+		r.RequestURI = ""
+		resp, e := client.Do(r)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer resp.Body.Close()
+		b := new(strings.Builder)
+		buf := make([]byte, 4096)
+		for {
+			n, err := resp.Body.Read(buf)
+			b.Write(buf[:n])
+			if err != nil {
+				break
+			}
+		}
+		return resp, b.String()
+	}
+	strip := func(r *http.Request) *http.Request { *r = *r.WithContext(context.Background()); return r }
+	resp, body := do(strip(ssoRequest(h, "GET", "/auth/state", "")))
+	if resp.StatusCode != 200 || !strings.Contains(body, `"sso_login":true`) {
+		t.Fatalf("state over unix socket: %d %s", resp.StatusCode, body)
+	}
+	resp, body = do(strip(ssoRequest(h, "POST", "/auth/login/sso", `{}`)))
+	if resp.StatusCode != 200 || !strings.Contains(body, `"principal_type":"human"`) || len(resp.Cookies()) != 1 {
+		t.Fatalf("exchange over unix socket: %d %s", resp.StatusCode, body)
+	}
+	// Break-glass over the socket: no SSO headers, password step works.
+	r := strip(ssoRequest(h, "POST", "/auth/login/password", `{"username":"owner","password":"A synthetic long password phrase 8472!"}`))
+	for _, k := range []string{"X-Secdns-Sso-Secret", "X-Secdns-Sso-User", "X-Secdns-Sso-Username", "X-Secdns-Sso-Roles"} {
+		r.Header.Del(k)
+	}
+	if resp, body = do(r); resp.StatusCode != 200 || !strings.Contains(body, "challenge") {
+		t.Fatalf("break-glass over unix socket: %d %s", resp.StatusCode, body)
+	}
+	// The same assertion over TCP (even loopback) is refused.
+	tcp := httptest.NewServer(h.routes())
+	t.Cleanup(tcp.Close)
+	r = strip(ssoRequest(h, "GET", "/auth/state", ""))
+	r.URL.Scheme, r.URL.Host, r.RequestURI = "http", strings.TrimPrefix(tcp.URL, "http://"), ""
+	tr, e := http.DefaultClient.Do(r)
+	if e != nil {
+		t.Fatal(e)
+	}
+	tr.Body.Close()
+	if tr.StatusCode != 403 || logs.last().reason != "peer" {
+		t.Fatalf("assertion over TCP: %d %+v", tr.StatusCode, logs.last())
+	}
+}
+
+func TestListenUnixRefusesUnsafeLocation(t *testing.T) {
+	h := &HTTPAdminServer{}
+	base := t.TempDir()
+	mk := func(name string, mode os.FileMode) string {
+		d := filepath.Join(base, name)
+		os.Mkdir(d, 0700)
+		os.Chmod(d, mode)
+		return d
+	}
+	for name, path := range map[string]string{
+		"world-accessible-dir": filepath.Join(mk("w", 0755), "s.sock"),
+		"group-writable-dir":   filepath.Join(mk("g", 0770), "s.sock"),
+		"missing-dir":          filepath.Join(base, "absent", "s.sock"),
+		"relative":             "s.sock",
+	} {
+		h.ListenUnix = filepath.ToSlash(path)
+		if l, e := h.listenUnix(); e == nil {
+			l.Close()
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	d := mk("ok", 0750)
+	regular := filepath.Join(d, "file.sock")
+	os.WriteFile(regular, []byte("x"), 0600)
+	h.ListenUnix = filepath.ToSlash(regular)
+	if l, e := h.listenUnix(); e == nil {
+		l.Close()
+		t.Fatal("existing regular file replaced")
+	}
+	link := filepath.Join(base, "link")
+	if os.Symlink(d, link) == nil {
+		h.ListenUnix = filepath.ToSlash(filepath.Join(link, "s.sock"))
+		if l, e := h.listenUnix(); e == nil {
+			l.Close()
+			t.Fatal("symlinked directory accepted")
+		}
+	}
+	// A stale socket from an earlier run is replaced.
+	h.ListenUnix = filepath.ToSlash(filepath.Join(d, "s.sock"))
+	l, e := h.listenUnix()
+	if e != nil {
+		t.Fatal(e)
+	}
+	if ul, ok := l.(*net.UnixListener); ok {
+		ul.SetUnlinkOnClose(false)
+	}
+	l.Close()
+	if l, e = h.listenUnix(); e != nil {
+		t.Fatalf("stale socket not replaced: %v", e)
+	}
+	l.Close()
+	for _, bad := range []string{"", "/", "/run/../x.sock", "/run/a/", "/" + strings.Repeat("a", 120)} {
+		if ValidListenUnixPath(bad) {
+			t.Fatalf("path %q accepted", bad)
+		}
 	}
 }

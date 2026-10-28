@@ -25,6 +25,7 @@ func trustedSSOConfigFixture(t *testing.T) (map[string]any, string) {
 		"listen": "127.0.0.1", "port": 19054, "path": "/admin", "token": "synthetic-local-token", "ui": true,
 		"recordAuthorityURL": "http://127.0.0.1:18055/owned-static", "recordAuthorityToken": strings.Repeat("x", 32),
 		"trustedProxySources": []any{"127.0.0.1"},
+		"listenUnix":          "/run/secdns-admin/console.sock",
 		"trustedSSO": map[string]any{
 			"headerSecretFile": filepath.ToSlash(secret),
 			"secretHeader":     "X-Secdns-SSO-Secret",
@@ -33,6 +34,8 @@ func trustedSSOConfigFixture(t *testing.T) (map[string]any, string) {
 			"requiredRole":     "secdns-console:access",
 			"allowedUsers":     []any{"owner"},
 			"mapsTo":           "owner",
+			"usernameHeader":   "X-Secdns-SSO-Username",
+			"allowedUsernames": []any{"zhouchenh"},
 		},
 	}
 	if e := adminauth.CreateKey(def.KeyPath); e != nil {
@@ -61,7 +64,10 @@ func TestTrustedSSOLoadedConfig(t *testing.T) {
 		t.Fatal("auth binding lost")
 	}
 	sso := ai.bindings[0].server.TrustedSSO
-	if sso == nil || sso.UserHeader != "X-Secdns-Sso-User" || sso.RequiredRole != "secdns-console:access" || len(sso.AllowedUsers) != 1 || sso.MapsTo != "owner" {
+	if ai.bindings[0].server.ListenUnix != "/run/secdns-admin/console.sock" {
+		t.Fatal("descriptor dropped listenUnix")
+	}
+	if sso == nil || sso.UsernameHeader != "X-Secdns-Sso-Username" || len(sso.AllowedUsernames) != 1 || sso.UserHeader != "X-Secdns-Sso-User" || sso.RequiredRole != "secdns-console:access" || len(sso.AllowedUsers) != 1 || sso.MapsTo != "owner" {
 		t.Fatal("descriptor dropped trustedSSO")
 	}
 	if got := sso.String(); got != "server.TrustedSSO[redacted]" {
@@ -71,7 +77,8 @@ func TestTrustedSSOLoadedConfig(t *testing.T) {
 
 func TestTrustedSSOConfigRefusals(t *testing.T) {
 	for _, kind := range []string{
-		"no-origin", "no-auth", "no-proxy", "non-loopback-proxy", "missing-key", "extra-key", "bad-prefix", "same-header",
+		"no-origin", "no-auth", "no-listen-unix", "listen-unix-relative", "listen-unix-dotdot", "duplicate-listen-unix",
+		"username-without-list", "missing-key", "extra-key", "bad-prefix", "same-header",
 		"relative-path", "unclean-path", "maps-to", "no-users", "duplicate-user", "user-comma", "user-space", "role-comma",
 		"too-many-users", "not-object", "null", "secret-missing", "secret-group-readable", "secret-short", "secret-control",
 		"secret-symlink", "secret-directory", "duplicate-block", "duplicate-field",
@@ -91,10 +98,15 @@ func TestTrustedSSOConfigRefusals(t *testing.T) {
 				delete(c, "recordAuthorityURL")
 				delete(c, "recordAuthorityToken")
 				delete(c, "trustedProxySources")
-			case "no-proxy":
-				delete(c, "trustedProxySources")
-			case "non-loopback-proxy":
-				c["trustedProxySources"] = []any{"192.0.2.10"}
+				delete(c, "listenUnix")
+			case "no-listen-unix":
+				delete(c, "listenUnix")
+			case "listen-unix-relative":
+				c["listenUnix"] = "run/console.sock"
+			case "listen-unix-dotdot":
+				c["listenUnix"] = "/run/../console.sock"
+			case "username-without-list":
+				delete(sso, "allowedUsernames")
 			case "missing-key":
 				delete(sso, "rolesHeader")
 			case "extra-key":
@@ -150,6 +162,8 @@ func TestTrustedSSOConfigRefusals(t *testing.T) {
 				b = bytes.Replace(b, []byte(`"trustedSSO":`), []byte(`"trustedSSO":{},"trustedSSO":`), 1)
 			case "duplicate-field":
 				b = bytes.Replace(b, []byte(`"mapsTo":"owner"`), []byte(`"mapsTo":"owner","mapsTo":"owner"`), 1)
+			case "duplicate-listen-unix":
+				b = bytes.Replace(b, []byte(`"listenUnix":`), []byte(`"listenUnix":"/run/x/y.sock","listenUnix":`), 1)
 			}
 			if ValidateConfig(bytes.NewReader(b)) == nil {
 				t.Fatal("invalid trustedSSO accepted by -test validation")
@@ -158,5 +172,20 @@ func TestTrustedSSOConfigRefusals(t *testing.T) {
 				t.Fatal("invalid trustedSSO accepted at load")
 			}
 		})
+	}
+}
+
+func TestListenUnixRequiresBrowserAuthOrigin(t *testing.T) {
+	raw, _ := trustedSSOConfigFixture(t)
+	l := raw["listeners"].([]any)[0].(map[string]any)
+	delete(l["config"].(map[string]any), "trustedSSO")
+	b, _ := json.Marshal(raw)
+	if e := ValidateConfig(bytes.NewReader(b)); e != nil {
+		t.Fatal(e)
+	}
+	delete(l, "publicOrigin")
+	b, _ = json.Marshal(raw)
+	if ValidateConfig(bytes.NewReader(b)) == nil {
+		t.Fatal("listenUnix accepted without the exact public origin")
 	}
 }

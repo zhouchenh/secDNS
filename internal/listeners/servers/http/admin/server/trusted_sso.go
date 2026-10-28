@@ -35,9 +35,13 @@ const (
 // TrustedSSO lets the local edge (nginx behind an oauth2-proxy role gate) assert
 // the already-authenticated owner identity. It is absent and off by default.
 // An assertion is accepted only when every one of these holds:
-//   - the socket peer is a loopback address listed in trustedProxySources;
+//   - the peer reached the console's private unix socket (listenUnix), whose
+//     directory only the console, root and the edge's group can enter; TCP peers,
+//     including loopback, are never trusted for SSO (no port-squatting window);
 //   - exactly one secret header matches the secret file (constant time);
-//   - exactly one user header names an allowed user;
+//   - exactly one user header names an allowed user (the identity provider's
+//     immutable subject); when usernameHeader is configured, exactly one username
+//     header must also name an allowed username (secondary match);
 //   - exactly one roles header contains the required role;
 //   - the complete trusted forwarding tuple is valid;
 //   - no other X-Secdns-SSO-* header is present.
@@ -54,6 +58,9 @@ type TrustedSSO struct {
 	RequiredRole     string
 	AllowedUsers     []string
 	MapsTo           string
+	// Optional secondary match (both or neither).
+	UsernameHeader   string
+	AllowedUsernames []string
 
 	secretDigest [sha256.Size]byte
 	loaded       bool
@@ -64,6 +71,7 @@ func (*TrustedSSO) String() string   { return "server.TrustedSSO[redacted]" }
 func (*TrustedSSO) GoString() string { return "server.TrustedSSO[redacted]" }
 
 var trustedSSOKeys = []string{"headerSecretFile", "secretHeader", "userHeader", "rolesHeader", "requiredRole", "allowedUsers", "mapsTo"}
+var trustedSSOOptionalKeys = []string{"usernameHeader", "allowedUsernames"}
 
 func trustedSSOValue(original interface{}) (interface{}, bool) {
 	config, ok := original.(map[string]interface{})
@@ -85,13 +93,22 @@ func trustedSSOValue(original interface{}) (interface{}, bool) {
 // secret file is read by LoadTrustedSSOSecret at configuration load.
 func ParseTrustedSSO(raw interface{}) (*TrustedSSO, bool) {
 	m, ok := raw.(map[string]interface{})
-	if !ok || len(m) != len(trustedSSOKeys) {
+	if !ok {
 		return nil, false
 	}
 	for _, key := range trustedSSOKeys {
 		if _, ok := m[key]; !ok {
 			return nil, false
 		}
+	}
+	optional := 0
+	for _, key := range trustedSSOOptionalKeys {
+		if _, ok := m[key]; ok {
+			optional++
+		}
+	}
+	if (optional != 0 && optional != len(trustedSSOOptionalKeys)) || len(m) != len(trustedSSOKeys)+optional {
+		return nil, false
 	}
 	text := func(key string) string {
 		v, _ := m[key].(string)
@@ -109,8 +126,13 @@ func ParseTrustedSSO(raw interface{}) (*TrustedSSO, bool) {
 	if p == "" || len(p) > 4096 || !strings.HasPrefix(p, "/") || !filepath.IsAbs(filepath.FromSlash(p)) || filepath.ToSlash(filepath.Clean(filepath.FromSlash(p))) != p {
 		return nil, false
 	}
+	names := []string{out.SecretHeader, out.UserHeader, out.RolesHeader}
+	if optional != 0 {
+		out.UsernameHeader = http.CanonicalHeaderKey(text("usernameHeader"))
+		names = append(names, out.UsernameHeader)
+	}
 	headers := map[string]bool{}
-	for _, name := range []string{out.SecretHeader, out.UserHeader, out.RolesHeader} {
+	for _, name := range names {
 		if !validTrustedSSOHeaderName(name) || headers[name] {
 			return nil, false
 		}
@@ -119,18 +141,31 @@ func ParseTrustedSSO(raw interface{}) (*TrustedSSO, bool) {
 	if !validTrustedSSOValue(out.RequiredRole, 128) || out.MapsTo != "owner" {
 		return nil, false
 	}
-	users, ok := m["allowedUsers"].([]interface{})
-	if !ok || len(users) == 0 || len(users) > trustedSSOMaxUsers {
+	if out.AllowedUsers, ok = trustedSSOList(m["allowedUsers"]); !ok {
+		return nil, false
+	}
+	if optional != 0 {
+		if out.AllowedUsernames, ok = trustedSSOList(m["allowedUsernames"]); !ok {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+func trustedSSOList(raw interface{}) ([]string, bool) {
+	values, ok := raw.([]interface{})
+	if !ok || len(values) == 0 || len(values) > trustedSSOMaxUsers {
 		return nil, false
 	}
 	seen := map[string]bool{}
-	for _, value := range users {
-		user, ok := value.(string)
-		if !ok || !validTrustedSSOValue(user, trustedSSOMaxValue) || seen[user] {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		v, ok := value.(string)
+		if !ok || !validTrustedSSOValue(v, trustedSSOMaxValue) || seen[v] {
 			return nil, false
 		}
-		seen[user] = true
-		out.AllowedUsers = append(out.AllowedUsers, user)
+		seen[v] = true
+		out = append(out, v)
 	}
 	return out, true
 }
@@ -211,21 +246,17 @@ func (h *HTTPAdminServer) LoadTrustedSSOSecret() error {
 }
 
 // ValidateTrustedSSO checks the listener-level preconditions: an auth store with
-// an exact HTTPS public origin (checked by the configuration binder) and at
-// least one loopback trusted proxy source.
+// an exact HTTPS public origin (checked by the configuration binder) and the
+// private unix-socket listener. A TCP listener, even on loopback, can be bound
+// by any local user while the console restarts, so SSO refuses it.
 func (h *HTTPAdminServer) ValidateTrustedSSO() error {
 	if h.TrustedSSO == nil {
 		return nil
 	}
-	if h.FollowerStatusOnly {
+	if h.FollowerStatusOnly || h.ListenUnix == "" {
 		return ErrTrustedSSO
 	}
-	for _, source := range h.TrustedProxySources {
-		if source.IsLoopback() {
-			return nil
-		}
-	}
-	return ErrTrustedSSO
+	return nil
 }
 
 type trustedSSOState int
@@ -248,7 +279,8 @@ func (h *HTTPAdminServer) trustedSSOCheck(r *http.Request) (trustedSSOState, str
 		canonical := http.CanonicalHeaderKey(name)
 		if len(canonical) >= len(trustedSSOHeaderPrefix) && strings.EqualFold(canonical[:len(trustedSSOHeaderPrefix)], trustedSSOHeaderPrefix) {
 			present = true
-			if canonical != c.SecretHeader && canonical != c.UserHeader && canonical != c.RolesHeader || canonical != name {
+			known := canonical == c.SecretHeader || canonical == c.UserHeader || canonical == c.RolesHeader || (c.UsernameHeader != "" && canonical == c.UsernameHeader)
+			if !known || canonical != name {
 				unexpected = true
 			}
 		}
@@ -262,8 +294,7 @@ func (h *HTTPAdminServer) trustedSSOCheck(r *http.Request) (trustedSSOState, str
 	if !c.loaded {
 		return trustedSSOInvalid, "unavailable"
 	}
-	socket, ok := socketSource(r)
-	if !ok || !socket.IsLoopback() || !h.trustedSocketSource(socket) {
+	if h.ListenUnix == "" || !unixPeer(r) {
 		return trustedSSOInvalid, "peer"
 	}
 	secrets := r.Header.Values(c.SecretHeader)
@@ -282,13 +313,12 @@ func (h *HTTPAdminServer) trustedSSOCheck(r *http.Request) (trustedSSOState, str
 	if len(roles) != 1 || roles[0] == "" || len(roles[0]) > trustedSSOMaxRoles {
 		return trustedSSOInvalid, "role"
 	}
+	// Only an exact entry equal to requiredRole counts. Other entries (an
+	// identity provider may add roles or groups with spaces or non-ASCII names)
+	// are ignored rather than refusing the whole assertion.
 	hasRole := false
 	for _, role := range strings.Split(roles[0], ",") {
-		role = strings.TrimSpace(role)
-		if role == "" || !validTrustedSSOValue(role, trustedSSOMaxRoles) {
-			return trustedSSOInvalid, "role"
-		}
-		if role == c.RequiredRole {
+		if strings.TrimSpace(role) == c.RequiredRole {
 			hasRole = true
 		}
 	}
@@ -303,6 +333,21 @@ func (h *HTTPAdminServer) trustedSSOCheck(r *http.Request) (trustedSSOState, str
 	}
 	if !allowed {
 		return trustedSSOInvalid, "user_not_allowed"
+	}
+	if c.UsernameHeader != "" {
+		names := r.Header.Values(c.UsernameHeader)
+		if len(names) != 1 || !validTrustedSSOValue(names[0], trustedSSOMaxValue) {
+			return trustedSSOInvalid, "username"
+		}
+		match := false
+		for _, name := range c.AllowedUsernames {
+			if name == names[0] {
+				match = true
+			}
+		}
+		if !match {
+			return trustedSSOInvalid, "username_not_allowed"
+		}
 	}
 	if h.humanSource(r) == "" {
 		return trustedSSOInvalid, "forwarded"

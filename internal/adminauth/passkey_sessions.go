@@ -25,7 +25,7 @@ func (s *Sessions) withRecentHuman(token, csrf string, now time.Time, fn func(*s
 	}
 	d, cd := s.store.digest(token), s.store.digest(csrf)
 	v, ok := s.entries[d]
-	if !ok || expired(v, now) || v.actor.Kind() != "human" || !hmac.Equal(cd[:], v.csrf[:]) || now.Before(v.authenticated) || !now.Before(v.authenticated.Add(5*time.Minute)) {
+	if !ok || expired(v, now) || v.actor.Kind() != "human" || !hmac.Equal(cd[:], v.csrf[:]) || now.Before(v.authenticated) || !now.Before(v.authenticated.Add(RecentAuthenticationWindow)) {
 		return ErrDenied
 	}
 	return s.store.write(func(tx *sql.Tx) error {
