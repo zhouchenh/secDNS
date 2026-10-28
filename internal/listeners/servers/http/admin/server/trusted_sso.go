@@ -318,7 +318,8 @@ func (h *HTTPAdminServer) trustedSSOLog(accepted bool, reason string) {
 		return
 	}
 	if accepted {
-		logger.Info().Str("method", "sso").Msg("admin auth: trusted single sign-on owner session issued")
+		// Warning is the default visible level; a sign-in without a console password must be visible.
+		logger.Warning().Str("method", "sso").Msg("admin auth: owner session issued from trusted single sign-on")
 		return
 	}
 	logger.Warning().Str("method", "sso").Str("reason", reason).Msg("admin auth: trusted single sign-on assertion rejected")
