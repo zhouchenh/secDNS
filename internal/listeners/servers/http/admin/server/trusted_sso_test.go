@@ -13,6 +13,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/zhouchenh/secDNS/internal/adminauth"
+	"time"
 )
 
 // Synthetic values only. Assertions below check none of them reach logs or bodies.
@@ -174,12 +177,19 @@ func TestTrustedSSOValidAssertionIssuesNormalOwnerSession(t *testing.T) {
 		t.Fatalf("mutation with CSRF = %d %s", got.Code, got.Body.String())
 	}
 
-	// Not a recent authentication: credential management needs password+TOTP.
-	r = ssoRequest(h, "POST", "/auth/totp/begin", `{}`)
+	// Without a fresh auth_time the SSO session is not recent.
+	r = ssoRequest(h, "POST", "/auth/sessions/revoke-others", `{}`)
 	r.AddCookie(cookies[0])
 	r.Header.Set("X-SecDNS-CSRF", csrf)
 	if got := serve(h, r); got.Code != 403 || !strings.Contains(got.Body.String(), "recent_authentication_required") {
 		t.Fatalf("SSO session treated as recent: %d %s", got.Code, got.Body.String())
+	}
+	// Credential management is break-glass only on the SSO path.
+	r = ssoRequest(h, "POST", "/auth/totp/begin", `{}`)
+	r.AddCookie(cookies[0])
+	r.Header.Set("X-SecDNS-CSRF", csrf)
+	if got := serve(h, r); got.Code != 403 || !strings.Contains(got.Body.String(), "break_glass_only") {
+		t.Fatalf("TOTP replacement offered on the SSO path: %d %s", got.Code, got.Body.String())
 	}
 
 	// Durable audit uses the release-compatible owner login action.
@@ -789,5 +799,93 @@ func TestTrustedSSOSessionExposesFixedSignOut(t *testing.T) {
 	}
 	if out := sessionJSON(owner.Session); out["sso"] != nil || out["sign_out_url"] != nil {
 		t.Fatal("password session JSON has SSO fields")
+	}
+}
+
+func ssoTokensWithAuthTime(r *http.Request, authTime int64) {
+	claims := map[string]any{"sub": ssoTestUser}
+	if authTime != 0 {
+		claims["auth_time"] = authTime
+	}
+	r.Header.Set("X-Secdns-SSO-Id-Token", "Bearer "+ssoTestJWT(claims))
+}
+
+func TestTrustedSSOPublicPathNeverOffersBreakGlass(t *testing.T) {
+	h, _ := ssoTestServer(t, true)
+	for _, path := range []string{"/auth/login/password", "/auth/login/totp", "/auth/setup/begin", "/auth/recovery/local",
+		"/auth/recovery/code", "/auth/agent-session", "/auth/totp/begin", "/auth/totp/confirm", "/auth/reauth/password-totp",
+		"/auth/password", "/auth/recovery-codes/regenerate", "/auth/passkeys/login/begin"} {
+		w := serve(h, ssoRequest(h, "POST", path, `{}`))
+		if w.Code != 403 || !strings.Contains(w.Body.String(), "break_glass_only") {
+			t.Fatalf("%s on the SSO path: %d %s", path, w.Code, w.Body.String())
+		}
+	}
+	// The same password step without SSO headers (private socket, break-glass) still works.
+	r := ssoRequest(h, "POST", "/auth/login/password", `{"username":"owner","password":"A synthetic long password phrase 8472!"}`)
+	for _, k := range []string{"X-Secdns-SSO-Secret", "X-Secdns-SSO-User", "X-Secdns-SSO-Username", "X-Secdns-SSO-Roles", "X-Secdns-SSO-Id-Token", "X-Secdns-SSO-Access-Token"} {
+		r.Header.Del(k)
+	}
+	if w := serve(h, r); w.Code != 200 || !strings.Contains(w.Body.String(), "challenge") {
+		t.Fatalf("break-glass password step: %d %s", w.Code, w.Body.String())
+	}
+	// Read-only and exchange routes stay available on the SSO path.
+	if w := serve(h, ssoRequest(h, "GET", "/auth/state", "")); w.Code != 200 {
+		t.Fatalf("state on the SSO path: %d", w.Code)
+	}
+}
+
+func TestTrustedSSOStepUpIsAFreshIdentityProviderSignIn(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		name     string
+		authTime int64
+		recent   bool
+	}{
+		{"fresh", now.Add(-time.Minute).Unix(), true},
+		{"just-now", now.Unix(), true},
+		{"old-sso-reuse", now.Add(-10 * time.Minute).Unix(), false},
+		{"at-window", now.Add(-adminauth.RecentAuthenticationWindow - time.Second).Unix(), false},
+		{"future", now.Add(10 * time.Minute).Unix(), false},
+		{"absent", 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, _ := ssoTestServer(t, true)
+			r := ssoRequest(h, "POST", "/auth/login/sso", `{}`)
+			ssoTokensWithAuthTime(r, c.authTime)
+			w := serve(h, r)
+			var out map[string]any
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil {
+				t.Fatalf("exchange: %d %s", w.Code, w.Body.String())
+			}
+			r = ssoRequest(h, "POST", "/auth/sessions/revoke-others", `{}`)
+			ssoTokensWithAuthTime(r, c.authTime)
+			r.AddCookie(w.Result().Cookies()[0])
+			r.Header.Set("X-SecDNS-CSRF", out["csrf"].(string))
+			got := serve(h, r)
+			if c.recent && got.Code != 200 {
+				t.Fatalf("fresh WithMy ID sign-in not accepted as step-up: %d %s", got.Code, got.Body.String())
+			}
+			if !c.recent && (got.Code != 403 || !strings.Contains(got.Body.String(), "recent_authentication_required")) {
+				t.Fatalf("stale/absent auth_time treated as recent: %d %s", got.Code, got.Body.String())
+			}
+		})
+	}
+}
+
+func TestTrustedSSOPageCarriesNoPasswordField(t *testing.T) {
+	h, _ := ssoTestServer(t, true)
+	h.UI = true
+	r := ssoRequest(h, "GET", "/ui/", "")
+	r.Header.Del("Content-Type")
+	w := serve(h, r)
+	if w.Code != 200 || strings.Contains(w.Body.String(), `type="password"`) || !strings.Contains(w.Body.String(), `<section id="login" class="card" hidden>`) {
+		t.Fatalf("SSO page: %d password-field=%v", w.Code, strings.Contains(w.Body.String(), `type="password"`))
+	}
+	// Break-glass (no SSO headers) keeps today's page.
+	r = httptest.NewRequest("GET", "https://example.invalid/admin/ui/", nil)
+	r.RemoteAddr = "127.0.0.1:40000"
+	w = serve(h, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `type="password"`) {
+		t.Fatalf("break-glass page: %d", w.Code)
 	}
 }

@@ -60,10 +60,28 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 			data = bytes.ReplaceAll(data, []byte("<!-- follower-status-link -->"), link)
 			data = h.consolePage(data, base, "records")
 		}
+		ssoData := data
+		if asset.file == "index.html" {
+			ssoData = withoutLegacyTokenForm(data)
+		}
 		mux.HandleFunc("GET "+base+"/ui"+asset.route, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
 			w.Header().Set("Content-Type", asset.contentType)
+			// The single sign-on path never receives a credential form, not even hidden.
+			if h.trustedSSOAvailable(r) {
+				_, _ = w.Write(ssoData)
+				return
+			}
 			_, _ = w.Write(data)
 		})
 	}
+}
+
+// withoutLegacyTokenForm neutralizes the legacy token access section on the
+// records page served on the single sign-on path: the section is hidden and its
+// password field becomes a hidden input (the element IDs the page script uses
+// stay), so no credential entry field is ever delivered there.
+func withoutLegacyTokenForm(page []byte) []byte {
+	out := bytes.Replace(page, []byte(`<section id="login" class="card">`), []byte(`<section id="login" class="card" hidden>`), 1)
+	return bytes.Replace(out, []byte(`<input id="token" type="password"`), []byte(`<input id="token" type="hidden"`), 1)
 }

@@ -2,7 +2,7 @@
   "use strict";
   const script = new URL(document.currentScript.src);
   const base = new URL("../", script);
-  let allowedOrigin=false, publicState=null;
+  let allowedOrigin=false, publicState=null, ssoMode=false;  // ssoMode: agent sign-in is never offered on the SSO path
   let actor = null, csrf = "", epoch = 0, timer = null, warningTimer=null;
   const panel = document.createElement("section"); panel.className = "card"; panel.id="agent-access"; panel.hidden = true;
   const title = document.createElement("h2"); title.textContent = "Agent access";
@@ -17,7 +17,7 @@
   const warning=document.createElement("p");warning.id="auth-session-warning";warning.role="status";warning.setAttribute("aria-live","polite");
   document.querySelector("header")?.append(identity,logout,warning);
   const fire = name => window.dispatchEvent(new Event(name));
-  const localClear = () => { epoch++; actor = null; csrf = ""; input.value = ""; identity.textContent = ""; identity.hidden = logout.hidden = true; form.hidden = false;panel.hidden=!allowedOrigin; clearTimeout(timer);clearTimeout(warningTimer);warning.textContent=""; };
+  const localClear = () => { epoch++; actor = null; csrf = ""; input.value = ""; identity.textContent = ""; identity.hidden = logout.hidden = true; form.hidden = false;panel.hidden=!allowedOrigin||ssoMode; clearTimeout(timer);clearTimeout(warningTimer);warning.textContent=""; };
   async function api(path, options = {}) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -84,5 +84,5 @@
   // With a valid edge assertion and no console session, exchange it once for the
   // owner's normal session; otherwise the console's own sign-in stays available.
   const ssoLogin=()=>api("login/sso",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(data=>{if(initialEpoch!==epoch)return;accept(data);note.textContent="Signed in with single sign-on.";fire("agentconnected");});
-  api("state",{credentials:"same-origin"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;panel.hidden=!allowedOrigin;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(error=>{if(error.status===401&&state.sso_login===true&&state.human_access===true&&initialEpoch===epoch)return ssoLogin();}).catch(()=>{});}).catch(()=>{});
+  api("state",{credentials:"same-origin"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;ssoMode=state.sso_login===true;panel.hidden=!allowedOrigin||ssoMode;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(error=>{if(error.status===401&&state.sso_login===true&&state.human_access===true&&initialEpoch===epoch)return ssoLogin();}).catch(()=>{});}).catch(()=>{});
 })();

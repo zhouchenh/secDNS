@@ -469,9 +469,14 @@ func (h *HTTPAdminServer) trustedSSOGate(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if state, reason := h.trustedSSOCheck(r); state == trustedSSOInvalid {
+		state, reason := h.trustedSSOCheck(r)
+		if state == trustedSSOInvalid {
 			h.trustedSSOLog(false, reason)
 			agentError(w, http.StatusForbidden, "sso_rejected")
+			return
+		}
+		if state == trustedSSOValid && trustedSSOBreakGlassOnly(h.basePath(), r.Method, r.URL.Path) {
+			agentError(w, http.StatusForbidden, "break_glass_only")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -487,7 +492,7 @@ func (h *HTTPAdminServer) trustedSSOLogin(w http.ResponseWriter, r *http.Request
 		agentError(w, http.StatusUnauthorized, "sso_required")
 		return
 	}
-	result, e := h.agent.human.TrustedOwnerLogin(now)
+	result, e := h.agent.human.TrustedOwnerLogin(now, h.trustedSSOAuthTime(r))
 	if e != nil {
 		h.trustedSSOLog(false, "owner_session")
 		authenticationError(w, e)
@@ -495,6 +500,60 @@ func (h *HTTPAdminServer) trustedSSOLogin(w http.ResponseWriter, r *http.Request
 	}
 	h.trustedSSOLog(true, "")
 	humanCookie(w, result)
+}
+
+// trustedSSOAuthTime returns the ID token's auth_time (the first token header
+// carries the ID token), or zero when absent or unreadable. The caller has
+// already validated the assertion, including the token payloads.
+func (h *HTTPAdminServer) trustedSSOAuthTime(r *http.Request) time.Time {
+	c := h.TrustedSSO
+	if c == nil || len(c.TokenHeaders) == 0 {
+		return time.Time{}
+	}
+	values := r.Header.Values(c.TokenHeaders[0])
+	if len(values) != 1 {
+		return time.Time{}
+	}
+	parts := strings.Split(strings.TrimPrefix(values[0], "Bearer "), ".")
+	if len(parts) != 3 {
+		return time.Time{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return time.Time{}
+	}
+	defer clear(payload)
+	var claims struct {
+		AuthTime *json.Number `json:"auth_time"`
+	}
+	d := json.NewDecoder(bytes.NewReader(payload))
+	d.UseNumber()
+	if d.Decode(&claims) != nil || claims.AuthTime == nil {
+		return time.Time{}
+	}
+	seconds, err := claims.AuthTime.Int64()
+	if err != nil || seconds <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(seconds, 0)
+}
+
+// trustedSSOBreakGlassOnly lists the routes that render or complete the
+// console's own sign-in and credential management. On the single sign-on path
+// (a request carrying a valid edge assertion) they are refused: the public site
+// never offers password, recovery, authenticator or agent sign-in. They stay
+// available on the private socket without SSO headers (break-glass).
+func trustedSSOBreakGlassOnly(base, method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	switch strings.TrimPrefix(path, base) {
+	case "/auth/setup/begin", "/auth/recovery/local", "/auth/recovery/code", "/auth/login/password", "/auth/login/totp",
+		"/auth/agent-session", "/auth/totp/begin", "/auth/totp/confirm", "/auth/reauth/password-totp", "/auth/password",
+		"/auth/recovery-codes/regenerate":
+		return true
+	}
+	return strings.HasPrefix(path, base+"/auth/passkeys/")
 }
 
 // trustedSSOAvailable reports, for /auth/state, whether this request carries a

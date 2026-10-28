@@ -16,10 +16,14 @@ const RecentAuthenticationWindow = 5 * time.Minute
 //
 // The session uses the same token, CSRF, lifetime, idle and audit path as a
 // password+TOTP login (durable audit action "human_login", so the database stays
-// readable by earlier releases after a rollback). It is deliberately NOT a recent
-// authentication: changing the password, authenticator, recovery codes, passkeys
-// or other sessions still requires password+TOTP or passkey reauthentication.
-func (h *HumanAuth) TrustedOwnerLogin(now time.Time) (HumanResult, error) {
+// readable by earlier releases after a rollback).
+//
+// The session counts as a recent authentication only when the identity
+// provider authenticated the owner within RecentAuthenticationWindow (authTime,
+// the ID token's auth_time, verified by the edge); a silent single sign-on reuse
+// with an older or missing auth_time is not recent. A fresh identity-provider
+// sign-in is therefore the step-up for sensitive changes on the SSO path.
+func (h *HumanAuth) TrustedOwnerLogin(now, authTime time.Time) (HumanResult, error) {
 	if !validNow(now) {
 		return HumanResult{}, ErrDenied
 	}
@@ -31,8 +35,14 @@ func (h *HumanAuth) TrustedOwnerLogin(now time.Time) (HumanResult, error) {
 		return HumanResult{}, ErrUnavailable
 	}
 	s := h.store
-	notRecent := now.Add(-RecentAuthenticationWindow)
-	token, i, e := h.sessions.issueHumanCommit(Actor{}, now, notRecent, "human_login", func(tx *sql.Tx) (Actor, error) {
+	authenticated := now.Add(-RecentAuthenticationWindow)
+	if !authTime.IsZero() && !authTime.After(now.Add(30*time.Second)) && now.Sub(authTime) < RecentAuthenticationWindow {
+		authenticated = authTime
+		if authenticated.After(now) {
+			authenticated = now
+		}
+	}
+	token, i, e := h.sessions.issueHumanCommit(Actor{}, now, authenticated, "human_login", func(tx *sql.Tx) (Actor, error) {
 		var id, name string
 		var epoch, created int64
 		e := tx.QueryRow("SELECT id,name,epoch,created FROM human WHERE singleton=1").Scan(&id, &name, &epoch, &created)
