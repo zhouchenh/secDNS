@@ -10,6 +10,7 @@ import (
 	"github.com/zhouchenh/secDNS/internal/upstream/diagnostics"
 	"github.com/zhouchenh/secDNS/pkg/upstream/resolver"
 	"golang.org/x/sync/singleflight"
+	"math"
 	"math/rand"
 	"net"
 	"strconv"
@@ -32,7 +33,7 @@ type Cache struct {
 	CleanupInterval       time.Duration     // How often to run cleanup (default 60s)
 	ServeStale            bool              // Serve stale responses while refreshing
 	StaleDuration         time.Duration     // How long stale responses are valid
-	DefaultPositiveTTL    time.Duration     // Default TTL for positive responses lacking TTLs
+	DefaultPositiveTTL    time.Duration     // Retained for config compatibility; unused (record TTLs are never capped by it)
 	DefaultFallbackTTL    time.Duration     // Fallback TTL when no records contain TTL
 	TTLJitterPercent      float64           // Randomize expirations to avoid thundering herd
 	PrefetchThreshold     uint64            // Access count threshold for background refresh
@@ -47,6 +48,10 @@ type Cache struct {
 	lru     *LRUList
 	mutex   sync.RWMutex
 	queue   expirationHeap
+	// entriesHighWater is the largest len(entries) since the map was last allocated.
+	// Go maps never release buckets, so cleanup re-makes the map once it has drained
+	// far below this mark.
+	entriesHighWater int
 
 	// Statistics (atomic counters)
 	hits      uint64
@@ -55,6 +60,7 @@ type Cache struct {
 
 	// Lifecycle management
 	initOnce    sync.Once
+	stopOnce    sync.Once
 	stopCleanup chan struct{}
 	cleanupDone sync.WaitGroup
 	requests    singleflight.Group
@@ -98,7 +104,15 @@ const (
 	defaultMaxConcurrentRequests = 256
 	defaultMaxQueuedRequests     = 512
 	defaultRequestQueueTimeout   = time.Second
+
+	// compactMinSlack is the minimum amount of unused heap capacity or map high-water
+	// slack before cleanup bothers to reallocate them at the live size.
+	compactMinSlack = 1024
 )
+
+// DefaultMaxEntries is the entry cap used when a cache config omits maxEntries.
+// At roughly 600-700 bytes of live heap per entry this is about 7 MB per cache.
+const DefaultMaxEntries = 10000
 
 type cacheControlDirectives struct {
 	skipCache       bool
@@ -366,6 +380,9 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 	entry.ExpiresAt = entry.CachedAt.Add(time.Duration(entry.OriginalTTL) * time.Second)
 
 	c.entries[key] = entry
+	if len(c.entries) > c.entriesHighWater {
+		c.entriesHighWater = len(c.entries)
+	}
 	c.pushExpiration(key, entry.ExpiresAt)
 }
 
@@ -598,6 +615,12 @@ func (c *Cache) applyTTLJitter(ttl uint32) uint32 {
 	if adjusted < 1 {
 		adjusted = 1
 	}
+	// Jitter runs after the MaxTTL clamp; clamp again so MaxTTL stays a true upper bound.
+	if c.MaxTTL > 0 {
+		if maxTTL := int(c.MaxTTL.Seconds()); adjusted > maxTTL {
+			adjusted = maxTTL
+		}
+	}
 	return uint32(adjusted)
 }
 
@@ -620,33 +643,34 @@ func (c *Cache) extractTTL(response *dns.Msg) uint32 {
 		return c.getTTLForNegativeResponse(response)
 	}
 
-	// For positive responses, find minimum TTL in answer section
-	defaultTTL := c.DefaultPositiveTTL
-	if defaultTTL == 0 {
-		defaultTTL = time.Hour
-	}
-	minTTL := uint32(defaultTTL.Seconds())
+	// For positive responses, take the minimum TTL over all non-OPT records. The fallback
+	// applies only when no record carries a TTL; a large record TTL is never replaced by
+	// the fallback (MaxTTL is the cap). TTLs with the most significant bit set are treated
+	// as 0 (RFC 2181 section 8).
+	minTTL := uint32(math.MaxUint32)
 	found := false
+	consider := func(ttl uint32) {
+		if ttl > math.MaxInt32 {
+			ttl = 0
+		}
+		found = true
+		if ttl < minTTL {
+			minTTL = ttl
+		}
+	}
 
 	for _, rr := range response.Answer {
-		if rr.Header().Ttl < minTTL {
-			minTTL = rr.Header().Ttl
-			found = true
-		}
+		consider(rr.Header().Ttl)
 	}
 
 	// Also check authority and additional sections
 	for _, rr := range response.Ns {
-		if rr.Header().Ttl < minTTL {
-			minTTL = rr.Header().Ttl
-			found = true
-		}
+		consider(rr.Header().Ttl)
 	}
 	for _, rr := range response.Extra {
 		// Skip OPT records (they don't have real TTL)
-		if rr.Header().Rrtype != dns.TypeOPT && rr.Header().Ttl < minTTL {
-			minTTL = rr.Header().Ttl
-			found = true
+		if rr.Header().Rrtype != dns.TypeOPT {
+			consider(rr.Header().Ttl)
 		}
 	}
 
@@ -902,20 +926,40 @@ func (c *Cache) cleanupExpired() {
 				hasMoreExpired = true
 			}
 		}
-		c.mutex.Unlock()
-
 		if removed == 0 || !hasMoreExpired {
+			c.compactLocked()
+			c.mutex.Unlock()
 			return
 		}
+		c.mutex.Unlock()
+	}
+}
+
+// compactLocked releases memory held at the high-water mark after a burst has drained.
+// The expiration heap's backing array and the entry map both keep their peak allocation
+// otherwise (slices and Go maps never shrink in place). Callers must hold c.mutex.
+func (c *Cache) compactLocked() {
+	if cap(c.queue) > 4*len(c.queue)+compactMinSlack {
+		c.rebuildExpirationQueueLocked()
+	}
+	if c.entriesHighWater > 4*len(c.entries)+compactMinSlack {
+		entries := make(map[string]*Entry, len(c.entries))
+		for k, e := range c.entries {
+			entries[k] = e
+		}
+		c.entries = entries
+		c.entriesHighWater = len(entries)
 	}
 }
 
 // Stop stops the background cleanup goroutine and waits for it to finish.
 // This should be called when shutting down the resolver.
+// It is safe on a cache that never served a query and safe to call more than once.
 func (c *Cache) Stop() {
-	c.initOnce.Do(func() {}) // Ensure init was called
+	// Initialize if needed, so a never-used cache has a channel to close and stays usable.
+	c.initOnce.Do(c.init)
 
-	close(c.stopCleanup)
+	c.stopOnce.Do(func() { close(c.stopCleanup) })
 	c.cleanupDone.Wait()
 }
 
@@ -950,6 +994,7 @@ func (c *Cache) Clear() {
 	defer c.mutex.Unlock()
 
 	c.entries = make(map[string]*Entry)
+	c.entriesHighWater = 0
 	c.lru.Clear()
 	c.queue = expirationHeap{}
 }
@@ -1023,6 +1068,7 @@ func (h *expirationHeap) Pop() interface{} {
 		return expirationItem{}
 	}
 	item := old[n-1]
+	old[n-1] = expirationItem{} // drop the key string so the vacated slot does not retain it
 	*h = old[0 : n-1]
 	return item
 }
@@ -1044,7 +1090,7 @@ func init() {
 					}),
 				},
 			},
-			// maxEntries (optional, default 10000)
+			// maxEntries (optional, default DefaultMaxEntries; 0 = unlimited)
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"MaxEntries"},
 				ValueSource: descriptor.ValueSources{
@@ -1077,7 +1123,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: 10000},
+					descriptor.DefaultValue{Value: DefaultMaxEntries},
 				},
 			},
 			// minTTL (optional, default 0 = no override)
