@@ -51,6 +51,8 @@ Acceptable formats:
 
 Default: `10000`
 
+Memory sizing: each entry costs roughly 600-700 bytes of live heap for a small answer (more for CNAME chains or large RRsets), so `10000` is about 7 MB and `100000` about 70 MB per cache. The limit is a count, not a byte budget: keep `maxEntries` multiplied by the number of caches well below the process memory limit. For example, `1000000` entries is about 700 MB for a single cache.
+
 > `minTTL`: Number | String _(Optional)_
 
 The minimum TTL (Time To Live) in seconds to enforce for cached responses. If an upstream response has a lower TTL, it will be overridden to this value. This prevents excessively short TTLs that would cause frequent cache invalidation. Set to 0 to disable.
@@ -63,7 +65,7 @@ Default: `0` (no minimum TTL enforcement)
 
 > `maxTTL`: Number | String _(Optional)_
 
-The maximum TTL (Time To Live) in seconds to enforce for cached responses. If an upstream response has a higher TTL, it will be capped to this value. This prevents excessively long caching that could serve stale data. Set to 0 to disable.
+The maximum TTL (Time To Live) in seconds to enforce for cached responses. If an upstream response has a higher TTL, it will be capped to this value. This prevents excessively long caching that could serve stale data. Set to 0 to disable. The cap also applies after `ttlJitterPercent` is applied, so no entry is cached longer than `maxTTL`.
 
 Acceptable formats:
 * Number: The number of seconds (e.g., `3600` for 1 hour)
@@ -362,7 +364,7 @@ When `cacheControlEnabled` is `true` upstream resolvers can send EDNS0 local opt
 
 ## Best Practices
 
-1. **Set Appropriate maxEntries**: Calculate based on expected query diversity and available memory. Each entry uses ~500-1000 bytes.
+1. **Set Appropriate maxEntries**: Calculate based on expected query diversity and available memory. Each entry uses ~500-1000 bytes, and the total is summed over every cache. When running under a hard memory limit (for example systemd `MemoryMax`), also set the Go runtime soft limit `GOMEMLIMIT` somewhat below it.
 2. **Use minTTL Carefully**: Setting minTTL too high may cache stale data. Good range: 30-300 seconds.
 3. **Set Reasonable maxTTL**: Prevents caching responses too long. Good range: 3600-86400 seconds (1-24 hours).
 4. **Monitor Statistics**: Track hit rate to ensure cache is effective. >70% hit rate is ideal.

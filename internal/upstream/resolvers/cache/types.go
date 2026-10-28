@@ -48,6 +48,10 @@ type Cache struct {
 	lru     *LRUList
 	mutex   sync.RWMutex
 	queue   expirationHeap
+	// entriesHighWater is the largest len(entries) since the map was last allocated.
+	// Go maps never release buckets, so cleanup re-makes the map once it has drained
+	// far below this mark.
+	entriesHighWater int
 
 	// Statistics (atomic counters)
 	hits      uint64
@@ -56,6 +60,7 @@ type Cache struct {
 
 	// Lifecycle management
 	initOnce    sync.Once
+	stopOnce    sync.Once
 	stopCleanup chan struct{}
 	cleanupDone sync.WaitGroup
 	requests    singleflight.Group
@@ -99,7 +104,15 @@ const (
 	defaultMaxConcurrentRequests = 256
 	defaultMaxQueuedRequests     = 512
 	defaultRequestQueueTimeout   = time.Second
+
+	// compactMinSlack is the minimum amount of unused heap capacity or map high-water
+	// slack before cleanup bothers to reallocate them at the live size.
+	compactMinSlack = 1024
 )
+
+// DefaultMaxEntries is the entry cap used when a cache config omits maxEntries.
+// At roughly 600-700 bytes of live heap per entry this is about 7 MB per cache.
+const DefaultMaxEntries = 10000
 
 type cacheControlDirectives struct {
 	skipCache       bool
@@ -367,6 +380,9 @@ func (c *Cache) setWithDirectives(key string, response *dns.Msg, directives cach
 	entry.ExpiresAt = entry.CachedAt.Add(time.Duration(entry.OriginalTTL) * time.Second)
 
 	c.entries[key] = entry
+	if len(c.entries) > c.entriesHighWater {
+		c.entriesHighWater = len(c.entries)
+	}
 	c.pushExpiration(key, entry.ExpiresAt)
 }
 
@@ -598,6 +614,12 @@ func (c *Cache) applyTTLJitter(ttl uint32) uint32 {
 	adjusted := int(ttl) + delta
 	if adjusted < 1 {
 		adjusted = 1
+	}
+	// Jitter runs after the MaxTTL clamp; clamp again so MaxTTL stays a true upper bound.
+	if c.MaxTTL > 0 {
+		if maxTTL := int(c.MaxTTL.Seconds()); adjusted > maxTTL {
+			adjusted = maxTTL
+		}
 	}
 	return uint32(adjusted)
 }
@@ -904,20 +926,40 @@ func (c *Cache) cleanupExpired() {
 				hasMoreExpired = true
 			}
 		}
-		c.mutex.Unlock()
-
 		if removed == 0 || !hasMoreExpired {
+			c.compactLocked()
+			c.mutex.Unlock()
 			return
 		}
+		c.mutex.Unlock()
+	}
+}
+
+// compactLocked releases memory held at the high-water mark after a burst has drained.
+// The expiration heap's backing array and the entry map both keep their peak allocation
+// otherwise (slices and Go maps never shrink in place). Callers must hold c.mutex.
+func (c *Cache) compactLocked() {
+	if cap(c.queue) > 4*len(c.queue)+compactMinSlack {
+		c.rebuildExpirationQueueLocked()
+	}
+	if c.entriesHighWater > 4*len(c.entries)+compactMinSlack {
+		entries := make(map[string]*Entry, len(c.entries))
+		for k, e := range c.entries {
+			entries[k] = e
+		}
+		c.entries = entries
+		c.entriesHighWater = len(entries)
 	}
 }
 
 // Stop stops the background cleanup goroutine and waits for it to finish.
 // This should be called when shutting down the resolver.
+// It is safe on a cache that never served a query and safe to call more than once.
 func (c *Cache) Stop() {
-	c.initOnce.Do(func() {}) // Ensure init was called
+	// Initialize if needed, so a never-used cache has a channel to close and stays usable.
+	c.initOnce.Do(c.init)
 
-	close(c.stopCleanup)
+	c.stopOnce.Do(func() { close(c.stopCleanup) })
 	c.cleanupDone.Wait()
 }
 
@@ -952,6 +994,7 @@ func (c *Cache) Clear() {
 	defer c.mutex.Unlock()
 
 	c.entries = make(map[string]*Entry)
+	c.entriesHighWater = 0
 	c.lru.Clear()
 	c.queue = expirationHeap{}
 }
@@ -1025,6 +1068,7 @@ func (h *expirationHeap) Pop() interface{} {
 		return expirationItem{}
 	}
 	item := old[n-1]
+	old[n-1] = expirationItem{} // drop the key string so the vacated slot does not retain it
 	*h = old[0 : n-1]
 	return item
 }
@@ -1046,7 +1090,7 @@ func init() {
 					}),
 				},
 			},
-			// maxEntries (optional, default 10000)
+			// maxEntries (optional, default DefaultMaxEntries; 0 = unlimited)
 			descriptor.ObjectFiller{
 				ObjectPath: descriptor.Path{"MaxEntries"},
 				ValueSource: descriptor.ValueSources{
@@ -1079,7 +1123,7 @@ func init() {
 							},
 						},
 					},
-					descriptor.DefaultValue{Value: 10000},
+					descriptor.DefaultValue{Value: DefaultMaxEntries},
 				},
 			},
 			// minTTL (optional, default 0 = no override)
