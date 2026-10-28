@@ -31,12 +31,16 @@ type session struct {
 	csrfValue     string
 	created, last time.Time
 	authenticated time.Time
+	// sso marks a session issued from a trusted single sign-on assertion (kept
+	// across a reauthentication rotation), so sign-out can also end the edge session.
+	sso bool
 }
 type SessionInfo struct {
 	CSRF                                string
 	Actor                               Actor
 	CreatedAt, ExpiresAt, IdleExpiresAt time.Time
 	AuthenticatedAt                     time.Time
+	SSO                                 bool
 }
 
 func NewSessions(store *Store) *Sessions {
@@ -50,7 +54,7 @@ func (s *Sessions) digest(v string) [32]byte {
 }
 func info(v session) SessionInfo {
 	idle, lifetime := sessionLimits(v.actor)
-	return SessionInfo{v.csrfValue, cloneActor(v.actor), v.created, v.created.Add(lifetime), v.last.Add(idle), v.authenticated}
+	return SessionInfo{v.csrfValue, cloneActor(v.actor), v.created, v.created.Add(lifetime), v.last.Add(idle), v.authenticated, v.sso}
 }
 func sessionLimits(a Actor) (time.Duration, time.Duration) {
 	if a.Kind() == "human" {
@@ -96,7 +100,7 @@ func (s *Sessions) Exchange(bearer, realm, node string, now time.Time) (string, 
 	if e = s.store.sessionAudit(a, now, "session_created"); e != nil {
 		return "", "", SessionInfo{}, e
 	}
-	v := session{cloneActor(a), cd, csrf, now, now, now}
+	v := session{cloneActor(a), cd, csrf, now, now, now, false}
 	s.entries[d] = v
 	return token, csrf, info(v), nil
 }
@@ -236,12 +240,14 @@ func (s *Sessions) issueHumanCommit(a Actor, now, authenticated time.Time, actio
 		return "", SessionInfo{}, ErrUnavailable
 	}
 	var previous [32]byte
+	carrySSO := false
 	if replace != "" {
 		previous = s.digest(replace)
 		old, ok := s.entries[previous]
 		if !ok || expired(old, now) || old.actor.Kind() != "human" {
 			return "", SessionInfo{}, ErrDenied
 		}
+		carrySSO = old.sso
 		if e := s.store.activeActor(old.actor, now); e != nil {
 			return "", SessionInfo{}, e
 		}
@@ -285,12 +291,26 @@ func (s *Sessions) issueHumanCommit(a Actor, now, authenticated time.Time, actio
 	if e != nil {
 		return "", SessionInfo{}, e
 	}
-	v := session{cloneActor(a), cd, csrf, now, now, authenticated}
+	v := session{cloneActor(a), cd, csrf, now, now, authenticated, carrySSO}
 	s.entries[d] = v
 	if replace != "" {
 		delete(s.entries, previous)
 	}
 	return token, info(v), nil
+}
+
+// markSSO flags a just-issued human session as single sign-on.
+func (s *Sessions) markSSO(token string, now time.Time) (SessionInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d := s.digest(token)
+	v, ok := s.entries[d]
+	if !ok || expired(v, now) || v.actor.Kind() != "human" {
+		return SessionInfo{}, ErrDenied
+	}
+	v.sso = true
+	s.entries[d] = v
+	return info(v), nil
 }
 
 // admit runs under the sessions mutex. Only expired or durably denied entries

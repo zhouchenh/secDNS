@@ -55,7 +55,9 @@
       }
       localClear();fire("agentexpired");
     },
-    async logout(){const value=csrf;localClear();try{await api("logout",{method:"POST",headers:{"Content-Type":"application/json","X-SecDNS-CSRF":value}});}finally{fire("agentexpired");}}
+    // A session issued through single sign-on also ends the edge/identity-provider session afterwards,
+    // whether or not the console logout succeeded. Only the one fixed same-origin path is ever followed.
+    async logout(){const value=csrf,sso=actor?.sso===true&&actor?.sign_out_url==="/oauth2/sign_out?rd=%2F";localClear();try{await api("logout",{method:"POST",headers:{"Content-Type":"application/json","X-SecDNS-CSRF":value}});}finally{fire("agentexpired");if(sso)location.assign("/oauth2/sign_out?rd=%2F");}}
   };
   form.addEventListener("submit",async event=>{
     event.preventDefault();if(!allowedOrigin){input.value="";note.textContent="Agent sign-in requires the configured HTTPS origin.";return;}let credential=input.value;input.value="";if(!credential)return;button.disabled=true;const captured=++epoch;

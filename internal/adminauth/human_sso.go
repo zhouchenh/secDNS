@@ -51,5 +51,8 @@ func (h *HumanAuth) TrustedOwnerLogin(now time.Time) (HumanResult, error) {
 	if e != nil {
 		return HumanResult{}, e
 	}
+	if i, e = h.sessions.markSSO(token, now); e != nil {
+		return HumanResult{}, e
+	}
 	return HumanResult{Token: token, Session: i}, nil
 }

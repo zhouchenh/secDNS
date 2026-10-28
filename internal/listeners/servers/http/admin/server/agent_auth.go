@@ -14,6 +14,10 @@ import (
 
 const sessionCookie = "__Host-secdns_session"
 
+// SSOSignOutURL is where the console UI goes after signing out a session that
+// was issued from a trusted single sign-on assertion.
+const SSOSignOutURL = "/oauth2/sign_out?rd=%2F"
+
 type agentBinding struct {
 	store    *adminauth.Store
 	sessions *adminauth.Sessions
@@ -58,6 +62,12 @@ func sessionJSON(i adminauth.SessionInfo) map[string]any {
 	m["csrf"] = i.CSRF
 	if i.Actor.Kind() == "human" {
 		m["authenticated_at"] = i.AuthenticatedAt.UTC().Format(time.RFC3339)
+		if i.SSO {
+			// Fixed, relative, same-origin: the edge ends its own and the identity
+			// provider's session; never derived from request data.
+			m["sso"] = true
+			m["sign_out_url"] = SSOSignOutURL
+		}
 	}
 	m["expires_at"] = i.ExpiresAt.UTC().Format(time.RFC3339)
 	m["idle_expires_at"] = i.IdleExpiresAt.UTC().Format(time.RFC3339)

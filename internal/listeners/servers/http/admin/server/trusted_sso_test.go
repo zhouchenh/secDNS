@@ -745,3 +745,49 @@ func TestTrustedSSORejectClaimsConfigurable(t *testing.T) {
 		}
 	}
 }
+
+func TestTrustedSSOSessionExposesFixedSignOut(t *testing.T) {
+	h, _ := ssoTestServer(t, true)
+	w := serve(h, ssoRequest(h, "POST", "/auth/login/sso", `{}`))
+	var out map[string]any
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || out["sso"] != true || out["sign_out_url"] != "/oauth2/sign_out?rd=%2F" {
+		t.Fatalf("SSO session lacks the fixed sign-out: %d %v", w.Code, out)
+	}
+	cookie := w.Result().Cookies()[0]
+	session := func(c *http.Cookie, mutate func(*http.Request)) map[string]any {
+		r := ssoRequest(h, "GET", "/auth/session", "")
+		r.Header.Del("Content-Type")
+		if mutate != nil {
+			mutate(r)
+		}
+		r.AddCookie(c)
+		w := serve(h, r)
+		var m map[string]any
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &m) != nil {
+			t.Fatalf("session read: %d %s", w.Code, w.Body.String())
+		}
+		return m
+	}
+	// request data cannot change the URL (e.g. a crafted rd or Referer)
+	m := session(cookie, func(r *http.Request) {
+		r.URL.RawQuery = "rd=https://evil.example/"
+		r.Header.Set("Referer", "https://evil.example/")
+	})
+	if m["sso"] != true || m["sign_out_url"] != SSOSignOutURL || SSOSignOutURL != "/oauth2/sign_out?rd=%2F" {
+		t.Fatalf("SSO session read: %v", m)
+	}
+	// A break-glass password+TOTP session (no SSO headers) keeps today's behaviour.
+	h2, owner := nodeTestSetup(t)
+	r := httptest.NewRequest("GET", "https://example.invalid/admin/auth/session", nil)
+	r.Header.Set("Origin", h2.agent.origin)
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: owner.Token})
+	w = httptest.NewRecorder()
+	h2.routes().ServeHTTP(w, r)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "sso") || strings.Contains(w.Body.String(), "sign_out_url") {
+		t.Fatalf("password session exposes SSO sign-out: %d %s", w.Code, w.Body.String())
+	}
+	if out := sessionJSON(owner.Session); out["sso"] != nil || out["sign_out_url"] != nil {
+		t.Fatal("password session JSON has SSO fields")
+	}
+}
