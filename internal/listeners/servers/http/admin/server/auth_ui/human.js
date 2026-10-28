@@ -1,6 +1,9 @@
 (() => {
   "use strict";
   const base=new URL("../",document.currentScript.src);
+  // Single sign-on path (the server reports a valid edge assertion): the console's own sign-in,
+  // recovery and credential forms are never shown; they stay on the private break-glass path.
+  let ssoMode=false,ssoUI=null;
   let origin="",challenge="",step="start",replacement=false,busy=false,epoch=0,humanWasActive=false,enrollmentTimer,loginTimer,retryTimer,loginExpires=0,retryUntil=0;
   const card=document.createElement("section");card.className="card";card.hidden=true;card.id="human-access";
   const title=document.createElement("h2");title.textContent="Sign in to secDNS";
@@ -40,7 +43,18 @@
     alternatives.hidden=human||setupRequired||!initial;
     cancel.hidden=initial||busy;cancel.textContent="Back";
     form.hidden=!recovery.hidden||(human&&!replacement);security.hidden=!human||replacement||!recovery.hidden;
+    applySSO(human);
     window.dispatchEvent(new Event("humanflowchange"));
+  }
+  function applySSO(human){
+    if(!ssoMode||!ssoUI)return;
+    form.hidden=true;alternatives.hidden=true;mode.hidden=modeLabel.hidden=true;
+    ssoUI.signedOut.hidden=human;
+    if(!human){title.textContent="Signed out of the console";help.textContent="Sign in again with WithMy ID to continue.";security.hidden=true;return;}
+    title.textContent="Account security";help.textContent="Your sign-in is managed by WithMy ID.";
+    for(const key of ["password","totp","codes"])ssoUI.groups[key].hidden=true;
+    for(const el of ssoUI.reauthLocal)el.hidden=true;
+    ssoUI.stepUp.hidden=ssoUI.stepUpHint.hidden=false;ssoUI.breakGlass.hidden=false;
   }
   async function request(path,body,authenticated=false){if(location.origin!==origin)throw new Error("Use the configured HTTPS portal.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(new URL("auth/"+path,base),{method:body?"POST":"GET",headers:body?{...(authenticated?window.secDNSAgent.headers("","POST"):{}),"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined,credentials:"same-origin",cache:"no-store",redirect:"error",signal:controller.signal});if(!r.ok){void r.body?.cancel();throw authenticationError(r);}const reader=r.body.getReader();let bytes=0,parts=[];for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>16384){await reader.cancel();throw new Error("Unexpected authentication response.");}parts.push(value);}const data=new Uint8Array(bytes);let at=0;for(const p of parts){data.set(p,at);at+=p.length;}try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(data));}catch{throw new Error("Unexpected authentication response.");}}finally{clearTimeout(timer);}}
   mode.addEventListener("change",()=>{if(mode.value==="setup"&&!setupRequired)mode.value="login";reset();});cancel.addEventListener("click",()=>{reset();fields.username.input.focus();note.textContent="Cancelled. Existing authentication methods are unchanged unless confirmation already completed.";});dismiss.addEventListener("click",()=>{recovery.value="";recovery.hidden=dismiss.hidden=true;note.textContent="Signed in. Keep your saved recovery codes private.";render();});
@@ -107,9 +121,21 @@ auditButton.addEventListener("click",async()=>{
   download.addEventListener("click",()=>{if(!recovery.value)return;const blob=new Blob([recovery.value+"\n"],{type:"text/plain"});const u=URL.createObjectURL(blob),a=document.createElement("a");a.href=u;a.download="secdns-recovery-codes.txt";a.click();setTimeout(()=>URL.revokeObjectURL(u),0);});
   const codesVisibility=new MutationObserver(()=>{download.hidden=recovery.hidden;});codesVisibility.observe(recovery,{attributes:true,attributeFilter:["hidden"]});
   card.append(security);
+  {
+    const signedOut=document.createElement("p");signedOut.hidden=true;signedOut.className="sso-signed-out";
+    const again=document.createElement("a");again.href="/admin/ui/";again.className="primary auth-link";again.textContent="Sign in with WithMy ID";signedOut.append(again);
+    card.insertBefore(signedOut,form);
+    const stepUpHint=document.createElement("p");stepUpHint.textContent="Sensitive changes need a fresh WithMy ID sign-in within the last five minutes. Confirming signs you out and back in with WithMy ID.";
+    const stepUp=document.createElement("button");stepUp.type="button";stepUp.textContent="Confirm with WithMy ID";stepUp.hidden=true;
+    stepUp.addEventListener("click",()=>{if(busy)return;window.secDNSAgent.logout().catch(()=>{});});
+    const breakGlass=document.createElement("p");breakGlass.hidden=true;breakGlass.textContent="Password, authenticator and recovery codes are managed only on the local break-glass path.";
+    const reauthLocal=[...groups.reauth.children].filter(el=>el.tagName!=="H3");
+    groups.reauth.append(stepUpHint,stepUp);security.append(breakGlass);
+    stepUpHint.hidden=true;ssoUI={signedOut,stepUp,stepUpHint,breakGlass,groups,reauthLocal:[...reauthLocal]};
+  }
   const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;auditGeneration++;audit.textContent="";audit.hidden=true;audit.removeAttribute("aria-busy");auditButton.disabled=false;form.hidden=!security.hidden;title.textContent=security.hidden?"Sign in to secDNS":"Human account";currentPassword.value=currentCode.value=newPassword.value="";render();};
   window.addEventListener("agentconnected",sessionChanged);window.addEventListener("agentexpired",()=>{sessionChanged();if(!busy)reset();});
   window.addEventListener("pagehide",reset);
-  const applyState=state=>{if(state?.human_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin){origin=state.public_origin;card.hidden=false;setupRequired=state.setup_required===true;mode.value=setupRequired?"setup":"login";render();}};
+  const applyState=state=>{if(state?.human_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin){origin=state.public_origin;card.hidden=false;ssoMode=state.sso_login===true;setupRequired=state.setup_required===true;mode.value=setupRequired?"setup":"login";render();}};
   window.addEventListener("authstate",event=>applyState(event.detail));if(window.secDNSAgent.state)applyState(window.secDNSAgent.state);
 })();

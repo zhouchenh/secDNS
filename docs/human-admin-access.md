@@ -43,6 +43,109 @@ If every factor is lost, stop the owning process and use the explicit local `rec
 
 Inspect recent security events and revoke other sessions after recovery. There is no email/SMS recovery, shared-node cookie authority, remote root recovery, or automatic credential issuance. Recovery never modifies DNS records. A key/database loss needs the offline backup or a separately designed operator procedure; this feature does not promise lossless recovery from missing cryptographic material.
 
+## Single sign-on from a trusted local edge
+
+`trustedSSO` lets an operator-controlled local edge (nginx behind an
+oauth2-proxy role gate) assert that the browser already signed in as the owner,
+so the owner signs in once. It is absent and off by default; without it, any
+`X-Secdns-SSO-*` header is ignored exactly as before.
+
+```json
+"listenUnix": "/run/secdns-admin/console.sock",
+"trustedSSO": {
+  "headerSecretFile": "/etc/secdns-admin/sso-header-secret",
+  "secretHeader": "X-Secdns-SSO-Secret",
+  "userHeader": "X-Secdns-SSO-User",
+  "rolesHeader": "X-Secdns-SSO-Roles",
+  "requiredRole": "secdns-console:access",
+  "allowedUsers": ["<identity-provider subject (sub) of the owner>"],
+  "mapsTo": "owner",
+  "tokenHeaders": ["X-Secdns-SSO-Id-Token", "X-Secdns-SSO-Access-Token"],
+  "rejectClaims": ["impersonator"],
+  "usernameHeader": "X-Secdns-SSO-Username",
+  "allowedUsernames": ["owner-username"]
+}
+```
+
+The first eight keys (through `tokenHeaders`) are required; `rejectClaims` is
+optional and defaults to `["impersonator"]` (an explicit list replaces the
+default and may not be empty); `usernameHeader` and `allowedUsernames` are an
+optional pair (a secondary username match). `tokenHeaders` names one or two
+headers carrying the edge-verified ID/access tokens (a `Bearer ` prefix is
+accepted). The console reads only the JWT payload (the edge already verified the
+signature) and refuses the assertion unless every token is readable, its `sub`
+equals the user header, and none of `rejectClaims` is present with any value
+(null and `{}` included). Keycloak's impersonator claim therefore never becomes
+an owner session. Header names must start with
+`X-Secdns-SSO-` and be distinct. `mapsTo` must be `owner` (the console has one
+human owner). Key `allowedUsers` on the identity provider's immutable subject,
+never on an email address or another user-editable claim.
+
+`trustedSSO` requires an auth store, the exact HTTPS `publicOrigin` and
+`listenUnix`; otherwise the configuration (and `-test`) fails. `listenUnix`
+replaces the TCP listener with a unix socket. Its directory must already exist,
+must not be a symlink and must have no group-write or other-user bits (for
+example `2750 secdns-admin:www-data`, created by the unit); the socket is created
+mode 0660 and inherits the directory group, so only the console, root and the
+edge's group can connect. Every peer on that socket is treated as the trusted
+edge proxy (like a `trustedProxySources` entry, so the forwarding tuple is still
+required). A TCP listener is never trusted for SSO: any local user could bind a
+free loopback port while the console restarts and harvest the secret. The secret file is read once at load: it must be an absolute,
+clean path to a regular, non-symlink file without group/other permission bits,
+holding 32 to 1024 visible ASCII bytes (one trailing newline is ignored). Only
+its SHA-256 digest is kept in memory.
+
+A request carrying **any** `X-Secdns-SSO-*` header is an assertion and must pass
+every check, or it is refused with 403 `sso_rejected` on every route (never a
+fallback to accept):
+
+- the request arrived on the `listenUnix` socket (never TCP, not even loopback);
+- exactly one secret header, equal to the file secret (constant-time digest compare);
+- exactly one user header naming an `allowedUsers` entry (exact, case-sensitive);
+- if configured, exactly one username header naming an `allowedUsernames` entry;
+- exactly one roles header whose comma-separated list contains `requiredRole`
+  exactly (other entries, even with spaces or non-ASCII, are ignored);
+- the complete trusted forwarding tuple (see Facade admin edge) is valid;
+- every token header: exactly one readable JWT payload, `sub` equal to the user,
+  no `rejectClaims` key;
+- no other `X-Secdns-SSO-*` header.
+
+Refusals are logged with a fixed reason token (`peer`, `secret`, `user`,
+`user_not_allowed`, `username`, `username_not_allowed`, `role`, `token`,
+`token_subject`, `rejected_claim`, `forwarded`,
+`unexpected_header`, `unavailable`);
+header values, the secret and the user name are never logged.
+
+A valid assertion does not authorize requests by itself. `GET <path>/auth/state`
+reports `sso_login: true`, and the console UI exchanges it once with
+`POST <path>/auth/login/sso` (body exactly `{}`, exact origin, same-origin Fetch
+Metadata, JSON content type, no cookie or Authorization header) for the owner's
+normal human session: the same `__Host-` Secure/HttpOnly/SameSite-Strict cookie,
+CSRF value, 30-minute idle and 12-hour absolute limits as a password+TOTP login.
+The durable audit records the normal `human_login` action (an earlier release can
+still open the database after a rollback); the service log records
+`method=sso`. The exchange requires a completed owner setup and never creates or
+changes a credential. An SSO session is **not** a recent authentication: password,
+authenticator, recovery-code, passkey and session-revocation changes still need
+password+TOTP or passkey reauthentication.
+
+Requests without SSO headers keep the unchanged password+TOTP and passkey
+sign-in; that is the break-glass path when the identity provider or edge is
+unavailable. On the host, root reaches it with
+`curl --unix-socket /run/secdns-admin/console.sock` (with the forwarding tuple,
+`Origin` and `Sec-Fetch-Site` headers, as for any trusted proxy). For browser
+access without the identity provider, remove `trustedSSO`/the edge gate (the
+deployment's rollback) rather than opening another listener.
+
+Ending SSO access means revoking it in the identity provider (role or session)
+or removing `trustedSSO`: the console's "sign out other sessions" does not stop
+a new exchange. Rotate the shared secret by regenerating both copies, then
+reloading the edge and restarting the console.
+
+The edge must overwrite or remove every client-supplied `X-Secdns-SSO-*` header,
+send the secret only after its authentication subrequest succeeded, and keep the
+secret file and its nginx include readable by their owning process only.
+
 ## Local validation
 
 Go regressions cover schema migration rollback/commit uncertainty, strict reopen/encrypted-seed corruption, atomic one-winner setup, OTP replay, source-bound ceremonies, persistent rate refusal, root/saved-code recovery, old-factor preservation, session generation invalidation, recent-MFA expiry and agent denial. The opt-in `ADMINAUTH_BROWSER=1` fixture uses an isolated localhost TLS server and installed Chromium with synthetic credentials, proving setup/login/reload/rotation/recovery and a 375-pixel layout. It also reruns the agent-session browser flow. No real portal, candidate, CA or production service is changed by these tests.

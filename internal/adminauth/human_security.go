@@ -12,7 +12,7 @@ func (h *HumanAuth) RecentHuman(token, csrf string, now time.Time) (SessionInfo,
 	if e != nil {
 		return SessionInfo{}, e
 	}
-	if i.Actor.Kind() != "human" || now.Before(i.AuthenticatedAt) || !now.Before(i.AuthenticatedAt.Add(5*time.Minute)) {
+	if i.Actor.Kind() != "human" || now.Before(i.AuthenticatedAt) || !now.Before(i.AuthenticatedAt.Add(RecentAuthenticationWindow)) {
 		return SessionInfo{}, ErrDenied
 	}
 	return i, nil

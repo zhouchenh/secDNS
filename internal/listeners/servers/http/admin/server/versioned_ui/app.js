@@ -129,8 +129,8 @@
       if (typeFilter && record.type!==typeFilter) continue;
       if ($("pending-only").checked) {const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(original&&JSON.stringify(original)===JSON.stringify(record))continue;}
       if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
-      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; title.textContent = record.name; info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
-      for (const value of record.values) {const d = document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;valueCell.append(d);}
+      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; breakable(title, record.name); info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
+      for (const value of record.values) {const d = document.createElement("div");d.className="record-value";if(value==="")d.textContent="(empty string)";else if(record.type==="A"||record.type==="AAAA"){d.classList.add("record-ip");d.textContent=value;}else if(record.type==="CNAME"){d.classList.add("record-fqdn");breakable(d,value);}else d.textContent=value;valueCell.append(d);}
       if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+record.expires_at;valueCell.append(d);}
       const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
@@ -167,6 +167,8 @@
       return {data,provenance,rrsetCapability:response.headers.get("SecDNS-RRset-Mutations")};
     } finally {clearTimeout(timeout);requests.delete(controller); }
   }
+  // Long DNS names may wrap only after a dot (never inside a label); addresses never wrap.
+  function breakable(el, text) {el.textContent="";const parts=String(text).split(".");parts.forEach((part,i)=>{el.append(part+(i<parts.length-1?".":""));if(i<parts.length-1&&part!=="")el.append(document.createElement("wbr"));});}
   async function fetchCurrent() {
     const id=++getID, captured=epoch;
     try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(result.data,result.provenance,result.rrsetCapability);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}

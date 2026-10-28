@@ -2,7 +2,7 @@
   "use strict";
   const script = new URL(document.currentScript.src);
   const base = new URL("../", script);
-  let allowedOrigin=false, publicState=null;
+  let allowedOrigin=false, publicState=null, ssoMode=false;  // ssoMode: agent sign-in is never offered on the SSO path
   let actor = null, csrf = "", epoch = 0, timer = null, warningTimer=null;
   const panel = document.createElement("section"); panel.className = "card"; panel.id="agent-access"; panel.hidden = true;
   const title = document.createElement("h2"); title.textContent = "Agent access";
@@ -17,7 +17,7 @@
   const warning=document.createElement("p");warning.id="auth-session-warning";warning.role="status";warning.setAttribute("aria-live","polite");
   document.querySelector("header")?.append(identity,logout,warning);
   const fire = name => window.dispatchEvent(new Event(name));
-  const localClear = () => { epoch++; actor = null; csrf = ""; input.value = ""; identity.textContent = ""; identity.hidden = logout.hidden = true; form.hidden = false;panel.hidden=!allowedOrigin; clearTimeout(timer);clearTimeout(warningTimer);warning.textContent=""; };
+  const localClear = () => { epoch++; actor = null; csrf = ""; input.value = ""; identity.textContent = ""; identity.hidden = logout.hidden = true; form.hidden = false;panel.hidden=!allowedOrigin||ssoMode; clearTimeout(timer);clearTimeout(warningTimer);warning.textContent=""; };
   async function api(path, options = {}) {
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10000);
     try {
@@ -55,7 +55,9 @@
       }
       localClear();fire("agentexpired");
     },
-    async logout(){const value=csrf;localClear();try{await api("logout",{method:"POST",headers:{"Content-Type":"application/json","X-SecDNS-CSRF":value}});}finally{fire("agentexpired");}}
+    // A session issued through single sign-on also ends the edge/identity-provider session afterwards,
+    // whether or not the console logout succeeded. Only the one fixed same-origin path is ever followed.
+    async logout(){const value=csrf,sso=actor?.sso===true&&actor?.sign_out_url==="/oauth2/sign_out?rd=%2F";localClear();try{await api("logout",{method:"POST",headers:{"Content-Type":"application/json","X-SecDNS-CSRF":value}});}finally{fire("agentexpired");if(sso)location.assign("/oauth2/sign_out?rd=%2F");}}
   };
   form.addEventListener("submit",async event=>{
     event.preventDefault();if(!allowedOrigin){input.value="";note.textContent="Agent sign-in requires the configured HTTPS origin.";return;}let credential=input.value;input.value="";if(!credential)return;button.disabled=true;const captured=++epoch;
@@ -77,5 +79,10 @@
   window.addEventListener("pointerdown",activity);window.addEventListener("keydown",activity);
   window.addEventListener("pagehide",localClear);
   const initialEpoch=epoch;
-  api("state",{credentials:"omit"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;panel.hidden=!allowedOrigin;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(()=>{});}).catch(()=>{});
+  // Same-origin credentials: behind the single sign-on edge, an anonymous state
+  // request is redirected to sign-in. The response never contains credentials.
+  // With a valid edge assertion and no console session, exchange it once for the
+  // owner's normal session; otherwise the console's own sign-in stays available.
+  const ssoLogin=()=>api("login/sso",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(data=>{if(initialEpoch!==epoch)return;accept(data);note.textContent="Signed in with single sign-on.";fire("agentconnected");});
+  api("state",{credentials:"same-origin"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;ssoMode=state.sso_login===true;panel.hidden=!allowedOrigin||ssoMode;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(error=>{if(error.status===401&&state.sso_login===true&&state.human_access===true&&initialEpoch===epoch)return ssoLogin();}).catch(()=>{});}).catch(()=>{});
 })();

@@ -56,7 +56,7 @@
   label.textContent=show&&active?"Account security":"DNS administration";
   screen.hidden=!show;document.body.classList.toggle("auth-screen-open",show&&!active);document.body.classList.toggle("account-screen-open",show&&!!active);
   screen.dataset.access=agentOpen?"agent":"human";
-  agentToggle.hidden=!!active||!humanEnabled;agentToggle.textContent=agentOpen?"Back to human sign in":"Agent access";
+  agentToggle.hidden=!!active||!humanEnabled||window.secDNSAgent?.state?.sso_login===true;agentToggle.textContent=agentOpen?"Back to human sign in":"Agent access";
   returnButton.hidden=!active||ceremony;signout.hidden=true;
   if(account)account.textContent=window.secDNSAgent?.kind==="human"?"Account security":"Sign in";
  };

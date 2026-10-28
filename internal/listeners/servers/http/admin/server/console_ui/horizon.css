@@ -84,3 +84,33 @@
 .console-layout #status.success{color:var(--console-ink-secondary);background:var(--h-ok-bg)}
 
 .console-layout :is(input,select,textarea):focus{outline:none;border-color:var(--console-accent);box-shadow:0 0 0 3px color-mix(in oklch,var(--console-accent) 25%,transparent)}
+
+/* Records on narrow screens: stacked cards, actions always visible, addresses never split. */
+.console-layout .record-ip{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.console-layout .record-name,.console-layout .record-fqdn{overflow-wrap:anywhere;word-break:normal}
+.console-layout>header>#connection{order:-1;margin-left:0;margin-right:auto;font-size:12px;padding:3px 10px;border-radius:99px;background:var(--h-soft);color:var(--console-muted)}
+.console-layout>header>.console-context{order:-2;margin-right:16px}
+@media(max-width:640px){
+.console-layout .card.records{overflow:visible;height:auto;max-height:none}
+.console-layout #rows{max-height:none}
+.console-layout .console-record-table{overflow:visible!important;height:auto!important;max-height:none!important;min-height:0;margin-top:8px}
+.console-layout .console-record-table::before{content:none}
+.console-layout #records-scroll-hint{display:none}
+.console-layout .console-record-table table,.console-layout .console-record-table tbody{display:block;width:100%;min-width:0}
+.console-layout .console-record-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.console-layout .console-record-table tr{display:flex;flex-wrap:wrap;align-items:center;column-gap:12px;row-gap:6px;padding:12px 16px;border-bottom:1px solid var(--console-line)}
+.console-layout .console-record-table td{display:block;padding:0;border:0;min-width:0;width:auto!important}
+.console-layout .console-record-table td:nth-child(1){flex:1 1 0;min-width:0;align-self:flex-start}
+.console-layout .console-record-table td:nth-child(2){flex:none;font-weight:600;align-self:flex-start}
+.console-layout .console-record-table td:nth-child(3){flex:1 0 100%}
+.console-layout .console-record-table td:nth-child(4){flex:1 1 auto;color:var(--console-muted);white-space:nowrap}
+.console-layout .console-record-table td:nth-child(5){flex:none;display:flex;gap:8px;margin-left:auto}
+.console-layout .console-record-table td:nth-child(5) button{margin:0;min-height:40px}
+.console-layout .console-record-table td:only-child{flex:1 0 100%}
+.console-layout .record-value{max-width:none}
+.console-layout>header>#connection{display:none}
+.console-layout .account-menu>summary{padding:6px 10px;gap:6px;font-size:12px;max-width:46vw}
+.console-layout .account-menu>summary>strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.console-layout .account-menu>summary>span{display:none}
+}
+}
