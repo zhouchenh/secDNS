@@ -497,7 +497,7 @@ func TestListenUnixServesAndMarksPeer(t *testing.T) {
 	}
 	client := unixTestClient(filepath.Join(dir, "console.sock"))
 	do := func(r *http.Request) (*http.Response, string) {
-		r.RequestURI = ""
+		r.RequestURI, r.URL.Scheme = "", "http" // plain HTTP over the socket; Host stays the public name
 		resp, e := client.Do(r)
 		if e != nil {
 			t.Fatal(e)
