@@ -36,6 +36,7 @@ func trustedSSOConfigFixture(t *testing.T) (map[string]any, string) {
 			"mapsTo":           "owner",
 			"usernameHeader":   "X-Secdns-SSO-Username",
 			"allowedUsernames": []any{"zhouchenh"},
+			"tokenHeaders":     []any{"X-Secdns-SSO-Id-Token", "X-Secdns-SSO-Access-Token"},
 		},
 	}
 	if e := adminauth.CreateKey(def.KeyPath); e != nil {
@@ -78,7 +79,7 @@ func TestTrustedSSOLoadedConfig(t *testing.T) {
 func TestTrustedSSOConfigRefusals(t *testing.T) {
 	for _, kind := range []string{
 		"no-origin", "no-auth", "no-listen-unix", "listen-unix-relative", "listen-unix-dotdot", "duplicate-listen-unix",
-		"username-without-list", "missing-key", "extra-key", "bad-prefix", "same-header",
+		"username-without-list", "no-token-headers", "empty-reject-claims", "missing-key", "extra-key", "bad-prefix", "same-header",
 		"relative-path", "unclean-path", "maps-to", "no-users", "duplicate-user", "user-comma", "user-space", "role-comma",
 		"too-many-users", "not-object", "null", "secret-missing", "secret-group-readable", "secret-short", "secret-control",
 		"secret-symlink", "secret-directory", "duplicate-block", "duplicate-field",
@@ -107,6 +108,10 @@ func TestTrustedSSOConfigRefusals(t *testing.T) {
 				c["listenUnix"] = "/run/../console.sock"
 			case "username-without-list":
 				delete(sso, "allowedUsernames")
+			case "no-token-headers":
+				delete(sso, "tokenHeaders")
+			case "empty-reject-claims":
+				sso["rejectClaims"] = []any{}
 			case "missing-key":
 				delete(sso, "rolesHeader")
 			case "extra-key":

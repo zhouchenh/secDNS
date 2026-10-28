@@ -223,9 +223,17 @@ func (h *HTTPAdminServer) httpServer() *http.Server {
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    8 << 10,
+		MaxHeaderBytes:    h.maxHeaderBytes(),
 		ConnContext:       markUnixPeer,
 	}
+}
+
+// maxHeaderBytes leaves room for the edge-verified tokens of a trusted SSO assertion.
+func (h *HTTPAdminServer) maxHeaderBytes() int {
+	if h.TrustedSSO != nil {
+		return 48 << 10
+	}
+	return 8 << 10
 }
 
 // routes builds the authenticated request multiplexer. It is separated from Serve so

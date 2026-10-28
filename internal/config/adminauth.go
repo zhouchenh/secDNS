@@ -265,7 +265,7 @@ func validateAdminAuthSyntax(raw []byte) error {
 						if json.Unmarshal(ssoRaw, &decoded) != nil {
 							return adminauth.ErrInvalid
 						}
-						if _, ok := admin.ParseTrustedSSO(decoded); !ok || (len(fields) != 7 && len(fields) != 9) {
+						if _, ok := admin.ParseTrustedSSO(decoded); !ok || len(fields) < 8 || len(fields) > 11 {
 							return adminauth.ErrInvalid
 						}
 					}

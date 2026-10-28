@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -30,7 +33,13 @@ const (
 	trustedSSOMaxValue  = 254
 	trustedSSOMaxRoles  = 4096
 	trustedSSOMaxUsers  = 8
+	trustedSSOMaxToken  = 12 << 10
 )
+
+// DefaultTrustedSSORejectClaims is used when rejectClaims is not configured:
+// a token carrying Keycloak's impersonator claim (an administrator acting as
+// the owner) never becomes an owner session.
+var DefaultTrustedSSORejectClaims = []string{"impersonator"}
 
 // TrustedSSO lets the local edge (nginx behind an oauth2-proxy role gate) assert
 // the already-authenticated owner identity. It is absent and off by default.
@@ -44,6 +53,11 @@ const (
 //     header must also name an allowed username (secondary match);
 //   - exactly one roles header contains the required role;
 //   - the complete trusted forwarding tuple is valid;
+//   - every configured token header carries exactly one JWT whose payload is a
+//     readable JSON object with "sub" equal to the user header and none of the
+//     rejectClaims (default "impersonator") present with any value, null or {}
+//     included; the edge already verified the signature, so the console only
+//     reads the payload over the trusted channel;
 //   - no other X-Secdns-SSO-* header is present.
 //
 // A valid assertion only lets the browser exchange it for the owner's normal
@@ -61,6 +75,10 @@ type TrustedSSO struct {
 	// Optional secondary match (both or neither).
 	UsernameHeader   string
 	AllowedUsernames []string
+	// TokenHeaders carry the edge-verified ID/access tokens (1 or 2 headers);
+	// RejectClaims are claim names that refuse the assertion when present.
+	TokenHeaders []string
+	RejectClaims []string
 
 	secretDigest [sha256.Size]byte
 	loaded       bool
@@ -70,7 +88,7 @@ type TrustedSSO struct {
 func (*TrustedSSO) String() string   { return "server.TrustedSSO[redacted]" }
 func (*TrustedSSO) GoString() string { return "server.TrustedSSO[redacted]" }
 
-var trustedSSOKeys = []string{"headerSecretFile", "secretHeader", "userHeader", "rolesHeader", "requiredRole", "allowedUsers", "mapsTo"}
+var trustedSSOKeys = []string{"headerSecretFile", "secretHeader", "userHeader", "rolesHeader", "requiredRole", "allowedUsers", "mapsTo", "tokenHeaders"}
 var trustedSSOOptionalKeys = []string{"usernameHeader", "allowedUsernames"}
 
 func trustedSSOValue(original interface{}) (interface{}, bool) {
@@ -107,7 +125,12 @@ func ParseTrustedSSO(raw interface{}) (*TrustedSSO, bool) {
 			optional++
 		}
 	}
-	if (optional != 0 && optional != len(trustedSSOOptionalKeys)) || len(m) != len(trustedSSOKeys)+optional {
+	_, hasReject := m["rejectClaims"]
+	extra := 0
+	if hasReject {
+		extra = 1
+	}
+	if (optional != 0 && optional != len(trustedSSOOptionalKeys)) || len(m) != len(trustedSSOKeys)+optional+extra {
 		return nil, false
 	}
 	text := func(key string) string {
@@ -131,6 +154,18 @@ func ParseTrustedSSO(raw interface{}) (*TrustedSSO, bool) {
 		out.UsernameHeader = http.CanonicalHeaderKey(text("usernameHeader"))
 		names = append(names, out.UsernameHeader)
 	}
+	tokens, ok := m["tokenHeaders"].([]interface{})
+	if !ok || len(tokens) == 0 || len(tokens) > 2 {
+		return nil, false
+	}
+	for _, value := range tokens {
+		name, ok := value.(string)
+		if !ok {
+			return nil, false
+		}
+		out.TokenHeaders = append(out.TokenHeaders, http.CanonicalHeaderKey(name))
+	}
+	names = append(names, out.TokenHeaders...)
 	headers := map[string]bool{}
 	for _, name := range names {
 		if !validTrustedSSOHeaderName(name) || headers[name] {
@@ -149,7 +184,47 @@ func ParseTrustedSSO(raw interface{}) (*TrustedSSO, bool) {
 			return nil, false
 		}
 	}
+	out.RejectClaims = append([]string(nil), DefaultTrustedSSORejectClaims...)
+	if hasReject {
+		// An explicit list replaces the default; it can never be empty.
+		if out.RejectClaims, ok = trustedSSOList(m["rejectClaims"]); !ok {
+			return nil, false
+		}
+	}
 	return out, true
+}
+
+// trustedSSOTokenCheck reads one edge-verified JWT payload. It returns a fixed
+// reason token, never a claim value.
+func trustedSSOTokenCheck(raw, subject string, reject []string) string {
+	raw = strings.TrimPrefix(raw, "Bearer ")
+	if raw == "" || len(raw) > trustedSSOMaxToken {
+		return "token"
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 || parts[1] == "" {
+		return "token"
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return "token"
+	}
+	defer clear(payload)
+	d := json.NewDecoder(bytes.NewReader(payload))
+	var claims map[string]json.RawMessage
+	if d.Decode(&claims) != nil || claims == nil || d.More() {
+		return "token"
+	}
+	for _, name := range reject {
+		if _, present := claims[name]; present {
+			return "rejected_claim"
+		}
+	}
+	var sub string
+	if s, ok := claims["sub"]; !ok || json.Unmarshal(s, &sub) != nil || sub != subject {
+		return "token_subject"
+	}
+	return ""
 }
 
 func trustedSSOList(raw interface{}) ([]string, bool) {
@@ -280,6 +355,9 @@ func (h *HTTPAdminServer) trustedSSOCheck(r *http.Request) (trustedSSOState, str
 		if len(canonical) >= len(trustedSSOHeaderPrefix) && strings.EqualFold(canonical[:len(trustedSSOHeaderPrefix)], trustedSSOHeaderPrefix) {
 			present = true
 			known := canonical == c.SecretHeader || canonical == c.UserHeader || canonical == c.RolesHeader || (c.UsernameHeader != "" && canonical == c.UsernameHeader)
+			for _, token := range c.TokenHeaders {
+				known = known || canonical == token
+			}
 			if !known || canonical != name {
 				unexpected = true
 			}
@@ -347,6 +425,19 @@ func (h *HTTPAdminServer) trustedSSOCheck(r *http.Request) (trustedSSOState, str
 		}
 		if !match {
 			return trustedSSOInvalid, "username_not_allowed"
+		}
+	}
+	// Fail closed: without readable token claims the reject list cannot be checked.
+	if len(c.TokenHeaders) == 0 || len(c.RejectClaims) == 0 {
+		return trustedSSOInvalid, "token"
+	}
+	for _, name := range c.TokenHeaders {
+		tokens := r.Header.Values(name)
+		if len(tokens) != 1 {
+			return trustedSSOInvalid, "token"
+		}
+		if reason := trustedSSOTokenCheck(tokens[0], users[0], c.RejectClaims); reason != "" {
+			return trustedSSOInvalid, reason
 		}
 	}
 	if h.humanSource(r) == "" {

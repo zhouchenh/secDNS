@@ -60,13 +60,23 @@ so the owner signs in once. It is absent and off by default; without it, any
   "requiredRole": "secdns-console:access",
   "allowedUsers": ["<identity-provider subject (sub) of the owner>"],
   "mapsTo": "owner",
+  "tokenHeaders": ["X-Secdns-SSO-Id-Token", "X-Secdns-SSO-Access-Token"],
+  "rejectClaims": ["impersonator"],
   "usernameHeader": "X-Secdns-SSO-Username",
   "allowedUsernames": ["owner-username"]
 }
 ```
 
-The first seven keys are required; `usernameHeader` and `allowedUsernames` are
-an optional pair (a secondary username match). Header names must start with
+The first eight keys (through `tokenHeaders`) are required; `rejectClaims` is
+optional and defaults to `["impersonator"]` (an explicit list replaces the
+default and may not be empty); `usernameHeader` and `allowedUsernames` are an
+optional pair (a secondary username match). `tokenHeaders` names one or two
+headers carrying the edge-verified ID/access tokens (a `Bearer ` prefix is
+accepted). The console reads only the JWT payload (the edge already verified the
+signature) and refuses the assertion unless every token is readable, its `sub`
+equals the user header, and none of `rejectClaims` is present with any value
+(null and `{}` included). Keycloak's impersonator claim therefore never becomes
+an owner session. Header names must start with
 `X-Secdns-SSO-` and be distinct. `mapsTo` must be `owner` (the console has one
 human owner). Key `allowedUsers` on the identity provider's immutable subject,
 never on an email address or another user-editable claim.
@@ -96,10 +106,13 @@ fallback to accept):
 - exactly one roles header whose comma-separated list contains `requiredRole`
   exactly (other entries, even with spaces or non-ASCII, are ignored);
 - the complete trusted forwarding tuple (see Facade admin edge) is valid;
+- every token header: exactly one readable JWT payload, `sub` equal to the user,
+  no `rejectClaims` key;
 - no other `X-Secdns-SSO-*` header.
 
 Refusals are logged with a fixed reason token (`peer`, `secret`, `user`,
-`user_not_allowed`, `username`, `username_not_allowed`, `role`, `forwarded`,
+`user_not_allowed`, `username`, `username_not_allowed`, `role`, `token`,
+`token_subject`, `rejected_claim`, `forwarded`,
 `unexpected_header`, `unavailable`);
 header values, the secret and the user name are never logged.
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -62,6 +63,7 @@ func ssoTestConfig(t *testing.T) *TrustedSSO {
 		"mapsTo":           "owner",
 		"usernameHeader":   "X-Secdns-SSO-Username",
 		"allowedUsernames": []interface{}{ssoTestName},
+		"tokenHeaders":     []interface{}{"X-Secdns-SSO-Id-Token", "X-Secdns-SSO-Access-Token"},
 	})
 	if !ok {
 		t.Fatal("valid trustedSSO refused")
@@ -103,6 +105,8 @@ func ssoRequest(h *HTTPAdminServer, method, path, body string) *http.Request {
 	r.Header.Set("X-Secdns-SSO-User", ssoTestUser)
 	r.Header.Set("X-Secdns-SSO-Username", ssoTestName)
 	r.Header.Set("X-Secdns-SSO-Roles", "role:other,"+ssoTestRole+", role:x")
+	r.Header.Set("X-Secdns-SSO-Id-Token", "Bearer "+ssoTestJWT(map[string]any{"sub": ssoTestUser, "preferred_username": ssoTestName}))
+	r.Header.Set("X-Secdns-SSO-Access-Token", ssoTestJWT(map[string]any{"sub": ssoTestUser, "azp": "secdns-console"}))
 	return r
 }
 
@@ -218,6 +222,12 @@ func TestTrustedSSOHeaderValidationMatrix(t *testing.T) {
 		{"role-substring", "role", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Roles", ssoTestRole+"x") }},
 		{"role-in-other-case", "role", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Roles", strings.ToUpper(ssoTestRole)) }},
 		{"missing-username", "username", func(r *http.Request) { r.Header.Del("X-Secdns-SSO-Username") }},
+		{"impersonated-id-token", "rejected_claim", setToken("X-Secdns-SSO-Id-Token", map[string]any{"sub": ssoTestUser, "impersonator": map[string]any{"id": "admin-id", "username": "admin"}})},
+		{"missing-id-token", "token", func(r *http.Request) { r.Header.Del("X-Secdns-SSO-Id-Token") }},
+		{"duplicate-access-token", "token", func(r *http.Request) {
+			r.Header.Add("X-Secdns-SSO-Access-Token", r.Header.Get("X-Secdns-SSO-Access-Token"))
+		}},
+		{"token-subject-mismatch", "token_subject", setToken("X-Secdns-SSO-Access-Token", map[string]any{"sub": "someone-else"})},
 		{"duplicate-username", "username", func(r *http.Request) { r.Header.Add("X-Secdns-SSO-Username", ssoTestName) }},
 		{"wrong-username", "username_not_allowed", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-Username", "zhouchenh-renamed") }},
 		{"username-in-user-header", "user_not_allowed", func(r *http.Request) { r.Header.Set("X-Secdns-SSO-User", ssoTestName) }},
@@ -297,6 +307,8 @@ func TestTrustedSSOAbsentHeadersKeepBreakGlassLogin(t *testing.T) {
 		r.Header.Del("X-Secdns-SSO-User")
 		r.Header.Del("X-Secdns-SSO-Username")
 		r.Header.Del("X-Secdns-SSO-Roles")
+		r.Header.Del("X-Secdns-SSO-Id-Token")
+		r.Header.Del("X-Secdns-SSO-Access-Token")
 		return r
 	}
 	w := serve(h, strip(ssoRequest(h, "POST", "/auth/login/sso", `{}`)))
@@ -429,6 +441,7 @@ func TestTrustedSSOParseRefusals(t *testing.T) {
 			"requiredRole":     ssoTestRole,
 			"allowedUsers":     []interface{}{"zhouchenh"},
 			"mapsTo":           "owner",
+			"tokenHeaders":     []interface{}{"X-Secdns-SSO-Id-Token"},
 		}
 	}
 	if _, ok := ParseTrustedSSO(base()); !ok {
@@ -525,7 +538,7 @@ func TestListenUnixServesAndMarksPeer(t *testing.T) {
 	}
 	// Break-glass over the socket: no SSO headers, password step works.
 	r := strip(ssoRequest(h, "POST", "/auth/login/password", `{"username":"owner","password":"A synthetic long password phrase 8472!"}`))
-	for _, k := range []string{"X-Secdns-Sso-Secret", "X-Secdns-Sso-User", "X-Secdns-Sso-Username", "X-Secdns-Sso-Roles"} {
+	for _, k := range []string{"X-Secdns-Sso-Secret", "X-Secdns-Sso-User", "X-Secdns-Sso-Username", "X-Secdns-Sso-Roles", "X-Secdns-Sso-Id-Token", "X-Secdns-Sso-Access-Token"} {
 		r.Header.Del(k)
 	}
 	if resp, body = do(r); resp.StatusCode != 200 || !strings.Contains(body, "challenge") {
@@ -600,6 +613,135 @@ func TestListenUnixRefusesUnsafeLocation(t *testing.T) {
 	for _, bad := range []string{"", "/", "/run/../x.sock", "/run/a/", "/" + strings.Repeat("a", 120)} {
 		if ValidListenUnixPath(bad) {
 			t.Fatalf("path %q accepted", bad)
+		}
+	}
+}
+
+// ssoTestJWT builds an unsigned token shape: the edge verified the real
+// signature; the console only reads the payload over the trusted channel.
+func ssoTestJWT(claims map[string]any) string {
+	payload, _ := json.Marshal(claims)
+	return "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(payload) + ".c2lnbmF0dXJl"
+}
+
+func setToken(header string, claims map[string]any) func(*http.Request) {
+	return func(r *http.Request) { r.Header.Set(header, ssoTestJWT(claims)) }
+}
+
+func TestTrustedSSORejectsImpersonatedTokens(t *testing.T) {
+	impersonated := []any{
+		map[string]any{"id": "admin-id", "username": "admin"},
+		nil,
+		map[string]any{},
+		"",
+		false,
+	}
+	for _, header := range []string{"X-Secdns-SSO-Id-Token", "X-Secdns-SSO-Access-Token"} {
+		for i, value := range impersonated {
+			h, logs := ssoTestServer(t, true)
+			before, _ := h.agent.store.AuditLocal(100)
+			r := ssoRequest(h, "POST", "/auth/login/sso", `{}`)
+			setToken(header, map[string]any{"sub": ssoTestUser, "impersonator": value})(r)
+			w := serve(h, r)
+			if w.Code != 403 || !strings.Contains(w.Body.String(), "sso_rejected") || len(w.Result().Cookies()) != 0 {
+				t.Fatalf("%s value %d: impersonated token not refused: %d %s", header, i, w.Code, w.Body.String())
+			}
+			if rec := logs.last(); rec.accepted || rec.reason != "rejected_claim" {
+				t.Fatalf("%s value %d: logged %+v", header, i, rec)
+			}
+			assertNoSSOLeak(t, "impersonation refusal", w.Body.String())
+			if strings.Contains(w.Body.String(), "admin") {
+				t.Fatal("claim value echoed")
+			}
+			after, _ := h.agent.store.AuditLocal(100)
+			if len(after) != len(before) {
+				t.Fatal("refused impersonation reached the audit/session path")
+			}
+		}
+	}
+	// The normal owner token still gets a session.
+	h, logs := ssoTestServer(t, true)
+	w := serve(h, ssoRequest(h, "POST", "/auth/login/sso", `{}`))
+	if w.Code != 200 || len(w.Result().Cookies()) != 1 || !logs.last().accepted {
+		t.Fatalf("owner token: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestTrustedSSOUnreadableTokensFailClosed(t *testing.T) {
+	sub := base64.RawURLEncoding.EncodeToString
+	for name, raw := range map[string]string{
+		"empty":         "",
+		"bearer-only":   "Bearer ",
+		"two-parts":     "a." + sub([]byte(`{"sub":"x"}`)),
+		"four-parts":    "a." + sub([]byte(`{"sub":"x"}`)) + ".b.c",
+		"empty-payload": "a..b",
+		"bad-base64":    "a.!!!.b",
+		"not-json":      "a." + sub([]byte("not json")) + ".b",
+		"json-array":    "a." + sub([]byte(`["sub"]`)) + ".b",
+		"json-null":     "a." + sub([]byte(`null`)) + ".b",
+		"trailing-data": "a." + sub([]byte(`{"sub":"`+ssoTestUser+`"}{}`)) + ".b",
+		"no-sub":        ssoTestJWT(map[string]any{"azp": "secdns-console"}),
+		"numeric-sub":   ssoTestJWT(map[string]any{"sub": 42}),
+		"oversized":     "a." + strings.Repeat("A", 13<<10) + ".b",
+	} {
+		h, logs := ssoTestServer(t, true)
+		r := ssoRequest(h, "GET", "/auth/state", "")
+		r.Header.Set("X-Secdns-SSO-Id-Token", raw)
+		w := serve(h, r)
+		if w.Code != 403 || logs.last().accepted || (logs.last().reason != "token" && logs.last().reason != "token_subject") {
+			t.Fatalf("%s: %d %s %+v", name, w.Code, w.Body.String(), logs.last())
+		}
+	}
+	// Without configured token headers (or reject claims) nothing is accepted.
+	h, logs := ssoTestServer(t, true)
+	h.TrustedSSO.TokenHeaders = nil
+	r := ssoRequest(h, "GET", "/auth/state", "")
+	r.Header.Del("X-Secdns-SSO-Id-Token")
+	r.Header.Del("X-Secdns-SSO-Access-Token")
+	if w := serve(h, r); w.Code != 403 || logs.last().reason != "token" {
+		t.Fatalf("no token headers configured: %d %+v", w.Code, logs.last())
+	}
+}
+
+func TestTrustedSSORejectClaimsConfigurable(t *testing.T) {
+	c := ssoTestConfig(t)
+	if len(c.RejectClaims) != 1 || c.RejectClaims[0] != "impersonator" {
+		t.Fatalf("default reject claims: %v", c.RejectClaims)
+	}
+	h, logs := ssoTestServer(t, true)
+	h.TrustedSSO.RejectClaims = []string{"impersonator", "act"}
+	r := ssoRequest(h, "GET", "/auth/state", "")
+	setToken("X-Secdns-SSO-Access-Token", map[string]any{"sub": ssoTestUser, "act": map[string]any{"sub": "admin"}})(r)
+	if w := serve(h, r); w.Code != 403 || logs.last().reason != "rejected_claim" {
+		t.Fatalf("custom reject claim: %d %+v", w.Code, logs.last())
+	}
+	base := func() map[string]interface{} {
+		return map[string]interface{}{
+			"headerSecretFile": "/etc/secdns-admin/sso-header-secret", "secretHeader": "X-Secdns-SSO-Secret",
+			"userHeader": "X-Secdns-SSO-User", "rolesHeader": "X-Secdns-SSO-Roles", "requiredRole": ssoTestRole,
+			"allowedUsers": []interface{}{"u"}, "mapsTo": "owner", "tokenHeaders": []interface{}{"X-Secdns-SSO-Id-Token"},
+		}
+	}
+	m := base()
+	m["rejectClaims"] = []interface{}{"impersonator", "act"}
+	if got, ok := ParseTrustedSSO(m); !ok || len(got.RejectClaims) != 2 {
+		t.Fatal("explicit reject claims refused")
+	}
+	for name, mutate := range map[string]func(map[string]interface{}){
+		"no-token-headers":    func(m map[string]interface{}) { delete(m, "tokenHeaders") },
+		"empty-token-headers": func(m map[string]interface{}) { m["tokenHeaders"] = []interface{}{} },
+		"three-token-headers": func(m map[string]interface{}) {
+			m["tokenHeaders"] = []interface{}{"X-Secdns-SSO-A", "X-Secdns-SSO-B", "X-Secdns-SSO-C"}
+		},
+		"token-header-prefix":  func(m map[string]interface{}) { m["tokenHeaders"] = []interface{}{"Authorization"} },
+		"token-header-reused":  func(m map[string]interface{}) { m["tokenHeaders"] = []interface{}{"X-Secdns-SSO-User"} },
+		"empty-reject-claims":  func(m map[string]interface{}) { m["rejectClaims"] = []interface{}{} },
+		"reject-claims-string": func(m map[string]interface{}) { m["rejectClaims"] = "impersonator" },
+	} {
+		m := base()
+		mutate(m)
+		if _, ok := ParseTrustedSSO(m); ok {
+			t.Fatalf("%s accepted", name)
 		}
 	}
 }
