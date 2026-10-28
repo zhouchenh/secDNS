@@ -43,6 +43,71 @@ If every factor is lost, stop the owning process and use the explicit local `rec
 
 Inspect recent security events and revoke other sessions after recovery. There is no email/SMS recovery, shared-node cookie authority, remote root recovery, or automatic credential issuance. Recovery never modifies DNS records. A key/database loss needs the offline backup or a separately designed operator procedure; this feature does not promise lossless recovery from missing cryptographic material.
 
+## Single sign-on from a trusted local edge
+
+`trustedSSO` lets an operator-controlled local edge (nginx behind an
+oauth2-proxy role gate) assert that the browser already signed in as the owner,
+so the owner signs in once. It is absent and off by default; without it, any
+`X-Secdns-SSO-*` header is ignored exactly as before.
+
+```json
+"trustedProxySources": ["127.0.0.1"],
+"trustedSSO": {
+  "headerSecretFile": "/etc/secdns-admin/sso-header-secret",
+  "secretHeader": "X-Secdns-SSO-Secret",
+  "userHeader": "X-Secdns-SSO-User",
+  "rolesHeader": "X-Secdns-SSO-Roles",
+  "requiredRole": "secdns-console:access",
+  "allowedUsers": ["owner-username"],
+  "mapsTo": "owner"
+}
+```
+
+All seven keys are required. Header names must start with `X-Secdns-SSO-` and
+be distinct. `mapsTo` must be `owner` (the console has one human owner).
+`trustedSSO` also requires an auth store, the exact HTTPS `publicOrigin` and a
+loopback address in `trustedProxySources`; otherwise the configuration (and
+`-test`) fails. The secret file is read once at load: it must be an absolute,
+clean path to a regular, non-symlink file without group/other permission bits,
+holding 32 to 1024 visible ASCII bytes (one trailing newline is ignored). Only
+its SHA-256 digest is kept in memory.
+
+A request carrying **any** `X-Secdns-SSO-*` header is an assertion and must pass
+every check, or it is refused with 403 `sso_rejected` on every route (never a
+fallback to accept):
+
+- the socket peer is loopback **and** listed in `trustedProxySources`;
+- exactly one secret header, equal to the file secret (constant-time digest compare);
+- exactly one user header naming an `allowedUsers` entry (exact, case-sensitive);
+- exactly one roles header whose comma-separated list contains `requiredRole`;
+- the complete trusted forwarding tuple (see Facade admin edge) is valid;
+- no other `X-Secdns-SSO-*` header.
+
+Refusals are logged with a fixed reason token (`peer`, `secret`, `user`,
+`user_not_allowed`, `role`, `forwarded`, `unexpected_header`, `unavailable`);
+header values, the secret and the user name are never logged.
+
+A valid assertion does not authorize requests by itself. `GET <path>/auth/state`
+reports `sso_login: true`, and the console UI exchanges it once with
+`POST <path>/auth/login/sso` (body exactly `{}`, exact origin, same-origin Fetch
+Metadata, JSON content type, no cookie or Authorization header) for the owner's
+normal human session: the same `__Host-` Secure/HttpOnly/SameSite-Strict cookie,
+CSRF value, 30-minute idle and 12-hour absolute limits as a password+TOTP login.
+The durable audit records the normal `human_login` action (an earlier release can
+still open the database after a rollback); the service log records
+`method=sso`. The exchange requires a completed owner setup and never creates or
+changes a credential. An SSO session is **not** a recent authentication: password,
+authenticator, recovery-code, passkey and session-revocation changes still need
+password+TOTP or passkey reauthentication.
+
+Requests without SSO headers keep the unchanged password+TOTP and passkey
+sign-in; that is the break-glass path when the identity provider or edge is
+unavailable (for example over an SSH tunnel to the loopback listener).
+
+The edge must overwrite or remove every client-supplied `X-Secdns-SSO-*` header,
+send the secret only after its authentication subrequest succeeded, and keep the
+secret file and its nginx include readable by their owning process only.
+
 ## Local validation
 
 Go regressions cover schema migration rollback/commit uncertainty, strict reopen/encrypted-seed corruption, atomic one-winner setup, OTP replay, source-bound ceremonies, persistent rate refusal, root/saved-code recovery, old-factor preservation, session generation invalidation, recent-MFA expiry and agent denial. The opt-in `ADMINAUTH_BROWSER=1` fixture uses an isolated localhost TLS server and installed Chromium with synthetic credentials, proving setup/login/reload/rotation/recovery and a 375-pixel layout. It also reruns the agent-session browser flow. No real portal, candidate, CA or production service is changed by these tests.

@@ -217,6 +217,9 @@ func (h *HTTPAdminServer) agentRoutes(mux *http.ServeMux, base string) {
 				if e == nil {
 					out["human_access"] = true
 					out["setup_required"] = !ready
+					if h.TrustedSSO != nil && h.AgentAuthConfigured {
+						out["sso_login"] = ready && h.trustedSSOAvailable(r)
+					}
 				}
 			}
 		}

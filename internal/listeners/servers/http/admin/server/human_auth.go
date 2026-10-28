@@ -191,6 +191,9 @@ func (h *HTTPAdminServer) humanRoutes(mux *http.ServeMux, base string) {
 		}
 		writeJSON(w, 200, map[string]any{"challenge": challenge, "expires_at": now.Add(5 * time.Minute)})
 	}))
+	if h.TrustedSSO != nil {
+		mux.HandleFunc("POST "+base+"/auth/login/sso", public([]string{}, h.trustedSSOLogin))
+	}
 	mux.HandleFunc("POST "+base+"/auth/login/totp", public([]string{"challenge", "code"}, func(w http.ResponseWriter, r *http.Request, b map[string]string, source string, now time.Time) {
 		result, e := h.agent.human.Confirm(b["challenge"], b["code"], source, now)
 		if e != nil {

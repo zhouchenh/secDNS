@@ -77,5 +77,10 @@
   window.addEventListener("pointerdown",activity);window.addEventListener("keydown",activity);
   window.addEventListener("pagehide",localClear);
   const initialEpoch=epoch;
-  api("state",{credentials:"omit"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;panel.hidden=!allowedOrigin;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(()=>{});}).catch(()=>{});
+  // Same-origin credentials: behind the single sign-on edge, an anonymous state
+  // request is redirected to sign-in. The response never contains credentials.
+  // With a valid edge assertion and no console session, exchange it once for the
+  // owner's normal session; otherwise the console's own sign-in stays available.
+  const ssoLogin=()=>api("login/sso",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}).then(data=>{if(initialEpoch!==epoch)return;accept(data);note.textContent="Signed in with single sign-on.";fire("agentconnected");});
+  api("state",{credentials:"same-origin"}).then(state=>{publicState=state;window.dispatchEvent(new CustomEvent("authstate",{detail:state}));allowedOrigin=state.agent_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin;panel.hidden=!allowedOrigin;if(allowedOrigin&&initialEpoch===epoch)return api("session").then(data=>{if(initialEpoch!==epoch)return;accept(data);fire("agentconnected");}).catch(error=>{if(error.status===401&&state.sso_login===true&&state.human_access===true&&initialEpoch===epoch)return ssoLogin();}).catch(()=>{});}).catch(()=>{});
 })();

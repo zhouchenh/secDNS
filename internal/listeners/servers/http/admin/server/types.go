@@ -59,6 +59,9 @@ type HTTPAdminServer struct {
 	// TrustedProxySources is an opt-in exact socket-source allowlist for browser
 	// authentication client identity. Forwarded metadata is otherwise ignored.
 	TrustedProxySources []netip.Addr
+	// TrustedSSO is the opt-in local edge single sign-on assertion (absent = off).
+	TrustedSSO       *TrustedSSO
+	trustedSSOLogger func(accepted bool, reason string)
 	// SourcePolicyExplain enables the authenticated, read-only offline selector
 	// preview. Configuration binding supplies the immutable selector before Serve.
 	SourcePolicyExplain       bool
@@ -188,6 +191,10 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 		handleIfError(err, errorHandler)
 		return
 	}
+	if h.TrustedSSO != nil && (h.ValidateTrustedSSO() != nil || !h.TrustedSSO.loaded) {
+		handleIfError(ErrTrustedSSO, errorHandler)
+		return
+	}
 	srv := &http.Server{
 		Addr:              net.JoinHostPort(h.Listen.String(), strconv.Itoa(int(h.Port))),
 		Handler:           h.routes(),
@@ -202,7 +209,11 @@ func (h *HTTPAdminServer) Serve(_ func(query *dns.Msg) (reply *dns.Msg), errorHa
 
 // routes builds the authenticated request multiplexer. It is separated from Serve so
 // the handlers can be driven in tests without binding a socket.
-func (h *HTTPAdminServer) routes() *http.ServeMux {
+func (h *HTTPAdminServer) routes() http.Handler {
+	return h.trustedSSOGate(h.routeMux())
+}
+
+func (h *HTTPAdminServer) routeMux() *http.ServeMux {
 	base := h.basePath()
 	mux := http.NewServeMux()
 	h.nodeRoutes(mux, base)
@@ -619,6 +630,13 @@ func init() {
 				ValueSource: descriptor.ObjectAtPath{
 					ObjectPath:     descriptor.Root,
 					AssignableKind: descriptor.AssignmentFunction(trustedProxySourcesValue),
+				},
+			},
+			descriptor.ObjectFiller{
+				ObjectPath: descriptor.Path{"TrustedSSO"},
+				ValueSource: descriptor.ObjectAtPath{
+					ObjectPath:     descriptor.Root,
+					AssignableKind: descriptor.AssignmentFunction(trustedSSOValue),
 				},
 			},
 			descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAdapterExecutable"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAdapterExecutable"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAdapterScript"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAdapterScript"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"NodeAuditDirectory"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"nodeAuditDirectory"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}}, descriptor.ObjectFiller{ObjectPath: descriptor.Path{"RecordAuthorityURL"}, ValueSource: descriptor.ValueSources{descriptor.ObjectAtPath{ObjectPath: descriptor.Path{"recordAuthorityURL"}, AssignableKind: descriptor.KindString}, descriptor.DefaultValue{Value: ""}}},

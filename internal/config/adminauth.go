@@ -142,7 +142,7 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 		originRaw, op := m["publicOrigin"]
 		rpRaw, rpp := m["passkeyRPID"]
 		if !p {
-			if op || rpp || h != nil && len(h.TrustedProxySources) != 0 {
+			if op || rpp || h != nil && (len(h.TrustedProxySources) != 0 || h.TrustedSSO != nil) {
 				return nil, adminauth.ErrInvalid
 			}
 			continue
@@ -178,6 +178,11 @@ func parseAdminBindings(raw interface{}, c *Config) ([]authBinding, error) {
 			return nil, adminauth.ErrInvalid
 		}
 		if h.RecordAuthorityURL != "" && origin == "" {
+			return nil, adminauth.ErrInvalid
+		}
+		// Trusted SSO needs the exact HTTPS origin, a loopback trusted proxy
+		// source and a readable private secret before anything is served.
+		if h.TrustedSSO != nil && (origin == "" || h.ValidateTrustedSSO() != nil || h.LoadTrustedSSOSecret() != nil) {
 			return nil, adminauth.ErrInvalid
 		}
 		used[n] = true
@@ -237,6 +242,22 @@ func validateAdminAuthSyntax(raw []byte) error {
 								return adminauth.ErrInvalid
 							}
 							seen[address] = true
+						}
+					}
+					if ssoRaw, ssoSet := cfg["trustedSSO"]; ssoSet {
+						if _, e := authObject(raw, map[string]bool{"trustedSSO": true}); e != nil {
+							return e
+						}
+						fields, e := authObject(ssoRaw, nil)
+						if e != nil {
+							return e
+						}
+						var decoded interface{}
+						if json.Unmarshal(ssoRaw, &decoded) != nil {
+							return adminauth.ErrInvalid
+						}
+						if _, ok := admin.ParseTrustedSSO(decoded); !ok || len(fields) != 7 {
+							return adminauth.ErrInvalid
 						}
 					}
 					_, urlSet := cfg["recordAuthorityURL"]
