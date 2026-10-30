@@ -578,8 +578,8 @@ dialog.warn-dialog h2{color:var(--ink)}
 #human-security.sso-account .sso-card h3{margin:0 0 var(--s3);font-size:var(--fs-lg)}
 .account-name{font-size:var(--fs-xl);font-weight:var(--fw-semibold);color:var(--ink)!important;margin:0}
 .account-role,.account-provider{margin:4px 0 0;font-size:var(--fs-sm)!important}
-.step-up-state{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-radius:var(--r-sm);background:var(--warn-bg);color:var(--warn-ink)!important;font-weight:var(--fw-semibold)}
-.step-up-state.is-fresh{background:var(--ok-bg);color:var(--ok-ink)!important}
+#console-auth-screen .step-up-state{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-radius:var(--r-sm);border:1px solid color-mix(in oklch,var(--warn) 40%,var(--border));background:var(--warn-bg);color:var(--warn-ink);font-weight:var(--fw-semibold)}
+#console-auth-screen .step-up-state.is-fresh{border-color:color-mix(in oklch,var(--ok) 40%,var(--border));background:var(--ok-bg);color:var(--ok-ink)}
 .step-up-gated-title{margin:var(--s3) 0 4px;font-size:var(--fs-sm)!important}
 .step-up-gated{margin:0;padding-left:20px;color:var(--ink-2);font-size:var(--fs-sm)}
 .sso-session-actions{display:flex;flex-wrap:wrap;gap:var(--s2);margin:var(--s3) 0 var(--s4)}
