@@ -18,8 +18,8 @@
       absent.textContent = unavailable ? "Snapshot not loaded" : "Not present in this snapshot"; section.append(absent); return section;
     }
     const fields = document.createElement("dl");
-    for (const [label, value] of [["Name",record.name],["Type",record.type],["TTL (seconds)",String(record.ttl_seconds)],["Expiration",record.expires_at === undefined ? "Permanent (no expiration)" : record.expires_at]]) {
-      const term = document.createElement("dt"), detail = document.createElement("dd"); term.textContent = label; detail.textContent = value; fields.append(term,detail);
+    for (const [label, value] of [["Name",record.name],["Type",record.type],["TTL (seconds)",String(record.ttl_seconds)],["Expiration",record.expires_at === undefined ? "Permanent (no expiration)" : (window.secDNSI18n?.date(record.expires_at) || record.expires_at)]]) {
+      const term = document.createElement("dt"), detail = document.createElement("dd"); term.textContent = label; detail.textContent = value; if (label === "Name") detail.translate = false; if (label === "Expiration" && record.expires_at !== undefined) detail.title = record.expires_at; fields.append(term,detail);
     }
     const label = document.createElement("p"), values = document.createElement("ol"); label.className = "comparison-value-label"; label.textContent = "Ordered values / TXT chunks"; values.className = "comparison-values";
     for (const value of record.values) { const item = document.createElement("li"), text = document.createElement("code"); text.textContent = JSON.stringify(value); item.append(text); values.append(item); }
@@ -133,7 +133,7 @@
       if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
       const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; breakable(title, record.name); info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
       for (const value of record.values) {const d = document.createElement("div");d.className="record-value";if(value==="")d.textContent="(empty string)";else if(record.type==="A"||record.type==="AAAA"){d.classList.add("record-ip");d.textContent=value;}else if(record.type==="CNAME"){d.classList.add("record-fqdn");breakable(d,value);}else d.textContent=value;valueCell.append(d);}
-      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+record.expires_at;valueCell.append(d);}
+      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+(window.secDNSI18n?.date(record.expires_at)||record.expires_at);d.title=record.expires_at;valueCell.append(d);}
       const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
       change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});

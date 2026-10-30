@@ -9,7 +9,7 @@ import (
 //go:embed ui/* versioned_ui/* preview_ui/* auth_ui/* follower_ui/* console_ui/*
 var editorAssets embed.FS
 
-const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+const editorCSP = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 func editorHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", editorCSP)
@@ -22,14 +22,11 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 	if len(h.followerStatusNames) > 0 {
 		h.followerUIRoutes(mux, base)
 	}
-	for _, name := range []string{"agent.js", "human.js", "passkey.js", "auth.css"} {
+	for _, name := range []string{"agent.js", "human.js", "passkey.js"} {
 		data, _ := editorAssets.ReadFile("auth_ui/" + name)
 		mux.HandleFunc("GET "+base+"/auth/"+name, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-			if name == "auth.css" {
-				w.Header().Set("Content-Type", "text/css; charset=utf-8")
-			}
 			w.Write(data)
 		})
 	}
@@ -40,7 +37,6 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 	assets := []struct{ route, file, contentType string }{
 		{"/{$}", "index.html", "text/html; charset=utf-8"},
 		{"/app.js", "app.js", "text/javascript; charset=utf-8"},
-		{"/style.css", "style.css", "text/css; charset=utf-8"},
 	}
 	folder := "ui/"
 	if h.versioned != nil || h.recordGatewayEnabled() {

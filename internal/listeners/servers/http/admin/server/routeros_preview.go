@@ -314,7 +314,6 @@ func (h *HTTPAdminServer) routerOSPreviewRoutes(mux *http.ServeMux, base string)
 		{"/{$}", "index.html", "text/html; charset=utf-8"},
 		{"/app.js", "app.js", "text/javascript; charset=utf-8"},
 		{"/state.js", "state.js", "text/javascript; charset=utf-8"},
-		{"/style.css", "style.css", "text/css; charset=utf-8"},
 	} {
 		data, err := editorAssets.ReadFile("preview_ui/" + asset.file)
 		if err != nil {

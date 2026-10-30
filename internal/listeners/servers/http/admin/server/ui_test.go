@@ -14,13 +14,13 @@ func TestEditorRoutesAndHeaders(t *testing.T) {
 			if base == "" {
 				h.Path = "/"
 			}
-			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/style.css"} {
+			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/console.css"} {
 				if got := do(h, "GET", base+route, "", ""); got.Code != http.StatusNotFound {
 					t.Fatalf("default editor exposed: %d", got.Code)
 				}
 			}
 			h.UI = true
-			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/style.css"} {
+			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/console.css"} {
 				got := do(h, "GET", base+route, "", "")
 				if got.Code != 200 {
 					t.Fatalf("%s: %d", route, got.Code)

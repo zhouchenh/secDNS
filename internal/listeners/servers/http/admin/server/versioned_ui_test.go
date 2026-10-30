@@ -18,13 +18,13 @@ func TestVersionedEditorModeAndHeaders(t *testing.T) {
 			if base == "" {
 				h.Path = "/"
 			}
-			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/state.js", "/ui/style.css"} {
+			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/state.js", "/ui/console.css"} {
 				if r := do(h, "GET", base+route, "", ""); r.Code != 404 {
 					t.Fatal("default exposed")
 				}
 			}
 			h.UI = true
-			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/state.js", "/ui/style.css"} {
+			for _, route := range []string{"/ui/", "/ui/app.js", "/ui/state.js", "/ui/console.css"} {
 				r := do(h, "GET", base+route, "", "")
 				if r.Code != 200 {
 					t.Fatal(route, r.Code)

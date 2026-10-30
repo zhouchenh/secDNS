@@ -68,7 +68,7 @@ func TestSnapshotAPIBothBackends(t *testing.T) {
 					t.Fatal("legacy bypass", r.Code)
 				}
 			}
-			for _, path := range []string{"/admin/ui", "/admin/ui/", "/admin/ui/app.js", "/admin/ui/style.css"} {
+			for _, path := range []string{"/admin/ui", "/admin/ui/", "/admin/ui/app.js", "/admin/ui/console.css"} {
 				if r := do(h, "GET", path, testToken, ""); r.Code != 404 {
 					t.Fatal("editor exposed", path, r.Code)
 				}

@@ -94,7 +94,7 @@ func TestFollowerUIRequiresOptIn(t *testing.T) {
 		}
 		mux := http.NewServeMux()
 		h.editorRoutes(mux, "/admin")
-		for _, path := range []string{"/admin/ui/followers/", "/admin/ui/followers/app.js", "/admin/ui/followers/style.css"} {
+		for _, path := range []string{"/admin/ui/followers/", "/admin/ui/followers/app.js"} {
 			w := httptest.NewRecorder()
 			mux.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 			if (w.Code == 200) != enabled {

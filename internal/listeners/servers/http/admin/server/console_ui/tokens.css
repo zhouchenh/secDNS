@@ -1,0 +1,87 @@
+/* secDNS console design tokens: the only place colours, type, spacing and radii are defined.
+   Palette: ERA admin console (Horizon) .ad-light / .ad-dark, values taken literally from
+   era origin/main@73044e8 web/app/src/styles/tokens.css, plus contrast-checked additions marked (secDNS).
+   Theme: follows the system by default; :root[data-theme] (set before paint by theme.js) forces one.
+   Type: Hanken Grotesk (self-hosted, OFL; as WithMy ID) with system fallbacks; CJK and mono use system fonts.
+   Breakpoints (used in console.css): phone < 640 px, tablet 640-1023 px, desktop >= 1024 px. */
+
+@font-face{font-family:"Hanken Grotesk";font-style:normal;font-weight:400;font-display:swap;src:url(fonts/hanken-grotesk-latin-400-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Hanken Grotesk";font-style:normal;font-weight:500;font-display:swap;src:url(fonts/hanken-grotesk-latin-500-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Hanken Grotesk";font-style:normal;font-weight:600;font-display:swap;src:url(fonts/hanken-grotesk-latin-600-normal.woff2) format("woff2");unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+
+:root{
+  /* Type stacks (ERA --font-sans / --font-mono / --font-tc, local fonts only) */
+  --font-sans:"Hanken Grotesk",system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+  --font-tc:"Hanken Grotesk","PingFang TC","Noto Sans TC","Noto Sans CJK TC","Microsoft JhengHei",system-ui,sans-serif;
+  --font-mono:"JetBrains Mono",ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+
+  /* Type scale: 12 / 13 / 14 / 16 / 20 / 28; weights 400 / 500 / 600 */
+  --fs-xs:12px;--fs-sm:13px;--fs-md:14px;--fs-lg:16px;--fs-xl:20px;--fs-2xl:28px;
+  --fw-regular:400;--fw-medium:500;--fw-semibold:600;
+  --lh-tight:1.25;--lh:1.5;
+
+  /* Radii and spacing (ERA scale; admin density) */
+  --r-xs:6px;--r-sm:8px;--r-md:12px;--r-lg:14px;--r-pill:999px;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s7:32px;--s8:40px;
+
+  /* Shell metrics */
+  --topbar-h:56px;--side-w:240px;--control-h:38px;--control-h-touch:44px;--content-max:1500px;
+
+  /* Motion */
+  --ease:cubic-bezier(.2,.7,.2,1);--dur-fast:140ms;--dur:240ms;
+
+  /* Semantic hues (ERA :root) */
+  --ok:oklch(0.65 0.13 145);--warn:oklch(0.74 0.145 70);--err:oklch(0.62 0.19 28);--info:oklch(0.66 0.12 230);
+}
+:root:lang(zh-Hant){--font-sans:var(--font-tc)}
+
+/* ===== .ad-light (default) ===== */
+:root{
+  --bg:oklch(0.972 0.012 260);--bg-elev:oklch(0.992 0.006 260);--surface:oklch(0.992 0.006 260);--surface-2:oklch(0.948 0.014 260);
+  --border:oklch(0.890 0.012 260);--border-strong:oklch(0.820 0.014 260);
+  --ink:oklch(0.220 0.020 260);--ink-2:oklch(0.360 0.020 260);--muted:oklch(0.500 0.020 260);--muted-2:oklch(0.660 0.018 260);
+  --primary:oklch(0.62 0.135 260);--primary-fg:white;--primary-soft:oklch(0.955 0.030 260);
+  --ok-bg:oklch(0.960 0.035 145);--warn-bg:oklch(0.970 0.040 70);--err-bg:oklch(0.965 0.040 28);--info-bg:oklch(0.960 0.030 230);
+  --shadow-sm:0 1px 2px oklch(0.22 0.02 260 / .06);
+  --shadow:0 2px 6px oklch(0.22 0.02 260 / .06),0 8px 24px oklch(0.22 0.02 260 / .06);
+  --shadow-lg:0 4px 12px oklch(0.22 0.02 260 / .08),0 24px 60px oklch(0.22 0.02 260 / .10);
+  /* (secDNS) solid-action fill: white text 4.7:1; links/inks on surfaces >= 4.5:1; field borders >= 3:1 */
+  --action:oklch(0.56 0.135 260);--action-fg:white;--link:oklch(0.50 0.135 260);
+  --field-line:oklch(0.62 0.020 260);
+  --ok-ink:oklch(0.42 0.110 145);--warn-ink:oklch(0.45 0.100 70);--err-ink:oklch(0.48 0.170 28);--info-ink:oklch(0.45 0.100 230);
+  --danger:oklch(0.52 0.19 28);--danger-hover:oklch(0.46 0.18 28);--danger-fg:white;--danger-line:oklch(0.52 0.19 28);
+  --scrim:oklch(0.22 0.02 260 / .40);--avatar:oklch(0.40 0.10 270);--qr-bg:white;
+  color-scheme:light;
+}
+
+/* ===== .ad-dark: when the system is dark (unless forced light) or when forced dark ===== */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:oklch(0.165 0.018 260);--bg-elev:oklch(0.190 0.020 260);--surface:oklch(0.210 0.020 260);--surface-2:oklch(0.245 0.020 260);
+    --border:oklch(0.290 0.020 260);--border-strong:oklch(0.360 0.020 260);
+    --ink:oklch(0.960 0.010 260);--ink-2:oklch(0.870 0.012 260);--muted:oklch(0.680 0.020 260);--muted-2:oklch(0.540 0.018 260);
+    --primary:oklch(0.72 0.135 260);--primary-fg:oklch(0.165 0.020 260);--primary-soft:oklch(0.290 0.080 260);
+    --ok-bg:oklch(0.245 0.060 145);--warn-bg:oklch(0.265 0.065 70);--err-bg:oklch(0.270 0.090 28);--info-bg:oklch(0.250 0.060 230);
+    --shadow-sm:0 1px 2px oklch(0 0 0 / .35);--shadow:0 6px 20px oklch(0 0 0 / .40);--shadow-lg:0 20px 60px oklch(0 0 0 / .55);
+    --action:oklch(0.72 0.135 260);--action-fg:oklch(0.165 0.020 260);--link:oklch(0.78 0.110 260);
+    --field-line:oklch(0.520 0.020 260);
+    --ok-ink:oklch(0.80 0.120 145);--warn-ink:oklch(0.84 0.120 70);--err-ink:oklch(0.78 0.140 28);--info-ink:oklch(0.80 0.100 230);
+    --danger:oklch(0.58 0.19 28);--danger-hover:oklch(0.64 0.19 28);--danger-fg:white;--danger-line:oklch(0.66 0.17 28);
+    --scrim:oklch(0 0 0 / .60);--avatar:oklch(0.50 0.12 270);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:oklch(0.165 0.018 260);--bg-elev:oklch(0.190 0.020 260);--surface:oklch(0.210 0.020 260);--surface-2:oklch(0.245 0.020 260);
+  --border:oklch(0.290 0.020 260);--border-strong:oklch(0.360 0.020 260);
+  --ink:oklch(0.960 0.010 260);--ink-2:oklch(0.870 0.012 260);--muted:oklch(0.680 0.020 260);--muted-2:oklch(0.540 0.018 260);
+  --primary:oklch(0.72 0.135 260);--primary-fg:oklch(0.165 0.020 260);--primary-soft:oklch(0.290 0.080 260);
+  --ok-bg:oklch(0.245 0.060 145);--warn-bg:oklch(0.265 0.065 70);--err-bg:oklch(0.270 0.090 28);--info-bg:oklch(0.250 0.060 230);
+  --shadow-sm:0 1px 2px oklch(0 0 0 / .35);--shadow:0 6px 20px oklch(0 0 0 / .40);--shadow-lg:0 20px 60px oklch(0 0 0 / .55);
+  --action:oklch(0.72 0.135 260);--action-fg:oklch(0.165 0.020 260);--link:oklch(0.78 0.110 260);
+  --field-line:oklch(0.520 0.020 260);
+  --ok-ink:oklch(0.80 0.120 145);--warn-ink:oklch(0.84 0.120 70);--err-ink:oklch(0.78 0.140 28);--info-ink:oklch(0.80 0.100 230);
+  --danger:oklch(0.58 0.19 28);--danger-hover:oklch(0.64 0.19 28);--danger-fg:white;--danger-line:oklch(0.66 0.17 28);
+  --scrim:oklch(0 0 0 / .60);--avatar:oklch(0.50 0.12 270);
+  color-scheme:dark;
+}

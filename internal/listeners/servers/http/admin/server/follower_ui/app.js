@@ -5,7 +5,7 @@
  const note=text=>{$("status").textContent=text;};
  function controls(){ $("refresh").disabled=busy||!connected||(window.secDNSAgent&&!window.secDNSAgent.allows("records:read"));$("disconnect").hidden=!connected||!!window.secDNSAgent?.active;$("login").hidden=connected||!!window.secDNSAgent?.active; }
  function clear(){epoch++;controller?.abort();controller=null;token="";connected=false;busy=false;$("token").value="";$("rows").replaceChildren();$("sample").textContent="";controls();}
- const time=value=>value===null?"Not observed in this process":new Date(value).toLocaleString();
+ const time=value=>value===null?"Not observed in this process":(window.secDNSI18n?.date(value)||new Date(value).toLocaleString());
  // Go emits UTC RFC3339Nano: reject JS's permissive locale/numeric date parsing.
  function timestamp(value){
   if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{0,8}[1-9])?Z$/.test(value))return false;

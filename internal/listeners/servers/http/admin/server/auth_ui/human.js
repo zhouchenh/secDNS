@@ -117,8 +117,8 @@ auditButton.addEventListener("click",async()=>{
   for(const event of result.events){
    const row=document.createElement("li"),name=document.createElement("strong"),time=document.createElement("time");
    name.textContent=ssoMode&&ssoAuditNeutral.has(event.Action)?"Account change made on the server":Object.hasOwn(auditLabels,event.Action)?auditLabels[event.Action]:"Security event";
-   const date=new Date(event.At);time.textContent=Number.isNaN(date.getTime())?"Time unavailable":date.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"long"});
-   if(!Number.isNaN(date.getTime())){time.dateTime=event.At;time.title=event.At;time.setAttribute("aria-label",time.textContent+"; exact time "+event.At);}
+   const date=new Date(event.At);time.textContent=Number.isNaN(date.getTime())?"Time unavailable":(window.secDNSI18n?.date(date,{dateStyle:"medium",timeStyle:"long"})||date.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"long"}));
+   if(!Number.isNaN(date.getTime())){time.dateTime=event.At;time.dataset.i18nDate="long";time.title=event.At;time.setAttribute("aria-label",time.textContent+"; exact time "+event.At);}
    row.append(name,time);list.append(row);
   }
   audit.append(list);
