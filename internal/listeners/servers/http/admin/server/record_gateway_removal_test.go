@@ -13,8 +13,8 @@ import (
 	"github.com/zhouchenh/secDNS/internal/recordstore"
 )
 
-// gatewayRemovalFixture is a record gateway in front of an authority that behaves like the
-// older DNS-unit build: it rejects any body carrying confirm_removals (it does not know the
+// gatewayRemovalFixture is a record gateway in front of an authority whose parser behaves like
+// the older DNS-unit build: it rejects any body carrying confirm_removals (it does not know the
 // field) and otherwise serves a real versioned memory store with targeted RRset writes.
 type gatewayRemovalFixture struct {
 	t         *testing.T
@@ -67,8 +67,7 @@ func newGatewayRemovalFixture(t *testing.T, records int) *gatewayRemovalFixture 
 			w.Write([]byte(`{"error":"invalid_snapshot_request"}`))
 			return
 		}
-		// Present the request exactly as an older authority sees it: no confirmation header.
-		r.Header.Del(confirmRemovalsHeader)
+		// The header is passed on: a current authority re-checks it, an older one ignores it.
 		r.Body = io.NopCloser(strings.NewReader(string(raw)))
 		upstream.routes().ServeHTTP(w, r)
 	}))
