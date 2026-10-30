@@ -137,6 +137,9 @@
           payload:row.draft ? {action:"upsert",record:clone(row.draft)} : {action:"delete",key:{name:row.base.name,type:row.base.type}}};
       }
       const payload={records:clone(this.draft)};
+      // A replacement that removes records carries the removal count the operator confirmed;
+      // the server rejects an exact import whose count does not match its own computation.
+      const removed=changes(this.base?.records || [],this.draft).removed;if(removed>0)payload.confirm_removals=removed;
       if(this.draftProvenance && this.edits===this.draftProvenance.editCounter) payload.operator_supplied_provenance={profile:this.draftProvenance.profile,source_sha256:this.draftProvenance.sourceSHA256,content_sha256:this.draftProvenance.contentSHA256};
       return {mode:"replacement",endpoint,expected,editCounter:this.edits,payload};
     }

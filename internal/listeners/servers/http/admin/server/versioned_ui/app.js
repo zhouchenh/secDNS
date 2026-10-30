@@ -6,7 +6,7 @@
   if (endpoint.origin !== location.origin) throw new Error("Invalid editor origin");
   if (previewURL.origin !== location.origin) throw new Error("Invalid preview origin");
   $("endpoint").textContent = endpoint.origin + endpoint.pathname;
-  let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null, importChannel = null, importChannelID = "";
+  let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null, reviewGuard = {danger:false,typed:false,removed:0}, importChannel = null, importChannelID = "";
   const requests = new Set();
   let deletion = null;
   function status(text, kind = "", routine = false) { $("status").textContent = text; $("status").className = kind; $("status").hidden = !text || routine; }
@@ -50,6 +50,8 @@
     operation_conflict:"This operation ID conflicts with another request. The frozen attempt is preserved; no replacement ID was generated.",
     rrset_schema_required:"This store no longer supports targeted edits. Your draft is preserved; reconcile and review explicitly. No replacement was sent.",
     review_changed:"The reviewed proposal changed. Review it again before applying.",
+    removal_confirmation_required:"The server requires an explicit confirmation of how many records this replacement removes. Nothing was changed; review it again.",
+    removal_confirmation_mismatch:"The confirmed number of removed records does not match the server. Nothing was changed; refresh and review again.",
     operator_provenance_unavailable:"This store has not been explicitly migrated for operator-supplied provenance. Nothing was changed.",
     receipt_capacity:"The operation receipt ledger is full. Operator intervention is required.",
     revision_exhausted:"The revision range is exhausted. Operator intervention is required.",
@@ -161,7 +163,7 @@
       if(response.status===401||response.status===403){const error=new Error("authentication");error.status=response.status;throw error;}
       let data;try{data=await response.json();}catch{throw new Error("unexpected_response");}
       if(captured!==epoch)throw new DOMException("Disconnected","AbortError");
-      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable","rrset_schema_required"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
+      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable","rrset_schema_required","removal_confirmation_required","removal_confirmation_mismatch"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
       const names=["SecDNS-Operator-Provenance-Profile","SecDNS-Operator-Provenance-Source-SHA256","SecDNS-Operator-Provenance-Content-SHA256"],present=names.map(name=>response.headers.has(name));
       let provenance=null;if(present.some(Boolean)){if(!present.every(Boolean))throw new Error("unexpected_response");provenance={profile:response.headers.get(names[0]),source_sha256:response.headers.get(names[1]),content_sha256:response.headers.get(names[2])};if(!S.operatorProvenance(provenance))throw new Error("unexpected_response");}
       return {data,provenance,rrsetCapability:response.headers.get("SecDNS-RRset-Mutations")};
@@ -230,8 +232,25 @@
     for(const row of S.comparisonRows(model.base.records,model.draft,model.current?.records||null).filter(r=>r.localChange!=="unchanged")){
       const group=document.createElement("section");group.className="comparison-versions";group.append(comparisonVersion("Before",row.base),comparisonVersion("After",row.draft));$("review-records").append(group);
     }
-    $("review-confirm").textContent=proposal.mode==="rrset"?"Apply record change":"Apply changes";$("review-dialog").showModal();
+    // Replacing the record list so that records disappear is destructive: pin the impact above
+    // the scrolling change list, make the action a danger button naming the count, and above a
+    // threshold (5 records or 20% of the list) require typing the count or REPLACE.
+    const danger=proposal.mode==="replacement"&&d.removed>0,total=model.base.records.length,typed=danger&&(d.removed>=5||d.removed*5>=total),plural=n=>n===1?"record":"records";
+    reviewGuard={danger,typed,removed:d.removed};
+    $("review-danger").hidden=!danger;$("review-typed").value="";$("review-typed").hidden=$("review-typed-label").hidden=!typed;
+    if(danger){
+      $("review-title").textContent="Replace your records?";
+      $("review-danger-title").textContent=`This replaces your records: ${d.removed} removed, ${d.added} added, ${d.changed} changed`;
+      $("review-danger-detail").textContent=`${d.removed} of ${total} current ${plural(total)} will be deleted and stop resolving. Only the ${model.draft.length} ${plural(model.draft.length)} in this list will remain.`;
+      $("review-typed-label").textContent=`Type ${d.removed} (or REPLACE) to confirm`;
+    }
+    $("review-confirm").className=danger?"danger-solid":"primary";
+    $("review-confirm").textContent=danger?`Replace — remove ${d.removed} ${plural(d.removed)}`:proposal.mode==="rrset"?"Apply record change":"Apply changes";
+    reviewGuardSync();$("review-dialog").showModal();if(typed)$("review-typed").focus();
   });
+  function reviewGuardMet(){if(!reviewGuard.typed)return true;const v=$("review-typed").value.trim();return v===String(reviewGuard.removed)||v.toUpperCase()==="REPLACE";}
+  function reviewGuardSync(){$("review-confirm").disabled=!reviewGuardMet();}
+  $("review-typed").addEventListener("input",reviewGuardSync);
   $("review-cancel").addEventListener("click",()=>$("review-dialog").close());
   $("review-dialog").addEventListener("cancel",e=>{if(busy)e.preventDefault();});
   async function send(retry) {
@@ -246,7 +265,7 @@
     }catch(e){if(captured!==epoch)return;if(e.definitive){pending.status="rejected";model.fresh=false;if(e.message==="identity_conflict")model.identityBlocked=true;status(message(e),"error");}else{model.uncertain();status(message(e)+" "+messages.uncertain,"error");}if(e.message==="authentication"){if(e.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();else disconnect(false);}}
     finally{if(captured===epoch){busy=false;render();}}
   }
-  $("review-confirm").addEventListener("click",()=>void send(false));$("retry").addEventListener("click",()=>void send(true));
+  $("review-confirm").addEventListener("click",()=>{if(!reviewGuardMet())return;void send(false);});$("retry").addEventListener("click",()=>void send(true));
   $("show-unchanged").addEventListener("change",renderComparison);
   edit(null,true);render();
 })();

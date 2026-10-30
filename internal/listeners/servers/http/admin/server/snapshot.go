@@ -178,6 +178,10 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 	}
 	expected := recordstore.Expected{RulesetID: request.RulesetID, LineageID: request.LineageID, Revision: request.Revision}
 	provenance, hasProvenance := request.OperatorSuppliedProvenance()
+	if code := h.removalConfirmationError(expected, request, hasProvenance); code != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": code})
+		return
+	}
 	var receipt recordstore.Receipt
 	if hasProvenance {
 		receipt, e = h.versioned.ReplaceWithOperatorSuppliedProvenance(expected, request.OperationID, request.Records, provenance)
@@ -191,4 +195,56 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 	provenance, hasProvenance = receipt.OperatorSuppliedProvenance()
 	setOperatorSuppliedProvenanceHeaders(w, provenance, hasProvenance)
 	writeJSON(w, http.StatusOK, map[string]string{"operation_id": receipt.OperationID, "revision": strconv.FormatUint(receipt.Revision, 10), "content_sha256": receipt.ContentSHA256, "committed_at": receipt.CommittedAt.UTC().Format(time.RFC3339Nano)})
+}
+
+// removalConfirmationError guards destructive replacements. An exact import (a replacement
+// carrying operator-supplied provenance) that removes records from its expected base must
+// state confirm_removals equal to the server's own count; any replacement that states
+// confirm_removals must match it. The count is computed only while the current generation
+// is the expected one: otherwise the store itself decides (revision conflict, or the
+// idempotent replay of an already committed operation), so retries stay safe.
+func (h *HTTPAdminServer) removalConfirmationError(expected recordstore.Expected, request recordset.Replacement, exactImport bool) string {
+	confirmed, stated := request.ConfirmRemovals()
+	if !exactImport && !stated {
+		return ""
+	}
+	view, e := h.versioned.Acquire()
+	if e != nil {
+		return ""
+	}
+	base := view.Metadata()
+	if base.RulesetID != expected.RulesetID || base.LineageID != expected.LineageID || base.Revision != expected.Revision {
+		return ""
+	}
+	removed := countRemovedRecords(view.Records(), request.Records)
+	switch {
+	case !stated && removed > 0:
+		return "removal_confirmation_required"
+	case stated && confirmed != removed:
+		return "removal_confirmation_mismatch"
+	}
+	return ""
+}
+
+func countRemovedRecords(before, after []recordset.Record) int {
+	key := func(r recordset.Record) string {
+		return strings.TrimSuffix(strings.ToLower(r.Name), ".") + "/" + strings.ToUpper(r.Type)
+	}
+	kept := make(map[string]struct{}, len(after))
+	for _, r := range after {
+		kept[key(r)] = struct{}{}
+	}
+	removed := 0
+	seen := make(map[string]struct{}, len(before))
+	for _, r := range before {
+		k := key(r)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		if _, ok := kept[k]; !ok {
+			removed++
+		}
+	}
+	return removed
 }
