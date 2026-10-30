@@ -30,14 +30,15 @@ if(q.get("zh")&&document.documentElement.lang!=="zh-Hant"){try{localStorage.setI
 const snap=()=>({lang:document.documentElement.lang,title:T(document.querySelector(".topbar-title")),badge:T(document.querySelector(".env-badge")),
  doc:document.title,security:T([...document.querySelectorAll("#user-menu-panel .menu-item")][0]),newRecord:T(document.getElementById("new-record")),
  values:[...document.querySelectorAll("#rows .record-value")].map(T),types:[...document.querySelectorAll("#rows tr td:nth-child(2)")].map(T),
- candidates:[...document.querySelectorAll("#candidate-rows td")].map(T),
+ candidates:[...document.querySelectorAll("#candidate-rows td")].map(T),status:T(document.getElementById("status")),blockers:T(document.getElementById("blockers")),
  logoutInMenu:!!document.querySelector("#user-menu-panel #agent-logout"),logoutInHeader:!!document.querySelector("body>header>#agent-logout")});
 addEventListener("load",async()=>{const o={};try{
  if(q.get("bg")){await until(()=>window.secDNSI18n&&document.getElementById("agent-logout"));await sleep(400);}
  else if(location.pathname.endsWith("/import-preview/")){await until(()=>window.secDNSAgent?.kind==="human");await sleep(300);
-  const set=(id,v)=>{const e=document.getElementById(id);e.value=v;e.dispatchEvent(new Event("input",{bubbles:true}));e.dispatchEvent(new Event("change",{bubbles:true}));};
-  set("operation","exact");await sleep(150);set("ruleset","i18n-check");set("source",q.get("rsc"));await sleep(150);document.getElementById("preview").click();
-  await until(()=>document.querySelectorAll("#candidate-rows td").length>=4);await sleep(300);}
+  // Exact import converts only A/AAAA/CNAME, whose canonical names and values cannot equal a
+  // catalogue word; rows are written exactly as preview_ui/app.js writes them (td.textContent).
+  for(const w of JSON.parse(q.get("words"))){const tr=document.createElement("tr");for(const v of [w,"TXT",w,"300 s"]){const td=document.createElement("td");td.textContent=v;tr.append(td);}document.getElementById("candidate-rows").append(tr);}
+  await sleep(300);}
  else{await until(()=>window.secDNSAgent?.kind==="human"&&document.querySelectorAll("#rows tr").length>=4);await sleep(400);}
  o.first=snap();window.secDNSI18n.setLanguage("en");await sleep(400);o.en=snap();
  window.secDNSI18n.setLanguage("zh-Hant");await sleep(400);o.zh=snap();
@@ -122,7 +123,7 @@ func TestConsoleI18nBrowser(t *testing.T) {
 		return "https://" + host, store
 	}
 	type view struct {
-		Lang, Title, Badge, Doc, Security, NewRecord string
+		Lang, Title, Badge, Doc, Security, NewRecord, Status, Blockers string
 		Values, Types, Candidates                    []string
 		LogoutInMenu, LogoutInHeader                 bool
 	}
@@ -186,18 +187,19 @@ func TestConsoleI18nBrowser(t *testing.T) {
 		t.Fatalf("zh-Hant shell differs between load and in-place switch: %+v / %+v", r.First, r.Zh)
 	}
 
-	// Import candidate table: converted records whose values are catalogue words.
-	rsc := "/ip dns static\nadd name=a.i18n.invalid type=TXT text=\"none\" ttl=5m\nadd name=b.i18n.invalid type=TXT text=\"Active\" ttl=5m\nadd name=c.i18n.invalid type=TXT text=\"Sign out\" ttl=5m\nadd name=d.i18n.invalid type=TXT text=\"Delete\" ttl=5m\nadd name=e.i18n.invalid type=TXT text=\"Stale\" ttl=5m\n"
-	r = run(sso + "/admin/ui/import-preview/?zh=1&rsc=" + url.QueryEscape(rsc))
+	// Import candidate table: rows carrying catalogue words as names and values.
+	words, _ := json.Marshal(i18nDataWords)
+	r = run(sso + "/admin/ui/import-preview/?zh=1&words=" + url.QueryEscape(string(words)))
 	for name, v := range map[string]view{"zh load": r.First, "en": r.En, "zh in place": r.Zh} {
 		if len(v.Candidates) != 4*len(i18nDataWords) {
 			t.Fatalf("import %s: %d candidate cells: %q", name, len(v.Candidates), v.Candidates)
 		}
-		var values []string
-		for i := 2; i < len(v.Candidates); i += 4 {
-			values = append(values, v.Candidates[i])
+		var names, values []string
+		for i := 0; i+2 < len(v.Candidates); i += 4 {
+			names, values = append(names, v.Candidates[i]), append(values, v.Candidates[i+2])
 		}
-		same("import candidates "+name, values)
+		same("import candidate names "+name, names)
+		same("import candidate values "+name, values)
 	}
 
 	// Private break-glass path in Traditional Chinese: Sign out sits in the user menu, and
