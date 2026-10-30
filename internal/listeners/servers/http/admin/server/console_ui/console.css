@@ -190,7 +190,7 @@ button.danger-solid:disabled{opacity:.55}
 .console-record-table th{position:sticky;top:0;z-index:1}
 .console-record-table table{min-width:560px}
 .console-record-table th:nth-child(2),.console-record-table td:nth-child(2),.console-record-table th:nth-child(4),.console-record-table td:nth-child(4),.console-record-table th:last-child,.console-record-table td:last-child{white-space:nowrap;width:1%}
-.console-record-table td:last-child button{min-height:32px;padding:4px 10px;font-size:var(--fs-sm);background:transparent;border-color:transparent;color:var(--link)}
+.console-record-table td:last-child button{white-space:nowrap;min-height:32px;padding:4px 10px;font-size:var(--fs-sm);background:transparent;border-color:transparent;color:var(--link)}
 .console-record-table td:last-child button:hover:not(:disabled){background:var(--surface-2);border-color:var(--border)}
 .console-record-table td:last-child button+button{margin-left:4px}
 .records>#empty{margin:var(--s4) var(--s5);color:var(--muted)}

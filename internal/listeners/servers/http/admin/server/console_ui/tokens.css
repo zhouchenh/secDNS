@@ -67,7 +67,7 @@
     --field-line:oklch(0.520 0.020 260);
     --ok-ink:oklch(0.80 0.120 145);--warn-ink:oklch(0.84 0.120 70);--err-ink:oklch(0.78 0.140 28);--info-ink:oklch(0.80 0.100 230);
     --danger:oklch(0.58 0.19 28);--danger-hover:oklch(0.64 0.19 28);--danger-fg:white;--danger-line:oklch(0.66 0.17 28);
-    --scrim:oklch(0 0 0 / .60);--avatar:oklch(0.50 0.12 270);
+    --scrim:oklch(0 0 0 / .60);--avatar:oklch(0.50 0.12 270);--qr-bg:white;
     color-scheme:dark;
   }
 }
@@ -82,6 +82,6 @@
   --field-line:oklch(0.520 0.020 260);
   --ok-ink:oklch(0.80 0.120 145);--warn-ink:oklch(0.84 0.120 70);--err-ink:oklch(0.78 0.140 28);--info-ink:oklch(0.80 0.100 230);
   --danger:oklch(0.58 0.19 28);--danger-hover:oklch(0.64 0.19 28);--danger-fg:white;--danger-line:oklch(0.66 0.17 28);
-  --scrim:oklch(0 0 0 / .60);--avatar:oklch(0.50 0.12 270);
+  --scrim:oklch(0 0 0 / .60);--avatar:oklch(0.50 0.12 270);--qr-bg:white;
   color-scheme:dark;
 }

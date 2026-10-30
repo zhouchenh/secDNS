@@ -359,7 +359,7 @@ func TestSSOPathServesNoLocalCredentialWording(t *testing.T) {
 			}
 		}
 	}
-	signedOut := between(t, src, `const signedOut=document.createElement("p")`, "ssoUI={")
+	signedOut := between(t, src, `const signedOut=document.createElement("p")`, "const reauthLocal=")
 	for _, literal := range regexp.MustCompile(`"([^"\\]*)"`).FindAllStringSubmatch(signedOut, -1) {
 		if localCredentialWording.MatchString(literal[1]) {
 			t.Fatalf("SSO signed-out / step-up text carries local sign-in wording: %q", literal[1])
