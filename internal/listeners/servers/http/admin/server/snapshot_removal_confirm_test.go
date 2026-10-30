@@ -146,11 +146,12 @@ func TestRecordGatewayRemovalConfirmationOlderAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	upstream := &HTTPAdminServer{Token: strings.Repeat("u", 32), versioned: store}
-	var forwarded []string
+	var forwarded, headers []string
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "POST" {
 			raw, _ := io.ReadAll(r.Body)
 			forwarded = append(forwarded, string(raw))
+			headers = append(headers, strings.Join(r.Header.Values(confirmRemovalsHeader), ","))
 			if strings.Contains(string(raw), "confirm_removals") {
 				// an authority built before confirm_removals existed
 				w.WriteHeader(400)
@@ -197,7 +198,7 @@ func TestRecordGatewayRemovalConfirmationOlderAuthority(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("confirmed import through the gateway: %d %s", w.Code, w.Body.String())
 	}
-	if len(forwarded) != 1 || strings.Contains(forwarded[0], "confirm_removals") || !strings.Contains(forwarded[0], `"<a&b>"`) {
+	if len(forwarded) != 1 || strings.Contains(forwarded[0], "confirm_removals") || !strings.Contains(forwarded[0], `"<a&b>"`) || headers[0] != "5" {
 		t.Fatalf("forwarded body: %v", forwarded)
 	}
 	view, _ := store.Acquire()
@@ -208,5 +209,42 @@ func TestRecordGatewayRemovalConfirmationOlderAuthority(t *testing.T) {
 	plain := `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"3"},"operation_id":"g-plain","records":[{"name":"g1.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60}]}`
 	if w := post(plain); w.Code != 200 || forwarded[len(forwarded)-1] != plain {
 		t.Fatalf("plain replacement through the gateway: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// A current authority accepts the count from the gateway header and checks it.
+func TestSnapshotRemovalConfirmationHeader(t *testing.T) {
+	store, err := recordstore.NewVersionedMemory(recordstore.Enrollment{RulesetID: "r", LineageID: "l"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	h := &HTTPAdminServer{Token: testToken, versioned: store}
+	two := `[{"name":"a.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60},{"name":"b.invalid.","type":"A","values":["192.0.2.2"],"ttl_seconds":60}]`
+	one := `[{"name":"a.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60}]`
+	post := func(rev, op, records string, header ...string) int {
+		r := httptest.NewRequest("POST", "/admin/snapshot", strings.NewReader(`{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"`+rev+`"},"operation_id":"`+op+`","records":`+records+`}`))
+		r.Header.Set("Authorization", "Bearer "+testToken)
+		r.Header.Set("Content-Type", "application/json")
+		for _, v := range header {
+			r.Header.Add(confirmRemovalsHeader, v)
+		}
+		w := httptest.NewRecorder()
+		h.routes().ServeHTTP(w, r)
+		return w.Code
+	}
+	if c := post("1", "h1", two); c != 200 {
+		t.Fatal("seed", c)
+	}
+	for _, bad := range [][]string{{"x"}, {"-1"}, {"01"}, {"1", "1"}} {
+		if c := post("2", "hbad", one, bad...); c != 400 {
+			t.Fatalf("header %v: %d", bad, c)
+		}
+	}
+	if c := post("2", "hwrong", one, "2"); c != 409 {
+		t.Fatal("wrong header count accepted", c)
+	}
+	if c := post("2", "hright", one, "1"); c != 200 {
+		t.Fatal("right header count rejected", c)
 	}
 }

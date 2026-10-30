@@ -85,21 +85,30 @@ func ParseReplacement(raw []byte) (Replacement, error) {
 		r.hasOperatorSuppliedProvenance = true
 	}
 	if rawConfirm, ok := fields["confirm_removals"]; ok {
-		// a plain non-negative JSON integer: no sign, fraction, exponent or leading zero
-		text := string(rawConfirm)
-		if len(text) == 0 || len(text) > 7 || text[0] == '0' && len(text) > 1 {
-			return fail, ErrInvalid
-		}
-		for _, c := range text {
-			if c < '0' || c > '9' {
-				return fail, ErrInvalid
-			}
-		}
-		n, e := strconv.Atoi(text)
-		if e != nil || n > MaxConfirmRemovals {
-			return fail, ErrInvalid
+		n, e := ParseConfirmRemovals(string(rawConfirm))
+		if e != nil {
+			return fail, e
 		}
 		r.confirmRemovals, r.hasConfirmRemovals = n, true
 	}
 	return r, nil
+}
+
+// ParseConfirmRemovals parses a removal count: a plain non-negative decimal integer with no
+// sign, fraction, exponent or leading zero, at most MaxConfirmRemovals. It is shared by the
+// confirm_removals body field and the gateway's SecDNS-Confirm-Removals header.
+func ParseConfirmRemovals(text string) (int, error) {
+	if len(text) == 0 || len(text) > 7 || text[0] == '0' && len(text) > 1 {
+		return 0, ErrInvalid
+	}
+	for _, c := range text {
+		if c < '0' || c > '9' {
+			return 0, ErrInvalid
+		}
+	}
+	n, e := strconv.Atoi(text)
+	if e != nil || n > MaxConfirmRemovals {
+		return 0, ErrInvalid
+	}
+	return n, nil
 }

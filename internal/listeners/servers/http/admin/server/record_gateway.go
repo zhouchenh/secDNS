@@ -137,9 +137,10 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	confirmHeader := ""
 	if method == "POST" && path == "/snapshot" {
 		var code string
-		if body, code = h.gatewayRemovalConfirmation(r, body); code != "" {
+		if body, confirmHeader, code = h.gatewayRemovalConfirmation(r, body); code != "" {
 			status := http.StatusConflict
 			if code == "record_authority_unavailable" {
 				status = http.StatusBadGateway
@@ -157,6 +158,9 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 	req.Header.Set("Authorization", "Bearer "+h.recordAuthorityCredential)
 	if method == "POST" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if confirmHeader != "" {
+		req.Header.Set(confirmRemovalsHeader, confirmHeader)
 	}
 	if method == "GET" {
 		for _, v := range r.Header.Values("If-None-Match") {
@@ -196,41 +200,42 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 
 // gatewayRemovalConfirmation applies the snapshot API's removal-confirmation rule in front of
 // the record authority, which may be an older build that does not know confirm_removals: the
-// count is checked here against the authority's current generation, and the field is removed
-// before forwarding so the authority sees the request shape it always accepted. A body this
+// count is checked here against the authority's current generation, and the field moves from
+// the body to the SecDNS-Confirm-Removals header: an older authority ignores the header and
+// sees the body shape it always accepted, a current one checks the count again. A body this
 // gateway cannot parse is forwarded unchanged; the authority stays the parser of record.
-func (h *HTTPAdminServer) gatewayRemovalConfirmation(r *http.Request, body []byte) ([]byte, string) {
+func (h *HTTPAdminServer) gatewayRemovalConfirmation(r *http.Request, body []byte) ([]byte, string, string) {
 	request, err := recordset.ParseReplacement(body)
 	if err != nil {
-		return body, ""
+		return body, "", ""
 	}
 	_, exactImport := request.OperatorSuppliedProvenance()
-	_, stated := request.ConfirmRemovals()
+	confirmed, stated := request.ConfirmRemovals()
 	if !exactImport && !stated {
-		return body, ""
+		return body, "", ""
 	}
 	base, err := h.fetchAuthoritySnapshot(r)
 	if err != nil {
-		return body, "record_authority_unavailable"
+		return body, "", "record_authority_unavailable"
 	}
-	if code := removalConfirmationCode(base.Metadata(), base.Records(), request, exactImport); code != "" {
-		return body, code
+	if code := removalConfirmationCode(base.Metadata(), base.Records(), request, exactImport, confirmed, stated); code != "" {
+		return body, "", code
 	}
 	if !stated {
-		return body, ""
+		return body, "", ""
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(body, &fields) != nil {
-		return body, "record_authority_unavailable"
+		return body, "", "record_authority_unavailable"
 	}
 	delete(fields, "confirm_removals")
 	var stripped bytes.Buffer
 	encoder := json.NewEncoder(&stripped)
 	encoder.SetEscapeHTML(false)
 	if encoder.Encode(fields) != nil {
-		return body, "record_authority_unavailable"
+		return body, "", "record_authority_unavailable"
 	}
-	return bytes.TrimRight(stripped.Bytes(), "\n"), ""
+	return bytes.TrimRight(stripped.Bytes(), "\n"), strconv.Itoa(confirmed), ""
 }
 
 func (h *HTTPAdminServer) fetchAuthoritySnapshot(r *http.Request) (*recordset.Snapshot, error) {
