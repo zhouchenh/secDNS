@@ -116,7 +116,7 @@ func TestConsoleCatalogueComplete(t *testing.T) {
 	// Shell strings created by console.js.
 	for _, text := range []string{"Account security", "Theme", "System", "Light", "Dark", "Language", "Sign out", "Signed in with WithMy ID",
 		"Skip to content", "Open navigation", "Close navigation", "Account menu", "Advanced session details", "Agent access", "Back to DNS records"} {
-		if !catalogueHas(core, text) {
+		if !catalogueHas(core, text) && !(text == "Agent access" && catalogueHas(local, text)) {
 			t.Errorf("console.js text %q is not in the catalogue", text)
 		}
 	}
@@ -376,8 +376,10 @@ func TestSSOPathServesNoLocalCredentialWording(t *testing.T) {
 		t.Fatal("passkey.js lost the SSO early return")
 	}
 	// The break-glass page on the private path is unchanged.
-	if w := get("/ui/", false); w.Code != 200 || !strings.Contains(w.Body.String(), `type="password"`) {
-		t.Fatal("break-glass page changed")
+	for _, path := range []string{"/ui/", "/ui/import-preview/"} {
+		if w := get(path, false); w.Code != 200 || !strings.Contains(w.Body.String(), `type="password"`) {
+			t.Fatal("break-glass page changed", path)
+		}
 	}
 }
 

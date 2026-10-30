@@ -73,6 +73,13 @@ func (h *HTTPAdminServer) editorRoutes(mux *http.ServeMux, base string) {
 	}
 }
 
+// withoutLegacyImportToken does the same for the import page: the legacy token
+// section is hidden and its password field becomes a hidden input with the same ID.
+func withoutLegacyImportToken(page []byte) []byte {
+	out := bytes.Replace(page, []byte(`<details id="legacy-import">`), []byte(`<details id="legacy-import" hidden>`), 1)
+	return bytes.Replace(out, []byte(`<input id="token" type="password"`), []byte(`<input id="token" type="hidden"`), 1)
+}
+
 // withoutLegacyTokenForm neutralizes the legacy token access section on the
 // records page served on the single sign-on path: the section is hidden and its
 // password field becomes a hidden input (the element IDs the page script uses
