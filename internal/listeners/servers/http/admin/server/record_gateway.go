@@ -138,14 +138,12 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 		}
 	}
 	confirmHeader := ""
-	if method == "POST" && path == "/snapshot" {
+	if method == "POST" {
 		var code string
-		if body, confirmHeader, code = h.gatewayRemovalConfirmation(r, body); code != "" {
-			status := http.StatusConflict
-			if code == "record_authority_unavailable" {
-				status = http.StatusBadGateway
-			}
-			agentError(w, status, code)
+		if body, confirmHeader, code = h.gatewayRemovalConfirmation(r, path, body); code != "" {
+			// Refused here, before anything was forwarded: the outcome is definitive.
+			w.Header().Set("Cache-Control", "no-store")
+			writeRemovalConfirmationError(w, code)
 			return
 		}
 	}
@@ -198,27 +196,63 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 	w.Write(data)
 }
 
-// gatewayRemovalConfirmation applies the snapshot API's removal-confirmation rule in front of
-// the record authority, which may be an older build that does not know confirm_removals: the
-// count is checked here against the authority's current generation, and the field moves from
-// the body to the SecDNS-Confirm-Removals header: an older authority ignores the header and
-// sees the body shape it always accepted, a current one checks the count again. A body this
-// gateway cannot parse is forwarded unchanged; the authority stays the parser of record.
-func (h *HTTPAdminServer) gatewayRemovalConfirmation(r *http.Request, body []byte) ([]byte, string, string) {
-	request, err := recordset.ParseReplacement(body)
-	if err != nil {
-		return body, "", ""
-	}
-	_, exactImport := request.OperatorSuppliedProvenance()
-	confirmed, stated := request.ConfirmRemovals()
-	if !exactImport && !stated {
+// gatewayRemovalConfirmation requires an explicit confirmation for every write that removes
+// records, before it reaches the record authority (which may be an older build that does not
+// know confirm_removals):
+//
+//   - POST /snapshot: any replacement (an exact import or a plain replacement) that removes
+//     records from the authority's current generation must state confirm_removals equal to
+//     the number removed; a stated count must always match.
+//   - POST /snapshot/rrset: a deletion of an existing RRset must state confirm_removals 1;
+//     a stated count must match (0 for an absent key). Upserts remove nothing.
+//
+// The count is computed against an authenticated GET of the authority's snapshot. When the
+// authority's generation is no longer the expected one, the authority's own CAS decides
+// (revision conflict, or the idempotent replay of a committed operation). The field moves
+// from the body to the SecDNS-Confirm-Removals header: an older authority ignores the header
+// and sees the body shape it always accepted, a current one checks the count again.
+// It fails closed: a body this gateway cannot parse is refused as invalid (the authority's
+// parser is never more permissive), and a base that cannot be read refuses the write with
+// removal_check_unavailable; in both cases nothing was forwarded.
+func (h *HTTPAdminServer) gatewayRemovalConfirmation(r *http.Request, path string, body []byte) ([]byte, string, string) {
+	var confirmed int
+	var stated bool
+	var check func(*recordset.Snapshot) string
+	switch path {
+	case "/snapshot":
+		request, err := recordset.ParseReplacement(body)
+		if err != nil {
+			return body, "", "invalid_snapshot_request"
+		}
+		_, exactImport := request.OperatorSuppliedProvenance()
+		confirmed, stated = request.ConfirmRemovals()
+		check = func(base *recordset.Snapshot) string {
+			code := removalConfirmationCode(base.Metadata(), base.Records(), request, exactImport, confirmed, stated)
+			if code == "" && !stated && base.Metadata().RulesetID == request.RulesetID && base.Metadata().LineageID == request.LineageID && base.Metadata().Revision == request.Revision && countRemovedRecords(base.Records(), request.Records) > 0 {
+				code = "removal_confirmation_required"
+			}
+			return code
+		}
+	case "/snapshot/rrset":
+		request, err := recordset.ParseRRsetMutation(body)
+		if err != nil {
+			return body, "", "invalid_snapshot_request"
+		}
+		if request.Action != "delete" {
+			return body, "", ""
+		}
+		confirmed, stated = request.ConfirmRemovals()
+		check = func(base *recordset.Snapshot) string {
+			return rrsetRemovalCode(base.Metadata(), base.Records(), request, true)
+		}
+	default:
 		return body, "", ""
 	}
 	base, err := h.fetchAuthoritySnapshot(r)
 	if err != nil {
-		return body, "", "record_authority_unavailable"
+		return body, "", "removal_check_unavailable"
 	}
-	if code := removalConfirmationCode(base.Metadata(), base.Records(), request, exactImport, confirmed, stated); code != "" {
+	if code := check(base); code != "" {
 		return body, "", code
 	}
 	if !stated {
@@ -226,14 +260,14 @@ func (h *HTTPAdminServer) gatewayRemovalConfirmation(r *http.Request, body []byt
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(body, &fields) != nil {
-		return body, "", "record_authority_unavailable"
+		return body, "", "invalid_snapshot_request"
 	}
 	delete(fields, "confirm_removals")
 	var stripped bytes.Buffer
 	encoder := json.NewEncoder(&stripped)
 	encoder.SetEscapeHTML(false)
 	if encoder.Encode(fields) != nil {
-		return body, "", "record_authority_unavailable"
+		return body, "", "invalid_snapshot_request"
 	}
 	return bytes.TrimRight(stripped.Bytes(), "\n"), strconv.Itoa(confirmed), ""
 }

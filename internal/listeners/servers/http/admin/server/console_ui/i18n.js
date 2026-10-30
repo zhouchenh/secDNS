@@ -75,7 +75,7 @@
   };
 
   // --- DOM translation -------------------------------------------------------------
-  const SKIP = "script,style,textarea,pre,code,svg,[translate=no],[data-i18n-skip],.notranslate,.record-name,.record-value,.record-fqdn,.record-ip,.hash,#candidate,#agent-identity,#endpoint,.node-observation-address,.comparison-values,.fields dt,#human-seed";
+  const SKIP = "script,style,textarea,pre,code,svg,[translate=no],[data-i18n-skip],.notranslate,.record-name,.record-value,.record-fqdn,.record-ip,.hash,#candidate,#agent-identity,#endpoint,.node-observation-address,.comparison-values,.fields dt,#human-seed,[data-i18n-at]";
   const ATTRS = ["placeholder", "aria-label", "title", "alt"];
   const textSource = new WeakMap(), attrSource = new WeakMap();
   let writing = false;
@@ -114,18 +114,22 @@
     });
     for (let n = tw.nextNode(); n; n = tw.nextNode()) { if (n.nodeType === 3) doText(n); else doAttrs(n); }
   };
-  const run = fn => { writing = true; try { fn(); } finally { writing = false; observer.takeRecords(); } };
+  const handle = records => {
+    for (const r of records) {
+      if (r.type === "characterData") doText(r.target);
+      else if (r.type === "attributes") doAttrs(r.target);
+      else for (const n of r.addedNodes) { walk(n); stamps(n); }
+    }
+  };
+  // Changes other scripts made before this write are translated first, never dropped with this
+  // write's own records.
+  const run = fn => { const earlier = observing ? observer.takeRecords() : []; writing = true; try { handle(earlier); fn(); } finally { writing = false; observer.takeRecords(); } };
+  let observing = false;
   const observer = new MutationObserver(records => {
     if (writing) return;
-    run(() => {
-      for (const r of records) {
-        if (r.type === "characterData") doText(r.target);
-        else if (r.type === "attributes") doAttrs(r.target);
-        else for (const n of r.addedNodes) walk(n);
-      }
-    });
+    run(() => handle(records));
   });
-  const observe = () => observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+  const observe = () => { observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ATTRS }); observing = true; };
 
   // --- formatting --------------------------------------------------------------------
   const intlLocale = () => (lang === "zh-Hant" ? "zh-Hant-TW" : "en-US");
@@ -153,6 +157,25 @@
     }
   };
 
+  // A date inside a sentence (data-i18n-at = ISO time, data-i18n-template = English sentence with
+  // {time}, data-i18n-format = short | long | time | date): the whole sentence is rendered in the
+  // current language, and rendered again on an in-place language switch, so no date is left in
+  // the previous language's format. The date is data: it is inserted as formatted, never translated.
+  const FORMATS = { long: { dateStyle: "medium", timeStyle: "long" }, time: { timeStyle: "short" }, date: { dateStyle: "medium" } };
+  const stamp = el => {
+    if (!el || el.nodeType !== 1 || !el.dataset.i18nAt) return el;
+    const at = el.dataset.i18nAt, formatted = date(at, FORMATS[el.dataset.i18nFormat]) ?? at;
+    const text = translate((el.dataset.i18nTemplate || "{time}").split("{time}").join(formatted));
+    if (el.textContent !== text) el.textContent = text;
+    if (!el.title) el.title = at;
+    return el;
+  };
+  const stamps = start => {
+    if (!start || start.nodeType !== 1 && start.nodeType !== 9) return;
+    if (start.nodeType === 1 && start.matches("[data-i18n-at]")) stamp(start);
+    for (const el of start.querySelectorAll("[data-i18n-at]")) stamp(el);
+  };
+
   // Browser dialogs and validity messages are not part of the DOM: translate them on the way out.
   const nativeConfirm = window.confirm.bind(window), nativeAlert = window.alert.bind(window);
   window.confirm = message => nativeConfirm(translate(String(message)));
@@ -168,7 +191,7 @@
     if (next === lang) return;
     lang = next;
     root.lang = next; root.dataset.uiLang = next;
-    run(() => walk(document));
+    run(() => { walk(document); stamps(document); });
     refreshTimes();
     window.dispatchEvent(new CustomEvent("secdns:language", { detail: { lang } }));
   };
@@ -187,6 +210,7 @@
     get locale() { return intlLocale(); },
     languages: LANGS,
     t, translate, date, relative, number, setLanguage, getTheme, setTheme, pick,
+    stamp: el => { run(() => stamp(el)); return el; },
     // The English source behind a (possibly translated) visible string; test harnesses use it.
     source(text) {
       const core = String(text).trim().replace(/\s+/g, " ");
@@ -198,7 +222,7 @@
   });
 
   const start = () => {
-    run(() => walk(document));
+    run(() => { walk(document); stamps(document); });
     refreshTimes();
     observe();
     root.classList.remove("i18n-pending");

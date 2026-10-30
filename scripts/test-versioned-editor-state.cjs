@@ -111,7 +111,7 @@ for(const operation of ['add','delete','multi','zero']) {
  if(operation==='add'||operation==='multi')x.stage({...record,name:'other.invalid.'});
  if(operation==='delete'||operation==='multi')x.remove(S.key(record));
  const proposal=x.proposal('/snapshot');assert.equal(proposal.mode,['add','delete'].includes(operation)?'rrset':'replacement');
- if(operation==='delete')assert.deepEqual(proposal.payload,{action:'delete',key:{name:record.name,type:record.type}});
+ if(operation==='delete')assert.deepEqual(proposal.payload,{action:'delete',key:{name:record.name,type:record.type},confirm_removals:1});
 }
 {
  const x=new S.Model();x.accept(snapshot('1',[record]),null,'v1');x.stage({...record,values:['new']},S.key(record));const review=x.review('/snapshot');x.rrsetCapability=null;assert.throws(()=>x.freeze('reviewed','/snapshot',review),/review_changed/);assert.equal(x.pending,null);
@@ -136,3 +136,30 @@ assert.equal(S.draftIssue({...typed,type:'TXT',values:['','same','same'],ttl_sec
 for(const name of ['_service._tcp.invalid.','*.invalid.','.'])assert.equal(S.draftIssue({...typed,name}),null);
 for(const name of ['x..invalid','a'.repeat(64)+'.invalid','bad name.invalid','escaped\\.invalid'])assert.ok(S.draftIssue({...typed,name}));
 console.log('Typed draft validation and unchanged-draft tests passed.');
+{
+  // Slice 2: row Undo, and drafts kept across a WithMy ID round trip (exportDraft/importDraft).
+  const a={name:'a.invalid.',type:'A',values:['192.0.2.1'],ttl_seconds:60},b={name:'b.invalid.',type:'A',values:['192.0.2.2'],ttl_seconds:60};
+  const m=new S.Model();m.accept(snapshot('5',[a,b]));
+  assert.equal(m.exportDraft(),null);
+  m.remove(S.key(a));m.stage({...b,values:['192.0.2.3']},S.key(b));m.stage({name:'c.invalid.',type:'A',values:['192.0.2.4'],ttl_seconds:60});
+  assert.deepEqual(S.changes(m.base.records,m.draft),{added:1,changed:1,removed:1});
+  assert.equal(m.undo(S.key(a)),true);assert.deepEqual(S.changes(m.base.records,m.draft),{added:1,changed:1,removed:0});
+  assert.equal(m.undo('c.invalid/A'),true);assert.equal(m.undo(S.key(b)),true);assert.equal(m.dirty(),false);assert.equal(m.undo('none.invalid/A'),false);
+  m.remove(S.key(a));const kept=JSON.parse(JSON.stringify(m.exportDraft()));
+  assert.equal(kept.base.revision,'5');assert.equal(kept.draft.length,1);assert.equal(kept.pending,null);
+  // the server moved on meanwhile: the kept base stays the base, the newer state is the comparison
+  const n=new S.Model();n.accept(snapshot('7',[a,b,{name:'d.invalid.',type:'A',values:['192.0.2.9'],ttl_seconds:60}]));
+  n.importDraft(kept,['https://x/snapshot','https://x/snapshot/rrset']);
+  assert.equal(n.base.revision,'5');assert.equal(n.current.revision,'7');assert.deepEqual(S.changes(n.base.records,n.draft),{added:0,changed:0,removed:1});
+  assert.equal(n.proposal('https://x/snapshot').payload.confirm_removals,1);
+  // refused: dirty target, another ruleset, a base newer than the server, a forged pending endpoint
+  assert.throws(()=>n.importDraft(kept,[]),/draft_restore_refused/);
+  const other=new S.Model();other.accept({...snapshot('9',[a]),ruleset_id:'other'});assert.throws(()=>other.importDraft(kept,[]),/draft_restore_refused/);
+  const older=new S.Model();older.accept(snapshot('4',[a]));assert.throws(()=>older.importDraft(kept,[]),/draft_restore_refused/);
+  // an uncertain submitted change keeps its frozen request
+  const u=new S.Model();u.accept(snapshot('5',[a,b]));u.remove(S.key(a));u.remove(S.key(b));const frozen=u.freeze('op-kept','https://x/snapshot');u.uncertain();
+  const keptU=JSON.parse(JSON.stringify(u.exportDraft()));assert.equal(keptU.pending.body,frozen.body);assert.equal(JSON.parse(frozen.body).confirm_removals,2);
+  const v=new S.Model();v.accept(snapshot('5',[a,b]));assert.throws(()=>v.importDraft(keptU,['https://evil/snapshot']),/draft_restore_refused/);
+  const w=new S.Model();w.accept(snapshot('5',[a,b]));w.importDraft(keptU,['https://x/snapshot']);assert.equal(w.pending.status,'uncertain');assert.equal(w.pending.body,frozen.body);assert.equal(w.pending.operationID,'op-kept');
+  console.log('Slice-2 Undo and kept-draft tests passed.');
+}

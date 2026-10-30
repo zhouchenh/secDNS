@@ -111,7 +111,19 @@
   $("token").addEventListener("input",()=>{token="";verified=false;invalidate(true);status("Token changed locally; not yet verified.");});
   $("clear").addEventListener("click",()=>{$("source").value="";$("file").value="";invalidate();status("Source and preview cleared from this page.");});
   $("disconnect").addEventListener("click",()=>{if(window.secDNSAgent?.active)void window.secDNSAgent.logout().catch(()=>{});disconnect();});
-  window.addEventListener("agentconnected",()=>{token="";$("token").value="";invalidate(true);status("");});
+  window.addEventListener("agentconnected",()=>{token="";$("token").value="";invalidate(true);status("");restoreSource();});
+  // The pasted (or chosen) export is kept in this tab across a WithMy ID round trip, then restored
+  // as pasted text; the preview itself is never stored and is made again only on request.
+  window.secDNSAgent?.drafts?.register("import",async()=>{
+    const file=$("file").files[0],text=$("mode").value==="file"?(file&&file.size<=4194304?await file.text():""):$("source").value;
+    return text?{text,operation:$("operation").value,ruleset:$("ruleset").value}:null;
+  });
+  function restoreSource(){
+    const kept=window.secDNSAgent?.drafts?.take("import");
+    if(!kept||typeof kept.text!=="string"||!kept.text)return;
+    $("mode").value="paste";$("source").value=kept.text;if(["exact","preview"].includes(kept.operation)||[...$("operation").options].some(o=>o.value===kept.operation))$("operation").value=kept.operation;if(typeof kept.ruleset==="string")$("ruleset").value=kept.ruleset;
+    $("source-panel").open=true;controls();status("Your export was kept while you signed in. Review it again to continue.","success");
+  }
   window.addEventListener("agentexpired",()=>disconnect());
   $("prepare-records").addEventListener("click",()=>{$("source-panel").open=true;$("operation").value="exact";$("operation").dispatchEvent(new Event("change"));$("ruleset").focus();});
   $("download").addEventListener("click",()=>{if(!result||resultOperation!=="exact")return;const blob=new Blob([JSON.stringify(result,null,2)+"\n"],{type:"application/json"}),href=URL.createObjectURL(blob),a=document.createElement("a");a.href=href;a.download="routeros-exact-"+result.ruleset_id+".json";a.click();setTimeout(()=>URL.revokeObjectURL(href),0);});

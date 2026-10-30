@@ -39,7 +39,7 @@
  const followerLink=header.querySelector(':scope>a');if(followerLink)followerLink.classList.add('topbar-link');
  header.prepend(menu,context,status);
  // Reuse existing authentication UI and its handlers; never recreate credentials or sessions.
- window.addEventListener("beforeunload",event=>{if(document.body.dataset.consolePage==="import"&&(document.getElementById("source")?.value||document.getElementById("file")?.files?.length)){event.preventDefault();event.returnValue="";}});
+ window.addEventListener("beforeunload",event=>{if(document.body.dataset.consolePage==="import"&&!window.secDNSAgent?.leaving&&(document.getElementById("source")?.value||document.getElementById("file")?.files?.length)){event.preventDefault();event.returnValue="";}});
  const importLink=document.querySelector('.console-sidebar a[href$="/ui/import-preview/"]'), handoff=document.getElementById("open-import");
  if(importLink&&handoff){importLink.title="Open import review in a separate page; keep this draft";importLink.addEventListener("click",event=>{event.preventDefault();handoff.click();});}
 
@@ -122,12 +122,17 @@
   screen.hidden=!show;document.body.classList.toggle("auth-screen-open",show&&!active);document.body.classList.toggle("account-screen-open",show&&!!active);
   screen.dataset.access=agentOpen?"agent":"human";
   agentToggle.hidden=!!active||!humanEnabled||window.secDNSAgent?.state?.sso_login===true;agentToggle.textContent=agentOpen?"Back to human sign in":"Agent access";
-  returnButton.hidden=!active||ceremony;signout.hidden=true;
+  // Single sign-on: Account security is a standard page of the shell; the navigation (its own
+  // entry closes the page in place) replaces the separate Back button.
+  returnButton.hidden=!active||ceremony||state?.sso_login===true;signout.hidden=true;
   if(account)account.textContent=window.secDNSAgent?.kind==="human"?"Account security":"Sign in";
  };
  agentToggle.addEventListener("click",()=>{agentOpen=!agentOpen;display();(agentOpen?document.getElementById("agent-credential"):document.getElementById("human-username"))?.focus();});
  returnButton.addEventListener("click",()=>{accountOpen=false;display();userButton.focus();});
- account?.addEventListener("click",()=>{accountOpen=true;agentOpen=window.secDNSAgent?.kind==="agent";if(agentOpen)agent.hidden=false;display();const title=(agentOpen?agent:human).querySelector("h2");window.scrollTo(0,0);title?.setAttribute("tabindex","-1");title?.focus({preventScroll:true});});
+ account?.addEventListener("click",()=>{accountOpen=true;agentOpen=window.secDNSAgent?.kind==="agent";if(agentOpen)agent.hidden=false;display();const title=(agentOpen?agent:human).querySelector("h2");window.scrollTo(0,0);title?.setAttribute("tabindex","-1");title?.focus({preventScroll:true});window.dispatchEvent(new Event("accountopen"));});
+ // While Account security is open, the current page's own navigation entry closes it in place
+ // (no reload, so unsaved work stays); other entries navigate as usual.
+ selectedNav?.addEventListener("click",event=>{if(!accountOpen||screen.hidden)return;event.preventDefault();accountOpen=false;display();setNav(false);document.getElementById(main.id)?.focus?.();});
  window.addEventListener("agentconnected",()=>{agentOpen=false;display();});
  window.addEventListener("agentexpired",()=>{accountOpen=false;agentOpen=false;display();});
  window.addEventListener("authstate",display);window.addEventListener("humanflowchange",display);

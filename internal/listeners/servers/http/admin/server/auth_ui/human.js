@@ -30,7 +30,7 @@
   function reset(){clearTimeout(enrollmentTimer);clearTimeout(loginTimer);loginExpires=0;epoch++;challenge="";step="start";replacement=false;seed.textContent="";seed.hidden=true;qr.removeAttribute("src");qr.hidden=true;for(const v of Object.values(fields))v.input.value="";recovery.value="";recovery.hidden=dismiss.hidden=true;download.hidden=true;render();}
   function expireLogin(){if(step!=="otp"||replacement||!loginExpires)return false;if(Date.now()<loginExpires)return false;if(busy){loginTimer=setTimeout(expireLogin,200);return false;}reset();note.textContent="Sign-in timed out. Enter your username and password to start again.";fields.username.input.focus();return true;}
   function startLoginExpiry(result){const expires=Date.parse(result.expires_at);if(!Number.isFinite(expires)||expires<=Date.now())throw new Error("Sign-in timed out. Start again.");loginExpires=Math.min(expires,Date.now()+300000);clearTimeout(loginTimer);loginTimer=setTimeout(expireLogin,Math.max(0,loginExpires-Date.now()));}
-  function authenticationError(response){const retry=response.headers.get("Retry-After");let wait=retry&&/^\d+$/.test(retry)?Number(retry)*1000:retry?Date.parse(retry)-Date.now():0;if(!Number.isFinite(wait)||wait<0)wait=0;if(response.status===429&&!wait)wait=30000;if((response.status===429||response.status===503)&&wait){retryUntil=Math.max(retryUntil,Date.now()+wait);clearTimeout(retryTimer);const refresh=()=>{render();if(Date.now()<retryUntil)retryTimer=setTimeout(refresh,Math.min(retryUntil-Date.now(),2147483647));};retryTimer=setTimeout(refresh,Math.min(retryUntil-Date.now(),2147483647));}if(response.status===429)return new Error("Too many sign-in attempts. Wait before trying again.");if(response.status===503)return new Error("The sign-in service is temporarily unavailable. Please try again later.");return new Error("Sign-in could not be completed. Check your details or wait before trying again.");}
+  function authenticationError(response,code=""){if(code==="recent_authentication_required"){const e=new Error(ssoMode?"Confirm it's you first. Your WithMy ID sign-in is older than 5 minutes.":"Verify your identity first. Sensitive changes need a verification from the last five minutes.");e.code=code;return e;}const retry=response.headers.get("Retry-After");let wait=retry&&/^\d+$/.test(retry)?Number(retry)*1000:retry?Date.parse(retry)-Date.now():0;if(!Number.isFinite(wait)||wait<0)wait=0;if(response.status===429&&!wait)wait=30000;if((response.status===429||response.status===503)&&wait){retryUntil=Math.max(retryUntil,Date.now()+wait);clearTimeout(retryTimer);const refresh=()=>{render();if(Date.now()<retryUntil)retryTimer=setTimeout(refresh,Math.min(retryUntil-Date.now(),2147483647));};retryTimer=setTimeout(refresh,Math.min(retryUntil-Date.now(),2147483647));}if(response.status===429)return new Error("Too many sign-in attempts. Wait before trying again.");if(response.status===503)return new Error("The sign-in service is temporarily unavailable. Please try again later.");return new Error("Sign-in could not be completed. Check your details or wait before trying again.");}
   function showEnrollment(result){const expires=Date.parse(result.expires_at);if(!Number.isFinite(expires)||expires<=Date.now())throw new Error("Enrollment expired. Start again.");if(typeof result.secret!=="string"||!/^[A-Z2-7]{32}$/.test(result.secret)||typeof result.qr_png!=="string"||result.qr_png.length>11000||!/^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(result.qr_png))throw new Error("Unexpected authentication response.");clearTimeout(enrollmentTimer);enrollmentTimer=setTimeout(()=>{reset();note.textContent="Enrollment expired. Existing authentication methods are unchanged.";},Math.min(300000,expires-Date.now()));qr.src="data:image/png;base64,"+result.qr_png;qr.hidden=false;seed.textContent="Or add this key to your authenticator: "+result.secret;seed.hidden=false;}
   function render(){const initial=step==="start";mode.disabled=!initial||busy;for(const [name,v] of Object.entries(fields)){const visible=name==="code"?!initial:name==="username"||name==="password"?initial:name==="name"||name==="grant"?initial&&["setup","local"].includes(mode.value):initial&&mode.value==="code";v.wrap.hidden=!visible;v.input.required=visible;v.input.disabled=!visible||busy;}fields.password.input.autocomplete=["setup","local"].includes(mode.value)?"new-password":"current-password";submit.disabled=busy||Date.now()<retryUntil;submit.textContent=initial?(mode.value==="setup"?"Create owner account":mode.value==="login"?"Sign in":"Continue"):"Verify and sign in";
     const human=window.secDNSAgent?.kind==="human";
@@ -49,10 +49,13 @@
   function applySSO(human){
     if(!ssoMode||!ssoUI)return;
     form.hidden=true;alternatives.hidden=true;mode.hidden=modeLabel.hidden=true;
-    ssoUI.signedOut.hidden=human;
-    if(!human){title.textContent="Signed out of the console";help.textContent="Sign in again with WithMy ID to continue.";security.hidden=true;return;}
+    const ended=window.secDNSAgent?.ended,busyNow=!human&&ended?.reason==="busy";
+    ssoUI.signedOut.hidden=human||busyNow;ssoUI.busyCard.hidden=!busyNow;ssoUI.reason.hidden=human||!ended;
+    if(!human&&ended){const tpl={expired:"Your console session timed out at {time}.",signed_out:"You signed out at {time}.",busy:"The sign-in service was busy at {time}."}[ended.reason]||"Your console session ended at {time}.";const at=new Date(ended.at).toISOString();ssoUI.reason.dataset.i18nAt=at;ssoUI.reason.dataset.i18nTemplate=tpl;ssoUI.reason.dataset.i18nFormat="time";ssoUI.reason.textContent=tpl.split("{time}").join(window.secDNSI18n?.date(at,{timeStyle:"short"})||at);window.secDNSI18n?.stamp?.(ssoUI.reason);}
+    if(busyNow){title.textContent="secDNS is busy right now";help.textContent="Too many console sessions are open, so a new one cannot start yet. Wait a few minutes, then try again. Nothing on this page is lost.";security.hidden=true;return;}
+    if(!human){title.textContent="Signed out of the console";help.textContent="Sign in again with WithMy ID to continue. You come back to this page, with any unsaved changes.";security.hidden=true;return;}
     title.textContent="Account security";help.textContent="Your sign-in is managed by WithMy ID.";
-    ssoUI.stepUp.hidden=ssoUI.stepUpHint.hidden=false;
+    ssoUI.stepUp.hidden=ssoUI.stepUpHint.hidden=false;ssoUI.refresh();
   }
   // On the SSO path the console's local credential surfaces are detached from the document
   // (not merely hidden): nothing about passwords, authenticators, recovery or the private
@@ -62,8 +65,9 @@
     for(const el of [form,alternatives,recovery,dismiss,download,ssoUI.groups.password,ssoUI.groups.totp,ssoUI.groups.codes,...ssoUI.reauthLocal])el.remove();
     ssoUI.revokeOthers.textContent="Sign out other sessions";
     const passkeys=document.getElementById("passkey-access");if(passkeys){passkeys.replaceChildren();passkeys.hidden=true;}
+    ssoUI.build();
   }
-  async function request(path,body,authenticated=false){if(location.origin!==origin)throw new Error("Use the configured HTTPS portal.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(new URL("auth/"+path,base),{method:body?"POST":"GET",headers:body?{...(authenticated?window.secDNSAgent.headers("","POST"):{}),"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined,credentials:"same-origin",cache:"no-store",redirect:"error",signal:controller.signal});if(!r.ok){void r.body?.cancel();throw authenticationError(r);}const reader=r.body.getReader();let bytes=0,parts=[];for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>16384){await reader.cancel();throw new Error("Unexpected authentication response.");}parts.push(value);}const data=new Uint8Array(bytes);let at=0;for(const p of parts){data.set(p,at);at+=p.length;}try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(data));}catch{throw new Error("Unexpected authentication response.");}}finally{clearTimeout(timer);}}
+  async function request(path,body,authenticated=false){if(location.origin!==origin)throw new Error("Use the configured HTTPS portal.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(new URL("auth/"+path,base),{method:body?"POST":"GET",headers:body?{...(authenticated?window.secDNSAgent.headers("","POST"):{}),"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined,credentials:"same-origin",cache:"no-store",redirect:"error",signal:controller.signal});if(!r.ok){let code="";if(r.status===403){try{const t=await r.text();if(t.length<=256)code=JSON.parse(t)?.error||"";}catch{/* not JSON */}}else void r.body?.cancel();throw authenticationError(r,code);}const reader=r.body.getReader();let bytes=0,parts=[];for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>16384){await reader.cancel();throw new Error("Unexpected authentication response.");}parts.push(value);}const data=new Uint8Array(bytes);let at=0;for(const p of parts){data.set(p,at);at+=p.length;}try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(data));}catch{throw new Error("Unexpected authentication response.");}}finally{clearTimeout(timer);}}
   mode.addEventListener("change",()=>{if(mode.value==="setup"&&!setupRequired)mode.value="login";reset();});cancel.addEventListener("click",()=>{reset();fields.username.input.focus();note.textContent="Cancelled. Existing authentication methods are unchanged unless confirmation already completed.";});dismiss.addEventListener("click",()=>{recovery.value="";recovery.hidden=dismiss.hidden=true;note.textContent="Signed in. Keep your saved recovery codes private.";render();});
   form.addEventListener("submit",async e=>{e.preventDefault();if(busy||Date.now()<retryUntil||location.origin!==origin||expireLogin())return;busy=true;render();const captured=epoch;let body={};try{
     if(step==="start"){
@@ -131,15 +135,67 @@ auditButton.addEventListener("click",async()=>{
   card.append(security);
   {
     const signedOut=document.createElement("p");signedOut.hidden=true;signedOut.className="sso-signed-out";
-    const again=document.createElement("a");again.href="/admin/ui/";again.className="primary auth-link";again.textContent="Sign in with WithMy ID";signedOut.append(again);
-    card.insertBefore(signedOut,form);
-    const stepUpHint=document.createElement("p");stepUpHint.textContent="Sensitive changes need a fresh WithMy ID sign-in within the last five minutes. Confirming signs you out and back in with WithMy ID.";
-    const stepUp=document.createElement("button");stepUp.type="button";stepUp.textContent="Confirm with WithMy ID";stepUp.hidden=true;
-    stepUp.addEventListener("click",()=>{if(busy)return;window.secDNSAgent.logout().catch(()=>{});});
+    // Signing in again comes back to this page (return-to) and keeps unsaved work in this tab.
+    const again=document.createElement("a");again.href=location.pathname;again.className="primary auth-link";again.textContent="Sign in with WithMy ID";signedOut.append(again);
+    again.addEventListener("click",event=>{event.preventDefault();window.secDNSAgent.signInAgain().catch(()=>location.assign(again.href));});
+    const reason=document.createElement("p");reason.className="sso-signed-out-reason";reason.hidden=true;
+    // C31: all console session slots are in use. A distinct card; Retry exchanges again in place.
+    const busyCard=document.createElement("div");busyCard.className="sso-busy";busyCard.hidden=true;
+    const retry=document.createElement("button");retry.type="button";retry.className="primary auth-link";retry.textContent="Try again";busyCard.append(retry);
+    retry.addEventListener("click",async()=>{if(retry.disabled)return;retry.disabled=true;note.textContent="";try{if(!await window.secDNSAgent.retrySSO())note.textContent="Still busy. Try again in a few minutes.";}finally{retry.disabled=false;}});
+    card.insertBefore(signedOut,form);card.insertBefore(busyCard,form);card.insertBefore(reason,signedOut);
+    const stepUpHint=document.createElement("p");stepUpHint.textContent="Sensitive changes need a WithMy ID sign-in from the last 5 minutes. Confirming takes you to WithMy ID and back to this page; unsaved changes are kept.";
+    const stepUp=document.createElement("button");stepUp.type="button";stepUp.className="primary";stepUp.textContent="Confirm with WithMy ID";stepUp.hidden=true;
+    stepUp.addEventListener("click",()=>{if(busy)return;startStepUp("verify",stepUp);});
     const reauthLocal=[...groups.reauth.children].filter(el=>el.tagName!=="H3");
     const revokeOthers=revokeButton;
     groups.reauth.append(stepUpHint,stepUp);
-    stepUpHint.hidden=true;ssoUI={signedOut,stepUp,stepUpHint,groups,revokeOthers,reauthLocal:[...reauthLocal],purged:false};
+    // --- C25/C26/C27: step-up state, the step-up dialog and the refused action's replay --------
+    const WINDOW=5*60000,el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
+    const fresh=()=>{const at=window.secDNSAgent?.authenticatedAt||0;return at>0&&at<=Date.now()+30000&&Date.now()-at<WINDOW;};
+    const stateLine=el("p","step-up-state"),stateTime=el("span","step-up-time"),stateLeft=el("span","step-up-left");stateLine.setAttribute("role","status");
+    const gatedTitle=el("p","step-up-gated-title","Needs a recent confirmation:"),gated=el("ul","step-up-gated");gated.append(el("li","","Sign out other sessions"));
+    const name=el("p","account-name"),role=el("p","account-role"),provider=el("p","account-provider","Signed in with WithMy ID");name.setAttribute("translate","no");
+    const revoke=el("button","","Sign out other sessions");revoke.type="button";const signOut=el("button","","Sign out");signOut.type="button";
+    signOut.addEventListener("click",()=>window.secDNSAgent.logout().catch(()=>{}));
+    const dialog=el("dialog","step-up-dialog warn-dialog");dialog.id="step-up-dialog";dialog.setAttribute("aria-labelledby","step-up-title");
+    const dTitle=el("h2","","Confirm it's you first"),dReason=el("p"),dKeep=el("p","","You sign in to WithMy ID again and come back to this page. Your unsaved changes are kept, and the action continues when you return."),dError=el("p","error");dTitle.id="step-up-title";dError.setAttribute("role","alert");dError.hidden=true;
+    const dActions=el("div","dialog-actions"),dCancel=el("button","","Cancel"),dConfirm=el("button","primary","Confirm with WithMy ID");dCancel.type=dConfirm.type="button";dActions.append(dCancel,dConfirm);dialog.append(dTitle,dReason,dKeep,dError,dActions);
+    let pendingIntent="";
+    dCancel.addEventListener("click",()=>dialog.close());
+    dConfirm.addEventListener("click",()=>startStepUp(pendingIntent,dConfirm));
+    async function startStepUp(action,button){dError.hidden=true;button.disabled=true;try{await window.secDNSAgent.stepUp({action});}catch(error){button.disabled=false;if(dialog.open){dError.textContent=error.message;dError.hidden=false;}else note.textContent=error.message;}}
+    function openStepUp(action){pendingIntent=action;dReason.textContent={"revoke-others":"Signing out your other sessions needs a WithMy ID sign-in from the last 5 minutes."}[action]||"Sensitive changes need a WithMy ID sign-in from the last 5 minutes.";dError.hidden=true;dConfirm.disabled=false;if(!dialog.isConnected)document.body.append(dialog);if(!dialog.open)dialog.showModal();dConfirm.focus();}
+    async function revokeOthersNow(replayed){if(busy)return;if(!fresh()){openStepUp("revoke-others");return;}busy=true;revoke.disabled=true;const captured=epoch;try{await request("sessions/revoke-others",{},true);if(captured===epoch)note.textContent=replayed?"Confirmed. Your other sessions are signed out.":"Other sessions signed out.";}catch(error){if(captured!==epoch)return;if(error.code==="recent_authentication_required"){note.textContent=error.message;openStepUp("revoke-others");}else note.textContent=error.message;}finally{busy=false;revoke.disabled=false;refresh();if(!security.hidden&&!auditButton.disabled)auditButton.click();}}
+    revoke.addEventListener("click",()=>revokeOthersNow(false));
+    function refresh(){
+      if(!ssoMode||window.secDNSAgent?.kind!=="human")return;
+      name.textContent=window.secDNSAgent.name;role.textContent=window.secDNSAgent.role;
+      const ok=fresh(),at=window.secDNSAgent.authenticatedAt;stateLine.classList.toggle("is-fresh",ok);stepUp.hidden=ok;
+      if(ok){const iso=new Date(at).toISOString();stateTime.dataset.i18nAt=iso;stateTime.dataset.i18nTemplate="Verified at {time}";stateTime.dataset.i18nFormat="time";stateTime.textContent="Verified at "+(window.secDNSI18n?.date(iso,{timeStyle:"short"})||iso);window.secDNSI18n?.stamp?.(stateTime);stateLeft.textContent="{n} min left".replace("{n}",String(Math.max(1,Math.ceil((at+WINDOW-Date.now())/60000))));stateLine.replaceChildren(stateTime,document.createTextNode(" · "),stateLeft);}
+      else{delete stateTime.dataset.i18nAt;stateLine.replaceChildren(el("span","","Not confirmed in the last 5 minutes."));}
+    }
+    setInterval(()=>{if(ssoMode&&!security.hidden)refresh();},15000);
+    function build(){
+      const section=(cls,heading,...children)=>{const c=el("section","security-task sso-card "+cls),h=el("h3","",heading);c.append(h,...children);return c;};
+      auditButton.hidden=true;auditSection.classList.add("sso-events");
+      const actions=el("div","sso-session-actions");actions.append(revoke,signOut);
+      const sessions=section("sso-sessions","Sessions",el("p","","Sign out other sessions ends the console in your other browsers. This browser stays signed in."),actions,auditSection);
+      const verify=section("sso-verify","Confirm it's you",stateLine,stepUpHint,stepUp,gatedTitle,gated);
+      const who=section("sso-identity","Signed in as",name,role,provider);
+      security.replaceChildren(who,verify,sessions);security.classList.add("sso-account");refresh();
+    }
+    // On return from a step-up: replay the refused action once (only with a fresh sign-in), or say why not.
+    window.addEventListener("agentconnected",()=>{
+      if(!ssoMode||window.secDNSAgent?.kind!=="human")return;refresh();
+      const intent=window.secDNSAgent.drafts?.takeIntent();if(!intent||Date.now()-intent.at>10*60000)return;
+      document.getElementById("console-account")?.click();
+      if(!fresh()){note.textContent="Your WithMy ID sign-in was not renewed, so nothing changed. Choose Confirm with WithMy ID to try again.";return;}
+      if(intent.action==="revoke-others")void revokeOthersNow(true);else note.textContent="Confirmed with WithMy ID.";
+    });
+    window.addEventListener("authended",()=>render());
+    window.addEventListener("accountopen",()=>{if(!ssoMode)return;refresh();if(!auditButton.disabled)auditButton.click();});
+    stepUpHint.hidden=true;ssoUI={signedOut,reason,busyCard,stepUp,stepUpHint,groups,revokeOthers,reauthLocal:[...reauthLocal],purged:false,build,refresh};
   }
   const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;auditGeneration++;audit.textContent="";audit.hidden=true;audit.removeAttribute("aria-busy");auditButton.disabled=false;form.hidden=!security.hidden;title.textContent=security.hidden?(ssoMode?"Signed out of the console":"Sign in to secDNS"):(ssoMode?"Account security":"Human account");currentPassword.value=currentCode.value=newPassword.value="";render();};
   window.addEventListener("agentconnected",sessionChanged);window.addEventListener("agentexpired",()=>{sessionChanged();if(!busy)reset();});

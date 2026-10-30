@@ -35,6 +35,20 @@ type RRsetMutation struct {
 	Action                            string
 	Record                            *Record
 	Key                               *RecordKey
+	confirmRemovals                   int
+	hasConfirmRemovals                bool
+}
+
+// ConfirmRemovals is the number of records the operator confirmed a deletion removes from the
+// expected base (optional field confirm_removals, accepted only with action "delete"). It is
+// not part of the canonical request: retries and receipts are unchanged by it.
+func (r RRsetMutation) ConfirmRemovals() (int, bool) { return r.confirmRemovals, r.hasConfirmRemovals }
+
+// WithConfirmRemovals returns a copy carrying a removal count taken from elsewhere (the
+// record gateway's SecDNS-Confirm-Removals header).
+func (r RRsetMutation) WithConfirmRemovals(n int, stated bool) RRsetMutation {
+	r.confirmRemovals, r.hasConfirmRemovals = n, stated
+	return r
 }
 
 // Canonical validates a request independently of the current store contents.
@@ -85,7 +99,7 @@ func ParseRRsetMutation(raw []byte) (RRsetMutation, error) {
 	if !utf8.Valid(raw) || !validUnicodeEscapes(raw) {
 		return r, ErrInvalid
 	}
-	f, err := object(raw, []string{"expected", "operation_id", "action"}, []string{"record", "key"})
+	f, err := object(raw, []string{"expected", "operation_id", "action"}, []string{"record", "key", "confirm_removals"})
 	if err != nil {
 		return r, err
 	}
@@ -109,6 +123,9 @@ func ParseRRsetMutation(raw []byte) (RRsetMutation, error) {
 	switch r.Action {
 	case "upsert":
 		if _, ok := f["key"]; ok {
+			return r, ErrInvalid
+		}
+		if _, ok := f["confirm_removals"]; ok {
 			return r, ErrInvalid
 		}
 		v, ok := f["record"]
@@ -135,6 +152,12 @@ func ParseRRsetMutation(raw []byte) (RRsetMutation, error) {
 		r.Key = &RecordKey{}
 		if json.Unmarshal(key["name"], &r.Key.Name) != nil || json.Unmarshal(key["type"], &r.Key.Type) != nil {
 			return r, ErrInvalid
+		}
+		if raw, ok := f["confirm_removals"]; ok {
+			if r.confirmRemovals, err = ParseConfirmRemovals(string(raw)); err != nil || r.confirmRemovals > 1 {
+				return r, ErrInvalid
+			}
+			r.hasConfirmRemovals = true
 		}
 	default:
 		return r, ErrInvalid

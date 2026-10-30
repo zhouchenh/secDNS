@@ -108,6 +108,41 @@
       this.edits++; this.formDirty = false;
     }
     remove(k) { if (this.pending) throw new Error("pending_operation"); this.draft = this.draft.filter(r => key(r) !== k); this.edits++; }
+    // Undo one pending row: the record returns to its saved (base) version, or an added
+    // record leaves the draft.
+    undo(k) {
+      if (this.pending) throw new Error("pending_operation");
+      const saved = this.base?.records.find(r => key(r) === k), at = this.draft.findIndex(r => key(r) === k);
+      if (saved && at >= 0) this.draft[at] = clone(saved); else if (saved) this.draft.push(clone(saved)); else if (at >= 0) this.draft.splice(at, 1); else return false;
+      this.edits++; return true;
+    }
+    // Unsaved work to keep across a WithMy ID round trip (session-scoped storage): the base it
+    // was made against, the draft, the import provenance and an uncertain submitted change.
+    exportDraft() {
+      const uncertain = this.pending?.status === "uncertain";
+      if (!this.base || this.identityBlocked || !(this.dirty() || uncertain)) return null;
+      const p = this.pending, provenance = this.draftProvenance;
+      return {v:1, base:clone(this.base), draft:clone(this.draft),
+        provenance: provenance ? {profile:provenance.profile, rulesetID:provenance.rulesetID, sourceSHA256:provenance.sourceSHA256, contentSHA256:provenance.contentSHA256, transferredAt:provenance.transferredAt, intact:this.edits === provenance.editCounter} : null,
+        pending: uncertain ? {endpoint:p.endpoint, mode:p.mode, expected:clone(p.expected), operationID:p.operationID, body:p.body, operatorSuppliedProvenance:p.operatorSuppliedProvenance ? clone(p.operatorSuppliedProvenance) : null} : null};
+    }
+    // Restores kept work over a freshly accepted, clean snapshot of the same ruleset/lineage.
+    // The kept base stays the base: a server that moved on meanwhile shows as server changes
+    // and a write still needs the reviewed, revision-checked apply (no merge, no auto-send).
+    importDraft(saved, endpoints) {
+      const base = saved?.base, prov = saved?.provenance, p = saved?.pending;
+      if (!saved || saved.v !== 1 || !envelope(base) || !recordsValid(saved.draft) || !this.base || !this.current || this.dirty() || this.pending || this.identityBlocked || identity(base) !== identity(this.base) || compare(base.revision, this.current.revision) > 0) throw new Error("draft_restore_refused");
+      if (prov !== null && !(exactKeys(prov,["profile","rulesetID","sourceSHA256","contentSHA256","transferredAt","intact"]) && prov.profile === HANDOFF_PROFILE && prov.rulesetID === base.ruleset_id && hashValid(prov.sourceSHA256) && hashValid(prov.contentSHA256) && Number.isSafeInteger(prov.transferredAt) && typeof prov.intact === "boolean")) throw new Error("draft_restore_refused");
+      if (p !== null && !(exactKeys(p,["endpoint","mode","expected","operationID","body","operatorSuppliedProvenance"]) && Array.isArray(endpoints) && endpoints.includes(p.endpoint) && ["rrset","replacement"].includes(p.mode) && exactKeys(p.expected,["ruleset_id","lineage_id","revision"]) && p.expected.ruleset_id === base.ruleset_id && p.expected.lineage_id === base.lineage_id && revision(p.expected.revision) && idValid(p.operationID) && typeof p.body === "string" && bytes(p.body) <= LIMIT && (p.operatorSuppliedProvenance === null || operatorProvenance(p.operatorSuppliedProvenance)))) throw new Error("draft_restore_refused");
+      if (p !== null) { let body; try { body = JSON.parse(p.body); } catch { throw new Error("draft_restore_refused"); } if (body?.operation_id !== p.operationID || JSON.stringify(body.expected) !== JSON.stringify(p.expected)) throw new Error("draft_restore_refused"); }
+      this.base = clone(base); this.draft = clone(saved.draft); this.formDirty = false; this.edits++;
+      this.draftProvenance = prov ? Object.freeze({profile:prov.profile,rulesetID:prov.rulesetID,sourceSHA256:prov.sourceSHA256,contentSHA256:prov.contentSHA256,transferredAt:prov.transferredAt,editCounter:prov.intact ? this.edits : -1}) : null;
+      if (p !== null) {
+        this.pending = {status:"uncertain"};
+        for (const [k,v] of Object.entries({endpoint:p.endpoint, mode:p.mode, expected:Object.freeze(clone(p.expected)), operationID:p.operationID, body:p.body, editCounter:this.edits, operatorSuppliedProvenance:p.operatorSuppliedProvenance ? Object.freeze(clone(p.operatorSuppliedProvenance)) : null})) Object.defineProperty(this.pending,k,{value:v,enumerable:true});
+      }
+      return true;
+    }
     importCandidate(handoff, channelID, sourcePath, targetPath, now) {
       if (!exactDraftHandoff(handoff,channelID,sourcePath,targetPath,now)) throw new Error("invalid_draft_handoff");
       if (!this.base || !this.current || !this.fresh || this.pending || this.identityBlocked || this.dirty()) throw new Error("handoff_reconciliation_required");
@@ -134,7 +169,7 @@
       if (this.rrsetCapability === "v1" && !this.draftProvenance && changed.length === 1) {
         const row=changed[0], record=row.draft || row.base;
         return {mode:"rrset",endpoint:endpoint+"/rrset",expected,editCounter:this.edits,change:row.localChange,name:record.name,type:record.type,
-          payload:row.draft ? {action:"upsert",record:clone(row.draft)} : {action:"delete",key:{name:row.base.name,type:row.base.type}}};
+          payload:row.draft ? {action:"upsert",record:clone(row.draft)} : {action:"delete",key:{name:row.base.name,type:row.base.type},confirm_removals:1}};
       }
       const payload={records:clone(this.draft)};
       // A replacement that removes records carries the removal count the operator confirmed;
