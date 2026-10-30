@@ -3,6 +3,9 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,5 +126,87 @@ func TestSnapshotReplacementRemovalConfirmationCompatibility(t *testing.T) {
 	prov := fmt.Sprintf(`,"operator_supplied_provenance":{"profile":"%s","source_sha256":"%s","content_sha256":"%s"}`, recordset.RouterOSExactExplicitProfile, strings.Repeat("c", 64), candidate.Metadata().ContentSHA256)
 	if c := post("4", "p5", string(three), prov); c != 200 {
 		t.Fatal("additive exact import needs a confirmation", c)
+	}
+}
+
+// The console reaches records through the gateway; the record authority behind it may be an
+// older build whose strict parser rejects confirm_removals. The gateway enforces the rule
+// against the authority's current generation and forwards the request without the field.
+func TestRecordGatewayRemovalConfirmationOlderAuthority(t *testing.T) {
+	store, err := recordstore.NewVersionedMemory(recordstore.Enrollment{RulesetID: "r", LineageID: "l"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var seed []recordset.Record
+	for i := 1; i <= 6; i++ {
+		seed = append(seed, recordset.Record{Name: fmt.Sprintf("g%d.invalid.", i), Type: "A", Values: []string{fmt.Sprintf("192.0.2.%d", i)}, TTLSeconds: 60})
+	}
+	if _, err = store.Replace(recordstore.Expected{RulesetID: "r", LineageID: "l", Revision: 1}, "seed", seed); err != nil {
+		t.Fatal(err)
+	}
+	upstream := &HTTPAdminServer{Token: strings.Repeat("u", 32), versioned: store}
+	var forwarded []string
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			raw, _ := io.ReadAll(r.Body)
+			forwarded = append(forwarded, string(raw))
+			if strings.Contains(string(raw), "confirm_removals") {
+				// an authority built before confirm_removals existed
+				w.WriteHeader(400)
+				w.Write([]byte(`{"error":"invalid_snapshot_request"}`))
+				return
+			}
+			r.Body = io.NopCloser(strings.NewReader(string(raw)))
+		}
+		upstream.routes().ServeHTTP(w, r)
+	}))
+	defer remote.Close()
+	h := &HTTPAdminServer{RecordAuthorityURL: remote.URL + "/admin", recordAuthorityCredential: upstream.Token}
+	post := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/admin/snapshot", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		h.forwardRecordRequest(w, r, "POST", "/snapshot")
+		return w
+	}
+	imported := `[{"name":"g1.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60},{"name":"n.invalid.","type":"TXT","values":["<a&b>"],"ttl_seconds":60}]`
+	var records []recordset.Record
+	if err = json.Unmarshal([]byte(imported), &records); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := recordset.New("r", "l", 2, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov := fmt.Sprintf(`"operator_supplied_provenance":{"profile":"%s","source_sha256":"%s","content_sha256":"%s"}`, recordset.RouterOSExactExplicitProfile, strings.Repeat("d", 64), candidate.Metadata().ContentSHA256)
+	body := func(op, extra string) string {
+		return `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"2"},"operation_id":"` + op + `","records":` + imported + `,` + prov + extra + `}`
+	}
+	for _, c := range []struct{ body, code string }{
+		{body("g-missing", ""), "removal_confirmation_required"},
+		{body("g-wrong", `,"confirm_removals":4`), "removal_confirmation_mismatch"},
+	} {
+		if w := post(c.body); w.Code != 409 || !strings.Contains(w.Body.String(), c.code) {
+			t.Fatalf("want 409 %s, got %d %s", c.code, w.Code, w.Body.String())
+		}
+	}
+	if len(forwarded) != 0 {
+		t.Fatalf("rejected requests reached the authority: %v", forwarded)
+	}
+	w := post(body("g-ok", `,"confirm_removals":5`))
+	if w.Code != 200 {
+		t.Fatalf("confirmed import through the gateway: %d %s", w.Code, w.Body.String())
+	}
+	if len(forwarded) != 1 || strings.Contains(forwarded[0], "confirm_removals") || !strings.Contains(forwarded[0], `"<a&b>"`) {
+		t.Fatalf("forwarded body: %v", forwarded)
+	}
+	view, _ := store.Acquire()
+	if view.Metadata().Revision != 3 || len(view.Records()) != 2 {
+		t.Fatalf("authority not updated: revision %d, %d records", view.Metadata().Revision, len(view.Records()))
+	}
+	// a plain replacement without the field passes through byte-for-byte, with no extra read
+	plain := `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"3"},"operation_id":"g-plain","records":[{"name":"g1.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60}]}`
+	if w := post(plain); w.Code != 200 || forwarded[len(forwarded)-1] != plain {
+		t.Fatalf("plain replacement through the gateway: %d %s", w.Code, w.Body.String())
 	}
 }

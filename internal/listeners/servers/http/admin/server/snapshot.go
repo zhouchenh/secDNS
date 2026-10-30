@@ -178,7 +178,7 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 	}
 	expected := recordstore.Expected{RulesetID: request.RulesetID, LineageID: request.LineageID, Revision: request.Revision}
 	provenance, hasProvenance := request.OperatorSuppliedProvenance()
-	if code := h.removalConfirmationError(expected, request, hasProvenance); code != "" {
+	if code := h.removalConfirmationError(request, hasProvenance); code != "" {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": code})
 		return
 	}
@@ -203,20 +203,28 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 // confirm_removals must match it. The count is computed only while the current generation
 // is the expected one: otherwise the store itself decides (revision conflict, or the
 // idempotent replay of an already committed operation), so retries stay safe.
-func (h *HTTPAdminServer) removalConfirmationError(expected recordstore.Expected, request recordset.Replacement, exactImport bool) string {
-	confirmed, stated := request.ConfirmRemovals()
-	if !exactImport && !stated {
+func (h *HTTPAdminServer) removalConfirmationError(request recordset.Replacement, exactImport bool) string {
+	if _, stated := request.ConfirmRemovals(); !exactImport && !stated {
 		return ""
 	}
 	view, e := h.versioned.Acquire()
 	if e != nil {
 		return ""
 	}
-	base := view.Metadata()
-	if base.RulesetID != expected.RulesetID || base.LineageID != expected.LineageID || base.Revision != expected.Revision {
+	return removalConfirmationCode(view.Metadata(), view.Records(), request, exactImport)
+}
+
+// removalConfirmationCode is the shared rule for a base generation (local store or the
+// record authority behind the gateway): "" when the request may proceed.
+func removalConfirmationCode(base recordset.Metadata, baseRecords []recordset.Record, request recordset.Replacement, exactImport bool) string {
+	confirmed, stated := request.ConfirmRemovals()
+	if !exactImport && !stated {
 		return ""
 	}
-	removed := countRemovedRecords(view.Records(), request.Records)
+	if base.RulesetID != request.RulesetID || base.LineageID != request.LineageID || base.Revision != request.Revision {
+		return ""
+	}
+	removed := countRemovedRecords(baseRecords, request.Records)
 	switch {
 	case !stated && removed > 0:
 		return "removal_confirmation_required"
