@@ -729,6 +729,8 @@ dialog:focus,dialog:focus-visible{outline:none}
   .topbar-icon{min-height:var(--control-h-touch);width:var(--control-h-touch)}
   .user-menu-button{min-height:var(--control-h-touch);min-width:var(--control-h-touch)}
   .value-row button,.value-line button{min-height:var(--control-h-touch)}
+  details>summary{padding-top:12px;padding-bottom:12px}
+  .review-row-head .row-undo,.link-button{min-height:var(--control-h-touch)}
   .status-badge{min-height:28px}
 }
 
@@ -751,6 +753,17 @@ dialog:focus,dialog:focus-visible{outline:none}
   .node-check-table td,.node-peer-table td{display:block;padding:0;border:0;min-width:0}
   .node-check-table .cell-label,.node-peer-table .cell-label{display:block;font-size:var(--fs-xs);color:var(--muted);margin-bottom:2px}
   .node-check-table td:last-child,.node-peer-table td:last-child{grid-column:1/-1}
+}
+/* The DNS health matrix stacks per node while the content column is narrower than ~1040 px. */
+@media (max-width:1279px){
+  .health-matrix,.health-matrix tbody{display:block}
+  .health-matrix thead,.health-matrix caption{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  .health-matrix tr{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2) var(--s3);padding:12px var(--s4);border-bottom:1px solid var(--border)}
+  .health-matrix th[scope=row]{grid-column:1/-1;padding:0;border:0}
+  .health-matrix td{display:block;padding:0;border:0}
+  .health-matrix td:last-child{grid-column:1/-1}
+  .health-matrix .cell-label{display:block;font-size:var(--fs-xs);color:var(--muted);margin-bottom:2px}
+  .health-matrix-wrap{overflow:visible}
 }
 @media (max-width:1023px){
   .record-sheet{width:min(520px,100vw)}
@@ -778,14 +791,7 @@ dialog:focus,dialog:focus-visible{outline:none}
   .node-row>svg{display:none}
   .node-header-actions{margin-left:0;width:100%}
   .node-header-actions button{flex:1 1 auto}
-  .health-matrix,.health-matrix tbody{display:block}
-  .health-matrix thead,.health-matrix caption{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-  .health-matrix tr{display:grid;grid-template-columns:1fr 1fr;gap:var(--s2) var(--s3);padding:12px var(--s4);border-bottom:1px solid var(--border)}
-  .health-matrix th[scope=row]{grid-column:1/-1;padding:0;border:0}
-  .health-matrix td{display:block;padding:0;border:0}
-  .health-matrix td:last-child{grid-column:1/-1}
-  .health-matrix .cell-label{display:block;font-size:var(--fs-xs);color:var(--muted);margin-bottom:2px}
-  .health-matrix-wrap{overflow:visible}
+  .health-matrix tr{grid-template-columns:1fr 1fr}
   .empty-state{margin:var(--s4)}
 }
 /* Surface Duo and other dual-screen devices, spanned: list on the left, editor on the right.
