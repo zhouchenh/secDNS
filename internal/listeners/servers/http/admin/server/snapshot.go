@@ -179,20 +179,14 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 	expected := recordstore.Expected{RulesetID: request.RulesetID, LineageID: request.LineageID, Revision: request.Revision}
 	provenance, hasProvenance := request.OperatorSuppliedProvenance()
 	confirmed, stated := request.ConfirmRemovals()
-	if values := r.Header.Values(confirmRemovalsHeader); !stated && len(values) > 0 {
-		// set by a record gateway that moved the body field into a header for older authorities
-		if len(values) != 1 {
-			snapshotError(w, recordstore.ErrVersionedInput)
-			return
-		}
-		if confirmed, e = recordset.ParseConfirmRemovals(values[0]); e != nil {
-			snapshotError(w, recordstore.ErrVersionedInput)
-			return
-		}
-		stated = true
+	// set by a record gateway that moved the body field into a header for older authorities
+	confirmed, stated, ok := confirmRemovalsValue(r, confirmed, stated)
+	if !ok {
+		snapshotError(w, recordstore.ErrVersionedInput)
+		return
 	}
 	if code := h.removalConfirmationError(request, hasProvenance, confirmed, stated); code != "" {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": code})
+		writeRemovalConfirmationError(w, code)
 		return
 	}
 	var receipt recordstore.Receipt
@@ -222,9 +216,69 @@ func (h *HTTPAdminServer) removalConfirmationError(request recordset.Replacement
 	}
 	view, e := h.versioned.Acquire()
 	if e != nil {
-		return ""
+		// fail closed: a destructive request is never admitted without its check
+		return "snapshot_unavailable"
 	}
 	return removalConfirmationCode(view.Metadata(), view.Records(), request, exactImport, confirmed, stated)
+}
+
+// writeRemovalConfirmationError maps a removal-confirmation refusal to its response: the
+// confirmation codes are conflicts the operator resolves by reviewing again; an unavailable
+// base (local store or the record authority behind the gateway) refuses before any change.
+func writeRemovalConfirmationError(w http.ResponseWriter, code string) {
+	status := http.StatusConflict
+	switch code {
+	case "snapshot_unavailable", "removal_check_unavailable":
+		status = http.StatusServiceUnavailable
+	case "invalid_snapshot_request":
+		status = http.StatusBadRequest
+	}
+	writeJSON(w, status, map[string]string{"error": code})
+}
+
+// confirmRemovalsValue reads confirm_removals from the body, or else from the one
+// SecDNS-Confirm-Removals header a record gateway sets for older authorities.
+func confirmRemovalsValue(r *http.Request, confirmed int, stated bool) (int, bool, bool) {
+	values := r.Header.Values(confirmRemovalsHeader)
+	if stated || len(values) == 0 {
+		return confirmed, stated, true
+	}
+	if len(values) != 1 {
+		return 0, false, false
+	}
+	n, e := recordset.ParseConfirmRemovals(values[0])
+	if e != nil {
+		return 0, false, false
+	}
+	return n, true, true
+}
+
+// rrsetRemovalCode is the removal rule for one RRset deletion against a base generation: it
+// removes one record when the key exists there. A stated count must match; requireCount (the
+// record gateway) also refuses an unstated deletion of an existing record. A base other than
+// the expected generation is left to the store's own check (revision conflict or replay).
+func rrsetRemovalCode(base recordset.Metadata, baseRecords []recordset.Record, request recordset.RRsetMutation, requireCount bool) string {
+	confirmed, stated := request.ConfirmRemovals()
+	if request.Action != "delete" || request.Key == nil || !stated && !requireCount {
+		return ""
+	}
+	if base.RulesetID != request.RulesetID || base.LineageID != request.LineageID || base.Revision != request.Revision {
+		return ""
+	}
+	removed := 0
+	for _, r := range baseRecords {
+		if strings.TrimSuffix(strings.ToLower(r.Name), ".") == strings.TrimSuffix(strings.ToLower(request.Key.Name), ".") && strings.EqualFold(r.Type, request.Key.Type) {
+			removed = 1
+			break
+		}
+	}
+	switch {
+	case !stated && removed > 0:
+		return "removal_confirmation_required"
+	case stated && confirmed != removed:
+		return "removal_confirmation_mismatch"
+	}
+	return ""
 }
 
 // confirmRemovalsHeader carries confirm_removals from the record gateway to the authority.

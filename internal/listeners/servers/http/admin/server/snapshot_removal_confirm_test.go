@@ -205,10 +205,17 @@ func TestRecordGatewayRemovalConfirmationOlderAuthority(t *testing.T) {
 	if view.Metadata().Revision != 3 || len(view.Records()) != 2 {
 		t.Fatalf("authority not updated: revision %d, %d records", view.Metadata().Revision, len(view.Records()))
 	}
-	// a plain replacement without the field passes through byte-for-byte, with no extra read
+	// a plain replacement that removes records without stating the count is refused at the
+	// gateway (slice 2: every removal needs a confirmation); nothing reaches the authority
 	plain := `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"3"},"operation_id":"g-plain","records":[{"name":"g1.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60}]}`
-	if w := post(plain); w.Code != 200 || forwarded[len(forwarded)-1] != plain {
-		t.Fatalf("plain replacement through the gateway: %d %s", w.Code, w.Body.String())
+	n := len(forwarded)
+	if w := post(plain); w.Code != 409 || !strings.Contains(w.Body.String(), "removal_confirmation_required") || len(forwarded) != n {
+		t.Fatalf("unconfirmed plain removal through the gateway: %d %s", w.Code, w.Body.String())
+	}
+	// an additive plain replacement passes through byte-for-byte
+	additive := `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"3"},"operation_id":"g-add","records":[{"name":"g1.invalid.","type":"A","values":["192.0.2.1"],"ttl_seconds":60},{"name":"n.invalid.","type":"TXT","values":["<a&b>"],"ttl_seconds":60},{"name":"z.invalid.","type":"A","values":["192.0.2.9"],"ttl_seconds":60}]}`
+	if w := post(additive); w.Code != 200 || forwarded[len(forwarded)-1] != additive || headers[len(headers)-1] != "" {
+		t.Fatalf("additive replacement through the gateway: %d %s", w.Code, w.Body.String())
 	}
 }
 
