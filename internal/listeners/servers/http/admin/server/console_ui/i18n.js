@@ -67,7 +67,7 @@
   };
 
   // --- DOM translation -------------------------------------------------------------
-  const SKIP = "script,style,textarea,pre,code,svg,[translate=no],.notranslate,.record-name,.record-value,.record-fqdn,.record-ip,.hash,#candidate,#agent-identity,#endpoint,.node-observation-address,.comparison-values,#human-seed";
+  const SKIP = "script,style,textarea,pre,code,svg,[translate=no],.notranslate,.record-name,.record-value,.record-fqdn,.record-ip,.hash,#candidate,#agent-identity,#endpoint,.node-observation-address,.comparison-values,.fields dt,#human-seed";
   const ATTRS = ["placeholder", "aria-label", "title", "alt"];
   const textSource = new WeakMap(), attrSource = new WeakMap();
   let writing = false;

@@ -68,8 +68,8 @@ button.danger-solid:disabled{opacity:.55}
 
 /* ---------- shell: sidebar ---------- */
 .console-layout{min-height:100vh;padding-left:var(--side-w)}
-.console-skip{position:fixed;top:-100px;left:var(--s4);z-index:50;background:var(--surface);color:var(--ink);padding:10px 14px;border-radius:var(--r-sm);box-shadow:var(--shadow)}
-.console-skip:focus-visible{top:var(--s2)}
+.console-skip{position:fixed;top:var(--s2);left:var(--s4);z-index:50;background:var(--surface);color:var(--ink);padding:10px 14px;border-radius:var(--r-sm);box-shadow:var(--shadow)}
+.console-skip:not(:focus){width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .console-sidebar{position:fixed;inset:0 auto 0 0;width:var(--side-w);z-index:30;display:flex;flex-direction:column;background:var(--bg-elev);border-right:1px solid var(--border);padding:14px 12px;overflow-y:auto}
 .console-brand{display:flex;align-items:center;gap:10px;padding:6px 10px;margin-bottom:var(--s3);height:44px}
 .brand-mark{width:26px;height:26px;border-radius:7px;flex:none;position:relative;background:radial-gradient(120% 120% at 0% 0%,var(--brand-1),transparent 55%),radial-gradient(120% 120% at 100% 100%,var(--brand-2),transparent 55%),var(--brand-3)}
@@ -189,6 +189,7 @@ button.danger-solid:disabled{opacity:.55}
 .console-record-table{max-height:calc(100dvh - 300px);min-height:120px;overscroll-behavior:contain;border-top:1px solid var(--border)}
 .console-record-table th{position:sticky;top:0;z-index:1}
 .console-record-table table{min-width:560px}
+.console-record-table td:first-child{min-width:180px}
 .console-record-table th:nth-child(2),.console-record-table td:nth-child(2),.console-record-table th:nth-child(4),.console-record-table td:nth-child(4),.console-record-table th:last-child,.console-record-table td:last-child{white-space:nowrap;width:1%}
 .console-record-table td:last-child button{white-space:nowrap;min-height:32px;padding:4px 10px;font-size:var(--fs-sm);background:transparent;border-color:transparent;color:var(--link)}
 .console-record-table td:last-child button:hover:not(:disabled){background:var(--surface-2);border-color:var(--border)}
