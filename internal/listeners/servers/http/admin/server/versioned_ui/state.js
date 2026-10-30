@@ -94,6 +94,39 @@
     for(const other of records){if(oldKey&&key(other)===oldKey)continue;if(dnsName(other.name)!==name)continue;if(other.type===record.type)return issue("name","That name and type already exist. Edit the existing record.");if(other.type==="CNAME"||record.type==="CNAME")return issue("name","A CNAME cannot share its name with another record. Remove the conflicting record first.");}
     return null;
   }
+  // Every problem in a record form at once, one per field or value (C33): the editor marks each
+  // field and lists them in an error summary. Specific checks come first; anything they do not
+  // explain falls back to draftIssue, which stays the single guard used by Model.stage.
+  function draftIssues(record, records=[], oldKey=null) {
+    const out=[],issue=(field,text,index)=>out.push({field,text,index});
+    const name=typeof record.name==="string"?record.name:"";
+    if(!name.trim())issue("name","Enter a DNS name, for example host.example.invalid.");
+    else if(!dnsName(name))issue("name","Enter a DNS name with labels of at most 63 characters, using unescaped ASCII.");
+    if(!Number.isInteger(record.ttl_seconds)||record.ttl_seconds<0||record.ttl_seconds>4294967295)issue("ttl","Enter a whole number of seconds from 0 to 4294967295.");
+    if(record.expires_at!==undefined&&!stamp(record.expires_at))issue("expiry","Enter a timestamp such as 2030-01-01T12:00:00Z.");
+    const values=Array.isArray(record.values)?record.values:[];
+    if(record.type==="CNAME"&&values.length>1)issue("values","A CNAME record must have exactly one destination.",1);
+    const seen=new Set();
+    values.forEach((value,i)=>{
+      if(typeof value!=="string")return;
+      if(bytes(value)>255){issue("values","A value can be at most 255 bytes.",i);return;}
+      let canonical=value;
+      if(record.type==="A"||record.type==="AAAA"){
+        if(!value.trim()){issue("values",record.type==="A"?"Enter an IPv4 address, for example 192.0.2.10.":"Enter an IPv6 address, for example 2001:db8::10.",i);return;}
+        const ip=ipValue(value);
+        if(!ip||ip.family!==(record.type==="A"?4:6)){
+          if(record.type==="A"&&/^\d+\.\d+\.\d+\.\d+$/.test(value.trim()))issue("values","{value} is not a valid IPv4 address: each part must be 0 to 255.".replace("{value}",value.trim()),i);
+          else issue("values",record.type==="A"?"Enter a valid IPv4 address (for example, 192.0.2.10).":"Enter a valid IPv6 address (for example, 2001:db8::10). IPv4-mapped addresses belong in A records.",i);
+          return;
+        }
+        canonical=ip.key;
+      }
+      if(record.type==="CNAME"){canonical=dnsName(value);if(!canonical){issue("values","Enter a valid DNS destination name.",i);return;}}
+      if(record.type!=="TXT"){if(seen.has(canonical)){issue("values","Remove the duplicate value.",i);return;}seen.add(canonical);}
+    });
+    if(!out.length){const first=draftIssue(record,records,oldKey);if(first)out.push(first);}
+    return out;
+  }
   class Model {
     constructor() { this.clear(); }
     clear() { this.base = this.current = this.pending = this.receipt = this.draftProvenance = this.currentProvenance = this.receiptProvenance = null; this.rrsetCapability = null; this.draft = []; this.edits = 0; this.formDirty = false; this.fresh = false; this.identityBlocked = false; this.observed = null; }
@@ -205,6 +238,6 @@
     }
     uncertain() { if (this.pending && this.pending.status !== "acknowledged") this.pending.status = "uncertain"; this.fresh = false; }
   }
-  const api = {draftIssue, Model, compare, revision, increment, recordsValid, envelope, operatorProvenance, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
+  const api = {draftIssue, draftIssues, Model, compare, revision, increment, recordsValid, envelope, operatorProvenance, exactDraftHandoff, changes, comparisonRows, key, clone, bytes, LIMIT, HANDOFF_AGE_MS, HANDOFF_KIND, HANDOFF_PROFILE};
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.SnapshotEditor = api;
 })(globalThis);

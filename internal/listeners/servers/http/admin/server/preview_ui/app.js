@@ -52,10 +52,14 @@
         for(const record of result.content.records){const tr=document.createElement("tr");for(const value of [record.name,record.type,record.values.join("; "),record.ttl_seconds+" s"]){const td=document.createElement("td");td.textContent=value;tr.append(td);}$("candidate-rows").append(tr);}}else{$("candidate").hidden=true;$("transfer").hidden=true;}
     }
     $("global-diagnostics").append(diagnostics(preview.diagnostics));$("source-entries").open=resultOperation!=="exact";
-    const start=page*S.PAGE,end=Math.min(start+S.PAGE,preview.entries.length);
-    $("page-info").textContent=preview.entries.length?"Entries "+(start+1)+"–"+end+" of "+preview.entries.length:"0 entries";
-    $("previous").disabled=page===0;$("next").disabled=end>=preview.entries.length;$("empty").hidden=preview.entries.length!==0;
-    for(const entry of preview.entries.slice(start,end)){
+    // C18: entries that need attention are shown first by default; each entry reads as a record
+    // row with a plain next step, and its raw source fields stay one click away.
+    const attention=preview.entries.filter(e=>e.classification!=="exact_record_candidate");$("attention-only").closest("label").hidden=!attention.length;
+    const entries=$("attention-only").checked&&attention.length?attention:preview.entries;
+    const start=page*S.PAGE,end=Math.min(start+S.PAGE,entries.length);
+    $("page-info").textContent=entries.length?"Entries "+(start+1)+"–"+end+" of "+entries.length:"0 entries";
+    $("previous").disabled=page===0;$("next").disabled=end>=entries.length;$("empty").hidden=entries.length!==0;
+    for(const entry of entries.slice(start,end)){
       const card=document.createElement("article"),heading=document.createElement("div"),title=document.createElement("h3"),classification=document.createElement("span"),fields=document.createElement("dl");
       card.className="entry";card.dataset.ordinal=String(entry.ordinal);heading.className="entry-heading";title.textContent="Entry "+entry.ordinal+" · source line "+entry.line;
       classification.className="classification "+entry.classification;classification.textContent=entry.classification==="exact_record_candidate"?"Potential record":"Needs attention";heading.append(title,classification);fields.className="fields";
@@ -64,7 +68,12 @@
         if(Object.hasOwn(entry.fields,key)){const text=document.createElement("code");text.textContent=JSON.stringify(entry.fields[key]);detail.append(text);}else{detail.className="missing";detail.textContent="Not supplied · source defaults not established";}
         fields.append(term,detail);
       }
-      card.append(heading,fields);if(entry.diagnostics?.length)card.append(diagnostics(entry.diagnostics));$("entries").append(card);
+      const f=entry.fields,row=document.createElement("p");row.className="entry-record";row.translate=false;
+      for(const value of [f.name,f.type||"A",f.address??f.cname??f.text??f["forward-to"]??"",f.ttl]){if(value===undefined||value==="")continue;const part=document.createElement("span");part.textContent=String(value);row.append(part);}
+      const raw=document.createElement("details"),rawTitle=document.createElement("summary");raw.className="entry-fields";rawTitle.textContent="Source fields";raw.append(rawTitle,fields);
+      card.append(heading);if(row.childNodes.length)card.append(row);
+      if(entry.classification!=="exact_record_candidate"){const next=document.createElement("p");next.className="entry-next";next.textContent="To fix: correct this line in the export and analyze again. To skip it: remove the line from the export.";card.append(next);}
+      if(entry.diagnostics?.length)card.append(diagnostics(entry.diagnostics));card.append(raw);$("entries").append(card);
     }
   }
   function showResults(){
@@ -99,11 +108,11 @@
       if(operation==="exact"){
         if(response.status!==200&&response.status!==422){status(httpMessage(response.status,payload),"error");return;}
         if(!S.validExact(payload,ruleset)||payload.compiled!==response.ok||response.status!==(payload.compiled?200:422))throw new Error("invalid_response");
-        result=payload;resultOperation=operation;page=0;provenance=(mode==="file"?"Original file bytes: "+file.name:"Pasted text: submitted UTF-8 bytes")+" · "+bytes(data.byteLength)+" · ruleset "+ruleset+" · "+payload.profile;verified=true;render();showResults();status(payload.compiled?"Exact conversion review loaded. Nothing applied.":"Exact conversion refused. Complete blockers loaded; no candidate produced.",payload.compiled?"success":"error");return;
+        result=payload;resultOperation=operation;page=0;$("attention-only").checked=true;provenance=(mode==="file"?"Original file bytes: "+file.name:"Pasted text: submitted UTF-8 bytes")+" · "+bytes(data.byteLength)+" · ruleset "+ruleset+" · "+payload.profile;verified=true;render();showResults();status(payload.compiled?"Exact conversion review loaded. Nothing applied.":"Exact conversion refused. Complete blockers loaded; no candidate produced.",payload.compiled?"success":"error");return;
       }
       if(!response.ok){status(httpMessage(response.status,payload),"error");return;}
       if(!S.validPreview(payload))throw new Error("invalid_response");
-      result=payload;resultOperation=operation;page=0;provenance=(mode==="file"?"Original file bytes: "+file.name:"Pasted text: submitted UTF-8 bytes")+" · "+bytes(data.byteLength);verified=true;render();showResults();status("Complete preview loaded. Nothing applied.","success");
+      result=payload;resultOperation=operation;page=0;$("attention-only").checked=true;provenance=(mode==="file"?"Original file bytes: "+file.name:"Pasted text: submitted UTF-8 bytes")+" · "+bytes(data.byteLength);verified=true;render();showResults();status("Complete preview loaded. Nothing applied.","success");
     }catch(error){if(gate.current(captured))status(({input_limit:"Source exceeds 1 MiB or file bytes changed. No preview sent.",invalid_text:"Pasted text contains invalid Unicode. No preview sent.",file_required:"Choose a local export file.",response_limit:"Response exceeds the preview limit. No preview accepted.",invalid_response:"Invalid preview response. No preview accepted."})[error.message]||"Preview failed or was interrupted. Source retained; retry explicitly.","error");}
     finally{if(gate.current(captured)){gate.finish(captured);controller=null;controls();}}
   });
@@ -130,7 +139,8 @@
   function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
   handoffChannel?.addEventListener("message",event=>{if(!transferRequest||!S.validHandoffResult(event.data,handoff,transferRequest))return;if(transferTimer)clearTimeout(transferTimer);transferTimer=null;const accepted=event.data.accepted;transferRequest="";$("transfer-status").textContent=accepted?"Added to the editor’s local changes. Review and apply there; no server records have been saved by this transfer.":({handoff_reconciliation_required:"Editor kept its existing local work; explicitly clear or finish it before another transfer.",handoff_identity_conflict:"Editor refused the candidate because its ruleset ID differs.",invalid_draft_handoff:"Editor rejected an invalid or stale transfer. Nothing changed.",editor_unavailable:"Editor is busy or not connected to a fresh snapshot. Nothing changed."})[event.data.error];controls();});
   $("transfer").addEventListener("click",()=>{if(!handoffChannel||transferRequest||!result||resultOperation!=="exact"||!result.compiled)return;try{transferRequest=randomID();handoffChannel.postMessage(S.draftHandoffMessage(result,handoff,transferRequest,location.pathname,Date.now()));$("transfer-status").textContent="Waiting for the originating editor to accept this candidate…";transferTimer=setTimeout(()=>{if(!transferRequest)return;transferRequest="";transferTimer=null;$("transfer-status").textContent="Transfer outcome unconfirmed. Inspect the originating editor draft before trying again.";controls();},5000);controls();}catch{$("transfer-status").textContent="Candidate could not be transferred. Nothing changed.";transferRequest="";controls();}});
-  $("previous").addEventListener("click",()=>{if(result&&page>0){page--;render();}});$("next").addEventListener("click",()=>{const preview=resultOperation==="exact"?result?.source:result;if(preview&&(page+1)*S.PAGE<preview.entries.length){page++;render();}});
+  $("previous").addEventListener("click",()=>{if(result&&page>0){page--;render();}});$("next").addEventListener("click",()=>{const preview=resultOperation==="exact"?result?.source:result;const shownEntries=preview&&($("attention-only").checked&&preview.entries.some(e=>e.classification!=="exact_record_candidate")?preview.entries.filter(e=>e.classification!=="exact_record_candidate"):preview.entries);if(preview&&(page+1)*S.PAGE<shownEntries.length){page++;render();}});
+  $("attention-only").addEventListener("change",()=>{page=0;render();});
   window.addEventListener("pagehide",()=>{handoffChannel?.close();disconnect(false);$("source").value="";$("file").value="";});
   window.addEventListener("pageshow",event=>{if(event.persisted)disconnect();});
   render();controls();

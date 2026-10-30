@@ -25,7 +25,7 @@
   --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s7:32px;--s8:40px;
 
   /* Shell metrics */
-  --topbar-h:56px;--side-w:240px;--control-h:38px;--control-h-touch:44px;--content-max:1500px;
+  --topbar-h:56px;--side-w:240px;--control-h:38px;--control-h-touch:44px;--content-max:1500px;--records-sticky-h:0px;
 
   /* Motion */
   --ease:cubic-bezier(.2,.7,.2,1);--dur-fast:140ms;--dur:240ms;

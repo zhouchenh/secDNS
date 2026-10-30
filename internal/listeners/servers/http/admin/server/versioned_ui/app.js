@@ -82,7 +82,8 @@
     const work=model.dirty()||!!model.pending||model.identityBlocked||(!!model.base&&!model.fresh);
     $("pending-actions").hidden=!work;$("change-summary").hidden=!work;$("change-review").hidden=!work;
     $("local-work-warning").hidden=!(model.dirty()||model.pending);
-    $("workspace").classList.toggle("editing",!$("record-editor").hidden);
+    $("workspace").classList.toggle("editing",!$("record-editor").hidden);$("editor-scrim").hidden=$("record-editor").hidden;document.body.classList.toggle("sheet-open",!$("record-editor").hidden);
+    $("delete-in-editor").hidden=!selected;$("delete-in-editor").disabled=locked();
     const changes=S.changes(model.base?.records||[],model.draft);pendingCounts(changes);$("review").className=changes.removed>0?"danger-solid":"primary";$("change-count").textContent=model.pending?.status==="uncertain"?"Change outcome uncertain":model.formDirty?"Unfinished record edit — add it to changes before review":`Unsaved changes: ${changes.added} added / ${changes.changed} changed / ${changes.removed} removed`;
     for (const c of $("editor").querySelectorAll("input, select, textarea, button")) c.disabled = locked();
     $("name").disabled = $("type").disabled = locked() || !!selected;
@@ -109,31 +110,118 @@
     }
     if (!box.children.length) { const none=document.createElement("span");none.className="count-chip";none.textContent=model.formDirty?"Unfinished record edit":"No changes yet";box.append(none); }
   }
+  let valueSeq=0;
   function valueRow(text) {
-    const row = document.createElement("div"); row.className = "value-row";
-    const input = document.createElement("textarea"); input.value = text; input.setAttribute("aria-label", "Record value"); input.spellcheck = false;
+    const row = document.createElement("div"); row.className = "value-row"; const n=++valueSeq;
+    const input = document.createElement("textarea"); input.value = text; input.setAttribute("aria-label", "Record value"); input.spellcheck = false; input.setAttribute("autocapitalize","off"); input.id="value-"+n;
     const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove";
     remove.addEventListener("click", () => { if (locked()) return; row.remove(); model.touch(); controls(); });
-    row.append(input,remove); $("values").append(row);
+    const error=document.createElement("p");error.className="field-error";error.id="value-error-"+n;error.hidden=true;
+    const line=document.createElement("div");line.className="value-line";line.append(input,remove);row.append(line,error); $("values").append(row);
   }
-  function clearRecordError(){ $("record-error").hidden=true;$("record-error").textContent="";for(const field of $("editor").querySelectorAll("[aria-invalid]")){field.removeAttribute("aria-invalid");const described=(field.getAttribute("aria-describedby")||"").split(/\s+/).filter(id=>id&&id!=="record-error");if(described.length)field.setAttribute("aria-describedby",described.join(" "));else field.removeAttribute("aria-describedby");}}
+  // C33: every invalid field is marked (aria-invalid, its own message linked by aria-describedby)
+  // and listed in an error summary whose entries move focus to the field.
+  const FIELD_LABELS={name:"DNS name",ttl:"TTL (seconds)",expiry:"RFC3339 timestamp",values:"Value {n}"};
+  function clearRecordError(){ $("record-error").hidden=true;$("record-error").replaceChildren();for(const e of $("editor").querySelectorAll(".field-error")){e.hidden=true;e.replaceChildren();}for(const field of $("editor").querySelectorAll("[aria-invalid]")){field.removeAttribute("aria-invalid");const described=(field.getAttribute("aria-describedby")||"").split(/\s+/).filter(id=>id&&id!=="record-error"&&!/-error(-\d+)?$/.test(id));if(described.length)field.setAttribute("aria-describedby",described.join(" "));else field.removeAttribute("aria-describedby");}}
+  function showIssues(issues){
+    clearRecordError();const summary=$("record-error"),list=document.createElement("ul"),marked=[];
+    for(const issue of issues){
+      const field=issue.field==="values"?$("values").querySelectorAll("textarea")[issue.index||0]:$(issue.field);
+      const target=field&&!field.disabled?field:$("name");const error=issue.field==="values"?target.closest(".value-row")?.querySelector(".field-error"):$(issue.field+"-error");
+      if(error&&!error.childNodes.length){const mark=document.createElement("span");mark.className="field-error-icon";mark.setAttribute("aria-hidden","true");mark.textContent="!";const text=document.createElement("span");text.textContent=issue.text;error.append(mark,text);error.hidden=false;}
+      if(target&&!marked.includes(target)){target.setAttribute("aria-invalid","true");target.setAttribute("aria-describedby",[...(target.getAttribute("aria-describedby")||"").split(/\s+/).filter(Boolean),error?.id||"record-error"].join(" "));marked.push(target);}
+      const item=document.createElement("li"),link=document.createElement("a");link.href="#"+(target?.id||"name");
+      const where=document.createElement("span");where.textContent=(FIELD_LABELS[issue.field]||FIELD_LABELS.name).replace("{n}",String((issue.index||0)+1));const what=document.createElement("span");what.textContent=issue.text;link.append(where,document.createTextNode(": "),what);
+      link.addEventListener("click",ev=>{ev.preventDefault();target?.focus();});item.append(link);list.append(item);
+    }
+    const title=document.createElement("strong");title.textContent=issues.length===1?"Fix 1 problem before adding this record":"Fix {n} problems before adding this record".replace("{n}",String(issues.length));
+    summary.append(title,list);summary.hidden=false;controls();summary.focus();
+  }
+  const VALUE_HINTS={A:"One IPv4 address per value, for example 192.0.2.10.",AAAA:"One IPv6 address per value, for example 2001:db8::10.",CNAME:"Exactly one destination name.",TXT:"Each value is one TXT string; their order is kept."};
+  function valueHint(){$("values-hint").textContent=VALUE_HINTS[$("type").value]||"";}
+  let editorOpener=null;
   function edit(record = null, force = false, open = false) {
     if (!force && model.formDirty && !confirm("Discard unfinished record fields? The staged snapshot draft is retained.")) return;
     clearRecordError();
+    if(open&&$("record-editor").hidden)editorOpener=document.activeElement;
     selected = record ? S.key(record) : null; model.formDirty = false;$("record-editor").hidden=!open;
     $("editor-title").textContent = record ? "Edit record" : "New record";$("stage").textContent=record?"Update changes":"Add to changes";
     $("name").value = record?.name || ""; $("type").value = record?.type || "A"; $("ttl").value = String(record?.ttl_seconds ?? 300);
-    $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);
+    $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);valueHint();
     $("expiry-mode").value = record?.expires_at ? "absolute" : "permanent"; $("expiry").value = record?.expires_at || ""; controls();if(open)$("editor-title").focus();
   }
+  function closeEditor(){if(model.formDirty&&!confirm("Discard unfinished fields? Staged changes are retained."))return;const back=editorOpener;editorOpener=null;edit(null,true);if(back?.isConnected&&!back.disabled&&back.getClientRects().length)back.focus();else $("new-record").focus();}
   window.addEventListener("beforeunload",event=>{if((model.dirty()||model.pending)&&!window.secDNSAgent?.leaving){event.preventDefault();event.returnValue="";}});
-  $("close-editor").addEventListener("click",()=>{if(model.formDirty&&!confirm("Discard unfinished fields? Staged changes are retained."))return;edit(null,true);$("new-record").focus();});
-  $("record-type-filter").addEventListener("change",render);
-  $("pending-only").addEventListener("change",render);
-  $("reset-filters").addEventListener("click",()=>{$("filter").value="";$("record-type-filter").value="";$("pending-only").checked=false;render();$("filter").focus();});
+  $("close-editor").addEventListener("click",closeEditor);
+  $("editor-scrim").addEventListener("click",closeEditor);
+  $("record-editor").addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("record-editor").hidden){e.preventDefault();closeEditor();}});
+  $("type").addEventListener("change",valueHint);
+  $("delete-in-editor").addEventListener("click",()=>{const record=selected&&model.draft.find(r=>S.key(r)===selected);if(!record||locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:$("delete-in-editor")};deleteDetails(record);$("delete-dialog").showModal();$("delete-cancel").focus();});
+  // C15: filters, sort and the visible page are kept in the address (query) so a reload or a
+  // shared link shows the same list; unrelated query parameters are left untouched.
+  const PAGE=50;let shown=PAGE;
+  function readListState(){const q=new URLSearchParams(location.search);$("filter").value=q.get("q")||"";const type=q.get("type")||"";if(["A","AAAA","CNAME","TXT"].includes(type))$("record-type-filter").value=type;$("pending-only").checked=q.get("pending")==="1";const sort=q.get("sort")||"";if([...$("record-sort").options].some(o=>o.value===sort))$("record-sort").value=sort;}
+  function writeListState(){try{const url=new URL(location.href);const set=(k,v)=>{if(v)url.searchParams.set(k,v);else url.searchParams.delete(k);};set("q",$("filter").value);set("type",$("record-type-filter").value);set("pending",$("pending-only").checked?"1":"");set("sort",$("record-sort").value);if(url.href!==location.href)history.replaceState(history.state,"",url.href);}catch{}}
+  const listChanged=()=>{shown=PAGE;writeListState();render();};
+  $("record-type-filter").addEventListener("change",listChanged);
+  $("pending-only").addEventListener("change",listChanged);
+  $("record-sort").addEventListener("change",listChanged);
+  $("reset-filters").addEventListener("click",()=>{$("filter").value="";$("record-type-filter").value="";$("pending-only").checked=false;listChanged();$("filter").focus();});
+  $("show-more").addEventListener("click",()=>{const next=shown;shown+=PAGE;render();$("rows").querySelectorAll("tr")[next]?.querySelector("button")?.focus();});
+  $("empty-new").addEventListener("click",()=>$("new-record").click());
+  $("empty-import").addEventListener("click",()=>$("open-import").click());
+  const svgIcon=(path,size=16)=>{const s=document.createElementNS("http://www.w3.org/2000/svg","svg");s.setAttribute("viewBox","0 0 24 24");s.setAttribute("width",size);s.setAttribute("height",size);s.setAttribute("aria-hidden","true");s.setAttribute("focusable","false");const p=document.createElementNS("http://www.w3.org/2000/svg","path");p.setAttribute("d",path);s.append(p);return s;};
+  function copyButton(text){
+    const b=document.createElement("button");b.type="button";b.className="icon-button copy-name";b.setAttribute("aria-label","Copy name");b.title="Copy name";b.append(svgIcon("M9 9h10v10H9zM5 15V5h10",16));
+    b.addEventListener("click",async e=>{e.stopPropagation();try{await navigator.clipboard.writeText(text);b.classList.add("copied");status("Name copied.","success");setTimeout(()=>b.classList.remove("copied"),1500);}catch{status("The name could not be copied. Select it and copy it instead.","error");}});
+    return b;
+  }
+  // Loading and error states (C32/C39): the page frame stays; a failed load keeps the last good
+  // records, says why, and offers Try again. The connection indicator says what is true.
+  let loadError=null,loading=false,lastLoaded="";
+  function connectionState(){const state=loading&&!model.base?"checking":loadError?"error":connected&&model.fresh?"ok":connected?"stale":"unknown";
+    $("connection").textContent={checking:"Loading records…",error:"DNS server unreachable",ok:"Records loaded",stale:"Refresh needed",unknown:"Disconnected"}[state];$("connection").dataset.state=state;
+    window.dispatchEvent(new CustomEvent("secdns:connection",{detail:{state}}));}
+  function recordsState(){
+    const box=$("records-state");box.replaceChildren();
+    if(loading&&!model.base){const l=document.createElement("div");l.className="loading-state";l.setAttribute("role","status");const spin=document.createElement("span");spin.className="spinner";const t=document.createElement("span");t.textContent="Loading records…";l.append(spin,t);
+      const sk=document.createElement("div");sk.className="skeleton-list";sk.setAttribute("aria-hidden","true");for(let i=0;i<4;i++){const r=document.createElement("span");r.className="skeleton-row";sk.append(r);}box.append(l,sk);return;}
+    if(!loadError)return;
+    const card=document.createElement("div");card.className="error-state";card.setAttribute("role","alert");const head=document.createElement("div");head.className="state-head";const h=document.createElement("h2");h.textContent=model.base?"Records could not be refreshed":"Records could not be loaded";head.append(svgIcon("M12 8v5m0 4h.01M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z",20),h);
+    const cause=document.createElement("p");cause.textContent=message(loadError);card.append(head,cause);
+    if(model.base&&lastLoaded){const last=document.createElement("p");last.className="hint";stamp(last,lastLoaded,"Showing the records last loaded {time}. Your unsaved changes are kept.");card.append(last);}
+    else if(model.base){const last=document.createElement("p");last.className="hint";last.textContent="Showing the records loaded earlier. Your unsaved changes are kept.";card.append(last);}
+    const actions=document.createElement("div");actions.className="actions";
+    const again=document.createElement("button");again.type="button";again.className="primary";again.id="records-retry";again.append(svgIcon("M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4",16),document.createTextNode("Try again"));again.addEventListener("click",retryLoad);actions.append(again);
+    if(model.dirty()||model.pending){const link=document.createElement("a");link.href="#pending-actions";link.textContent="Go to your unsaved changes";actions.append(link);}
+    card.append(actions);box.append(card);
+  }
+  async function retryLoad(){if(busy)return;if(connected){$("refresh").click();return;}if(window.secDNSAgent?.active){await loadAfterSignIn();$("records-retry")?.focus();}}
+  function renderRow(record,removed){
+    const k=S.key(record),tr=document.createElement("tr"),info=document.createElement("td"),title=document.createElement("div");tr.dataset.recordKey=k;title.className="record-name";breakable(title,record.name);
+    const nameLine=document.createElement("div");nameLine.className="record-name-line";nameLine.append(title,copyButton(record.name));info.append(nameLine);info.className="record-info";
+    const original=model.base?.records.find(r=>S.key(r)===k),pending=!removed&&(!original||JSON.stringify(original)!==JSON.stringify(record));
+    if(removed){tr.className="row-removed";const marker=document.createElement("span");marker.className="draft-marker removal-marker";marker.textContent="Will be deleted";info.append(marker);}
+    else if(pending){const mark=document.createElement("span");mark.className="draft-marker";mark.textContent="Pending";info.append(mark);}
+    const typeCell=document.createElement("td"),valueCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;typeCell.translate=false;typeCell.className="record-type";valueCell.className="record-values";ttlCell.className="record-ttl";
+    for (const value of record.values) {const d=document.createElement("div");d.className="record-value";if(value==="")d.textContent="(empty string)";else if(removed)d.textContent=value;else if(record.type==="A"||record.type==="AAAA"){d.classList.add("record-ip");d.textContent=value;}else if(record.type==="CNAME"){d.classList.add("record-fqdn");breakable(d,value);}else d.textContent=value;valueCell.append(d);}
+    if (!removed&&record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";stamp(d,record.expires_at,expired?"Expired · retained {time}":"Expires {time}");valueCell.append(d);}
+    ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
+    const actions=document.createElement("td");actions.className="record-actions";
+    if(removed||pending)actions.append(undoButton(record));
+    if(!removed){
+      const change=document.createElement("button"),remove=document.createElement("button");change.type="button";remove.type="button";change.className="row-edit";remove.className="row-delete";
+      const label=document.createElement("span");label.className="btn-label";label.textContent="Edit";change.append(label,svgIcon("M9 6l6 6-6 6",18));remove.textContent="Delete";
+      change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
+      change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});
+      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:k,record:JSON.stringify(record),epoch,opener:remove};deleteDetails(record);$("delete-dialog").showModal();$("delete-cancel").focus();});
+      actions.append(change,remove);
+    }
+    tr.append(actions);return tr;
+  }
   function render() {
     $("workspace").hidden = !model.base;
-    $("connection").textContent = connected ? (model.fresh?"Records loaded":"Refresh needed") : "Disconnected";
+    connectionState();recordsState();
     $("disconnect").hidden = !connected || !!window.secDNSAgent?.active; $("login").hidden = connected || document.body.dataset.recordGateway === "true";
     $("base-version").textContent = "Base revision " + (model.base?.revision || "—");
     $("current-version").textContent = "Observed current " + (model.current?.revision || "—");
@@ -142,36 +230,36 @@
     $("receipt").textContent = model.receipt ? "Acknowledged operation " + model.receipt.operation_id + " at revision " + model.receipt.revision + " · " + model.receipt.committed_at + ". This receipt is not a current-state snapshot." : "";
     $("saved-details").hidden=!model.receipt;
     const origin=model.draftProvenance;$("draft-provenance-details").hidden=!origin;$("draft-provenance").textContent=origin?"Operator-supplied strict candidate · ruleset "+origin.rulesetID+" · source SHA-256 "+origin.sourceSHA256+" · content SHA-256 "+origin.contentSHA256+" · "+(model.edits===origin.editCounter?"unchanged after transfer; the tuple will be submitted":"locally edited; the original tuple will not be submitted")+". The source and profile are not authenticated by the snapshot server.":"";
-    $("count").textContent = String(model.draft.length); $("rows").replaceChildren();
-    const filter = $("filter").value.toLowerCase(), typeFilter=$("record-type-filter").value; let count = 0;
+    const active=document.activeElement,focusKey=active?.closest?.("#rows tr")?.dataset.recordKey,focusClass=active?.classList?.[0];
+    $("rows").replaceChildren();
+    const filter = $("filter").value.toLowerCase(), typeFilter=$("record-type-filter").value, onlyPending=$("pending-only").checked;
+    const matches=record=>(!typeFilter||record.type===typeFilter)&&[record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter));
+    const items=[];
     for (const record of model.draft) {
-      if (typeFilter && record.type!==typeFilter) continue;
-      if ($("pending-only").checked) {const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(original&&JSON.stringify(original)===JSON.stringify(record))continue;}
-      if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
-      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div");tr.dataset.recordKey=S.key(record); title.className = "record-name"; breakable(title, record.name); info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
-      for (const value of record.values) {const d = document.createElement("div");d.className="record-value";if(value==="")d.textContent="(empty string)";else if(record.type==="A"||record.type==="AAAA"){d.classList.add("record-ip");d.textContent=value;}else if(record.type==="CNAME"){d.classList.add("record-fqdn");breakable(d,value);}else d.textContent=value;valueCell.append(d);}
-      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";stamp(d,record.expires_at,expired?"Expired · retained {time}":"Expires {time}");valueCell.append(d);}
-      const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;typeCell.translate=false;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
-      const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
-      if(!original||JSON.stringify(original)!==JSON.stringify(record))actions.append(undoButton(record));
-      change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});
-      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:remove};deleteDetails(record);$("delete-dialog").showModal();$("delete-cancel").focus();});
-      actions.append(change,remove);tr.append(actions);$("rows").append(tr);
+      if (!matches(record)) continue;
+      if (onlyPending) {const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(original&&JSON.stringify(original)===JSON.stringify(record))continue;}
+      items.push({record,removed:false});
     }
+    const count=items.length;
     // Records marked for deletion stay listed (struck through) until the change is applied, each with Undo.
-    if (model.base) for (const record of model.base.records) {
-      if (model.draft.some(r=>S.key(r)===S.key(record))) continue;
-      if (typeFilter && record.type!==typeFilter) continue;
-      if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue;
-      const tr=document.createElement("tr");tr.className="row-removed";tr.dataset.recordKey=S.key(record);
-      const info=document.createElement("td"),title=document.createElement("div");title.className="record-name";breakable(title,record.name);const marker=document.createElement("span");marker.className="draft-marker removal-marker";marker.textContent="Will be deleted";info.append(title,marker);
-      const typeCell=document.createElement("td");typeCell.textContent=record.type;typeCell.translate=false;const valueCell=document.createElement("td");for(const value of record.values){const d=document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;valueCell.append(d);}
-      const ttlCell=document.createElement("td");ttlCell.textContent=record.ttl_seconds+" s";const actions=document.createElement("td");actions.append(undoButton(record));tr.append(info,typeCell,valueCell,ttlCell,actions);$("rows").append(tr);
-    }
+    if (model.base) for (const record of model.base.records) { if (model.draft.some(r=>S.key(r)===S.key(record))||!matches(record)) continue; items.push({record,removed:true}); }
+    const sort=$("record-sort").value,isPending=x=>{if(x.removed)return 0;const o=model.base?.records.find(r=>S.key(r)===S.key(x.record));return !o||JSON.stringify(o)!==JSON.stringify(x.record)?0:1;};
+    if(sort==="name")items.sort((a,b)=>a.record.name.localeCompare(b.record.name)||a.record.type.localeCompare(b.record.type));
+    else if(sort==="type")items.sort((a,b)=>a.record.type.localeCompare(b.record.type)||a.record.name.localeCompare(b.record.name));
+    else if(sort==="ttl")items.sort((a,b)=>a.record.ttl_seconds-b.record.ttl_seconds||a.record.name.localeCompare(b.record.name));
+    else if(sort==="pending")items.sort((a,b)=>isPending(a)-isPending(b));
+    // Pending and removed rows are always listed, even beyond the first page, so Undo stays reachable.
+    const visible=items.filter((item,i)=>i<shown||item.removed||isPending(item)===0);
+    for(const item of visible)$("rows").append(renderRow(item.record,item.removed));
+    const more=items.length-visible.length;$("show-more-wrap").hidden=more<=0;$("show-more").textContent="Show {n} more".replace("{n}",String(Math.min(more,PAGE)));$("show-more-info").textContent="Showing {shown} of {total}".replace("{shown}",String(visible.length)).replace("{total}",String(items.length));
+    if(focusKey&&(document.activeElement===document.body||!document.activeElement)){const row=$("rows").querySelector('tr[data-record-key="'+CSS.escape(focusKey)+'"]');const again=row&&((focusClass&&row.querySelector("."+CSS.escape(focusClass)))||row.querySelector("button"));again?.focus();}
     $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;
-    $("results-count").textContent=`${count} of ${model.draft.length} records`+($("pending-only").checked?" | Pending changes, including records that will be deleted.":" | Changes are reviewed before they are applied.");
-    $("reset-filters").hidden=!filter&&!typeFilter&&!$("pending-only").checked;
-    $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No records match these filters. Reset filters to see all records.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
+    $("results-count").textContent=`${count} of ${model.draft.length} records`+(onlyPending?" | Pending changes, including records that will be deleted.":" | Changes are reviewed before they are applied.");
+    $("reset-filters").hidden=!filter&&!typeFilter&&!onlyPending;
+    // C37: no records at all is an empty state with its two ways forward; filters are not shown.
+    const none=!!model.base&&!model.draft.length&&!model.base.records.length;
+    $("records-empty").hidden=!none;document.querySelector(".console-record-tools").hidden=none;$("results-count").hidden=none;document.querySelector(".console-record-table").hidden=none;
+    $("empty").hidden=none||items.length>0;$("empty").textContent=model.draft.length?"No records match these filters. Reset filters to see all records.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
   function undoButton(record) {
@@ -210,16 +298,19 @@
     } finally {clearTimeout(timeout);requests.delete(controller); }
   }
   // Long DNS names may wrap only after a dot (never inside a label); addresses never wrap.
-  function breakable(el, text) {el.textContent="";const parts=String(text).split(".");parts.forEach((part,i)=>{el.append(part+(i<parts.length-1?".":""));if(i<parts.length-1&&part!=="")el.append(document.createElement("wbr"));});}
+  // Long DNS names wrap only after a dot: each label is one unbreakable unit (never split at a
+  // hyphen); an over-long label is cut with an ellipsis and the full name is in the title and Copy.
+  function breakable(el, text) {el.textContent="";const parts=String(text).split(".");parts.forEach((part,i)=>{const label=document.createElement("span");label.className="dns-label";label.textContent=part+(i<parts.length-1?".":"");if(label.textContent)el.append(label);if(i<parts.length-1&&part!=="")el.append(document.createElement("wbr"));});el.title=String(text);}
   async function fetchCurrent() {
     const id=++getID, captured=epoch;
-    try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;const previousBase=model.base;model.accept(result.data,result.provenance,result.rrsetCapability);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
-    catch(e){if(captured===epoch&&id===getID){model.fresh=false;if(e.message==="authentication"){if(e.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();else disconnect(false);status(message(e),"error");}render();throw e;}return false;}
+    loading=true;connectionState();if(!model.base)recordsState();
+    try{const result=await request("GET");if(captured!==epoch||id!==getID)return false;loading=false;loadError=null;lastLoaded=new Date().toISOString();const previousBase=model.base;model.accept(result.data,result.provenance,result.rrsetCapability);if(model.base!==previousBase&&!model.formDirty)edit(null,true);render();return true;}
+    catch(e){if(captured===epoch&&id===getID){loading=false;if(e.message!=="authentication"&&e.name!=="AbortError")loadError=e;model.fresh=false;if(e.message==="authentication"){if(e.status===401&&window.secDNSAgent?.active)window.secDNSAgent.expire();else disconnect(false);status(message(e),"error");}render();throw e;}return false;}
   }
   function disconnect(show=true) {
     epoch++;getID++;for(const r of requests)r.abort();requests.clear();
     if(model.pending?.status==="sending")model.uncertain();
-    token="";$("token").value="";connected=false;busy=false;model.fresh=false;$("review-dialog").close();$("delete-dialog").close();render();if(show)status("Disconnected. Local draft and operation recovery remain in this page.");
+    token="";$("token").value="";connected=false;busy=false;model.fresh=false;loading=false;$("review-dialog").close();$("delete-dialog").close();render();if(show)status("Disconnected. Local draft and operation recovery remain in this page.");
   }
   $("connect-form").addEventListener("submit",async e=>{
     e.preventDefault();if(busy)return;const entered=$("token").value.trim();$("token").value="";if(!entered)return;try{await window.secDNSAgent?.switchToLegacy();}catch{status("Could not end the agent session. Legacy access was not started.","error");return;}token=entered;
@@ -230,7 +321,8 @@
   });
   $("disconnect").addEventListener("click",()=>{if(window.secDNSAgent?.active)void window.secDNSAgent.logout().catch(()=>{});disconnect();});
  window.addEventListener("agentexpired",()=>{disconnect(false);status("Authentication session ended. Local draft and pending recovery are preserved.","error");});
- window.addEventListener("agentconnected",async()=>{if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;if(restoreDraft())return;status(model.pending?"Signed in. Pending changes preserved; nothing was submitted.":"Records loaded.","success",!model.pending);}catch(e){status(message(e),"error");}finally{render();}});
+ async function loadAfterSignIn(){if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;if(restoreDraft())return;status(model.pending?"Signed in. Pending changes preserved; nothing was submitted.":"Records loaded.","success",!model.pending);}catch(e){if(loadError)status("","",true);else status(message(e),"error");}finally{render();}}
+ window.addEventListener("agentconnected",loadAfterSignIn);
   // Unsaved work kept in this tab while the owner confirmed with WithMy ID (or signed in again):
   // the draft, its base, an unfinished record form and an uncertain submitted change.
   window.secDNSAgent?.drafts?.register("records",()=>{
@@ -266,7 +358,7 @@
   window.addEventListener("pagehide",()=>{importChannel?.close();importChannel=null;importChannelID="";disconnect(false);});
   window.addEventListener("pageshow",e=>{if(e.persisted)disconnect();});
   window.addEventListener("beforeunload",e=>{if((model.dirty()||model.pending)&&!window.secDNSAgent?.leaving){e.preventDefault();e.returnValue="";}});
-  $("filter").addEventListener("input",render);
+  $("filter").addEventListener("input",listChanged);
   $("new-record").addEventListener("click",()=>edit(null,false,true));
   $("add-value").addEventListener("click",()=>{if(locked())return;valueRow("");model.touch();controls();});
   $("editor").addEventListener("input",()=>{model.touch();controls();});
@@ -275,9 +367,10 @@
     e.preventDefault();if(locked())return;clearRecordError();
     const record={name:$("name").value,type:$("type").value,values:[...$("values").querySelectorAll("textarea")].map(v=>v.value),ttl_seconds:Number($("ttl").value)};
     if($("expiry-mode").value==="absolute")record.expires_at=$("expiry").value;
-    try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the proposal before sending.","success");}catch(error){if(error.issue){const issue=error.issue,field=issue.field==="values"?$("values").querySelectorAll("textarea")[issue.index||0]:$(issue.field);$("record-error").textContent=issue.text;$("record-error").hidden=false;if(field){field.setAttribute("aria-invalid","true");field.setAttribute("aria-describedby",[...(field.getAttribute("aria-describedby")||"").split(/\s+/).filter(Boolean),"record-error"].join(" "));field.focus();}controls();}else status(message(error),"error");}
+    const issues=S.draftIssues(record,model.draft,selected);if(issues.length){showIssues(issues);return;}
+    try{model.stage(record,selected);edit(null,true);render();status("Record staged locally. Review the proposal before sending.","success");}catch(error){if(error.issue)showIssues([error.issue]);else status(message(error),"error");}
   });
-  $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Records refreshed. The change is still unconfirmed; use Check submitted change to send the identical request and check its result safely.":model.pending?.status==="acknowledged"?"Changes saved. Review your remaining local edits before saving again.":model.dirty()?"Records refreshed. Your unsaved edits are preserved.":"Records refreshed.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
+  $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Records refreshed. The change is still unconfirmed; use Check submitted change to send the identical request and check its result safely.":model.pending?.status==="acknowledged"?"Changes saved. Review your remaining local edits before saving again.":model.dirty()?"Records refreshed. Your unsaved edits are preserved.":"Records refreshed.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch){if(loadError)status("","",true);else status(message(e),"error");}}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
   $("clear").addEventListener("click",()=>{if(confirm("Clear all local drafts, pending request identity and receipt, then disconnect? This cannot cancel or undo any server operation. Closing or reloading also loses this recovery information.")){disconnect(false);model.clear();edit(null,true);render();status("Local work cleared. Reconnect explicitly to load a server snapshot.");}});
   function reviewValues(record) {
@@ -351,5 +444,7 @@
   }
   $("review-confirm").addEventListener("click",()=>{if(!reviewGuardMet())return;void send(false);});$("retry").addEventListener("click",()=>void send(true));
   $("show-unchanged").addEventListener("change",renderComparison);
-  edit(null,true);render();
+  readListState();edit(null,true);render();
+  // The sticky records toolbar's height positions the sticky table header below it.
+  if(typeof ResizeObserver==="function")new ResizeObserver(()=>document.body.style.setProperty("--records-sticky-h",$("records-sticky").offsetHeight+"px")).observe($("records-sticky"));
 })();

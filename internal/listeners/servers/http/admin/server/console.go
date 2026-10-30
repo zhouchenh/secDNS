@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"html"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -109,7 +110,7 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 		role = "DNS server"
 	}
 	if h.recordGatewayEnabled() {
-		role = "Connected DNS server"
+		role = "Remote DNS server"
 	}
 	if h.FollowerStatusOnly {
 		role = "Read-only follower"
@@ -122,7 +123,7 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 	footer := "This instance only"
 	if active == "nodes" || active == "health" || active == "routing" {
 		role = "Candidate cluster"
-		footer = "3 managed nodes"
+		footer = strconv.Itoa(len(nodeIDs)) + " managed nodes"
 	}
 	brand := `<div class="console-brand" translate="no"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">secDNS</span></div>`
 	sidebar := `<aside class="console-sidebar">` + brand + `<nav aria-label="Main navigation">` + links + `</nav>` + account + `<div class="console-sidebar-foot"><strong>` + role + `</strong><span>` + footer + `</span></div></aside>`
@@ -146,5 +147,11 @@ func (h *HTTPAdminServer) consolePage(data []byte, base, active string) []byte {
 		gateway = ` data-record-gateway="true"`
 	}
 	data = bytes.Replace(data, []byte("<body>"), []byte(`<body class="console-layout" data-console-page="`+active+`"`+gateway+`>`+sidebar), 1)
+	// The header carries the section name before any script runs (C42); console.js replaces it
+	// with the full top bar.
+	sections := map[string]string{"records": "DNS records", "import": "Import records", "nodes": "Nodes", "health": "DNS health", "routing": "Routing", "followers": "Local replication"}
+	if label, ok := sections[active]; ok {
+		data = bytes.Replace(data, []byte("<header></header>"), []byte(`<header><strong class="topbar-title">`+label+`</strong></header>`), 1)
+	}
 	return data
 }
