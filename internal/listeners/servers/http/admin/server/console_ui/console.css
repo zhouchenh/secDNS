@@ -72,8 +72,8 @@ button.danger-solid:disabled{opacity:.55}
 .console-skip:focus-visible{top:var(--s2)}
 .console-sidebar{position:fixed;inset:0 auto 0 0;width:var(--side-w);z-index:30;display:flex;flex-direction:column;background:var(--bg-elev);border-right:1px solid var(--border);padding:14px 12px;overflow-y:auto}
 .console-brand{display:flex;align-items:center;gap:10px;padding:6px 10px;margin-bottom:var(--s3);height:44px}
-.brand-mark{width:26px;height:26px;border-radius:7px;flex:none;position:relative;background:radial-gradient(120% 120% at 0% 0%,oklch(0.85 0.16 300),transparent 55%),radial-gradient(120% 120% at 100% 100%,oklch(0.55 0.20 270),transparent 55%),oklch(0.45 0.18 285)}
-.brand-mark::after{content:"";position:absolute;inset:7px;background:oklch(1 0 0 / .92);border-radius:3px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+.brand-mark{width:26px;height:26px;border-radius:7px;flex:none;position:relative;background:radial-gradient(120% 120% at 0% 0%,var(--brand-1),transparent 55%),radial-gradient(120% 120% at 100% 100%,var(--brand-2),transparent 55%),var(--brand-3)}
+.brand-mark::after{content:"";position:absolute;inset:7px;background:var(--brand-diamond);border-radius:3px;clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
 .brand-name{font-weight:var(--fw-semibold);font-size:var(--fs-lg);letter-spacing:-.01em;color:var(--ink)}
 .console-sidebar nav{display:flex;flex-direction:column;gap:2px}
 .console-label{font-size:var(--fs-xs);font-weight:var(--fw-semibold);color:var(--muted);margin:var(--s4) 12px 6px;letter-spacing:.02em}
@@ -110,7 +110,7 @@ button.danger-solid:disabled{opacity:.55}
 .user-menu{position:relative;flex:none}
 .user-menu-button{gap:8px;min-height:40px;padding:4px 10px 4px 4px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--ink-2)}
 .user-menu-button>svg{color:var(--muted)}
-.avatar{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--avatar);color:white;font-size:var(--fs-sm);font-weight:var(--fw-semibold);line-height:1}
+.avatar{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;background:var(--avatar);color:var(--avatar-fg);font-size:var(--fs-sm);font-weight:var(--fw-semibold);line-height:1}
 .user-menu.anonymous .avatar{background:var(--surface-2);color:var(--muted)}
 .who{display:grid;text-align:left;line-height:1.2;min-width:0;max-width:22ch}
 .who-name{font-size:var(--fs-sm);font-weight:var(--fw-semibold);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
