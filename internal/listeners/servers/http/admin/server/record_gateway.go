@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -136,6 +137,18 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
+	confirmHeader := ""
+	if method == "POST" && path == "/snapshot" {
+		var code string
+		if body, confirmHeader, code = h.gatewayRemovalConfirmation(r, body); code != "" {
+			status := http.StatusConflict
+			if code == "record_authority_unavailable" {
+				status = http.StatusBadGateway
+			}
+			agentError(w, status, code)
+			return
+		}
+	}
 	req, err := http.NewRequestWithContext(r.Context(), method, h.RecordAuthorityURL+path, bytes.NewReader(body))
 	if err != nil {
 		agentError(w, 502, "record_authority_unavailable")
@@ -145,6 +158,9 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 	req.Header.Set("Authorization", "Bearer "+h.recordAuthorityCredential)
 	if method == "POST" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if confirmHeader != "" {
+		req.Header.Set(confirmRemovalsHeader, confirmHeader)
 	}
 	if method == "GET" {
 		for _, v := range r.Header.Values("If-None-Match") {
@@ -180,4 +196,68 @@ func (h *HTTPAdminServer) forwardRecordRequest(w http.ResponseWriter, r *http.Re
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(response.StatusCode)
 	w.Write(data)
+}
+
+// gatewayRemovalConfirmation applies the snapshot API's removal-confirmation rule in front of
+// the record authority, which may be an older build that does not know confirm_removals: the
+// count is checked here against the authority's current generation, and the field moves from
+// the body to the SecDNS-Confirm-Removals header: an older authority ignores the header and
+// sees the body shape it always accepted, a current one checks the count again. A body this
+// gateway cannot parse is forwarded unchanged; the authority stays the parser of record.
+func (h *HTTPAdminServer) gatewayRemovalConfirmation(r *http.Request, body []byte) ([]byte, string, string) {
+	request, err := recordset.ParseReplacement(body)
+	if err != nil {
+		return body, "", ""
+	}
+	_, exactImport := request.OperatorSuppliedProvenance()
+	confirmed, stated := request.ConfirmRemovals()
+	if !exactImport && !stated {
+		return body, "", ""
+	}
+	base, err := h.fetchAuthoritySnapshot(r)
+	if err != nil {
+		return body, "", "record_authority_unavailable"
+	}
+	if code := removalConfirmationCode(base.Metadata(), base.Records(), request, exactImport, confirmed, stated); code != "" {
+		return body, "", code
+	}
+	if !stated {
+		return body, "", ""
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil {
+		return body, "", "record_authority_unavailable"
+	}
+	delete(fields, "confirm_removals")
+	var stripped bytes.Buffer
+	encoder := json.NewEncoder(&stripped)
+	encoder.SetEscapeHTML(false)
+	if encoder.Encode(fields) != nil {
+		return body, "", "record_authority_unavailable"
+	}
+	return bytes.TrimRight(stripped.Bytes(), "\n"), strconv.Itoa(confirmed), ""
+}
+
+func (h *HTTPAdminServer) fetchAuthoritySnapshot(r *http.Request) (*recordset.Snapshot, error) {
+	req, err := http.NewRequestWithContext(r.Context(), "GET", h.RecordAuthorityURL+"/snapshot", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.recordAuthorityCredential)
+	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true, DisableCompression: true, ResponseHeaderTimeout: 5 * time.Second, MaxResponseHeaderBytes: 16 << 10}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, errors.New("record authority snapshot unavailable")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, recordset.MaxBytes+1))
+	if err != nil || len(data) > recordset.MaxBytes {
+		return nil, errors.New("record authority snapshot unavailable")
+	}
+	return recordset.Parse(data)
 }

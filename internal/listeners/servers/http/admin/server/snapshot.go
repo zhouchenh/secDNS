@@ -178,6 +178,23 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 	}
 	expected := recordstore.Expected{RulesetID: request.RulesetID, LineageID: request.LineageID, Revision: request.Revision}
 	provenance, hasProvenance := request.OperatorSuppliedProvenance()
+	confirmed, stated := request.ConfirmRemovals()
+	if values := r.Header.Values(confirmRemovalsHeader); !stated && len(values) > 0 {
+		// set by a record gateway that moved the body field into a header for older authorities
+		if len(values) != 1 {
+			snapshotError(w, recordstore.ErrVersionedInput)
+			return
+		}
+		if confirmed, e = recordset.ParseConfirmRemovals(values[0]); e != nil {
+			snapshotError(w, recordstore.ErrVersionedInput)
+			return
+		}
+		stated = true
+	}
+	if code := h.removalConfirmationError(request, hasProvenance, confirmed, stated); code != "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": code})
+		return
+	}
 	var receipt recordstore.Receipt
 	if hasProvenance {
 		receipt, e = h.versioned.ReplaceWithOperatorSuppliedProvenance(expected, request.OperationID, request.Records, provenance)
@@ -191,4 +208,66 @@ func (h *HTTPAdminServer) handleReplace(w http.ResponseWriter, r *http.Request) 
 	provenance, hasProvenance = receipt.OperatorSuppliedProvenance()
 	setOperatorSuppliedProvenanceHeaders(w, provenance, hasProvenance)
 	writeJSON(w, http.StatusOK, map[string]string{"operation_id": receipt.OperationID, "revision": strconv.FormatUint(receipt.Revision, 10), "content_sha256": receipt.ContentSHA256, "committed_at": receipt.CommittedAt.UTC().Format(time.RFC3339Nano)})
+}
+
+// removalConfirmationError guards destructive replacements. An exact import (a replacement
+// carrying operator-supplied provenance) that removes records from its expected base must
+// state confirm_removals equal to the server's own count; any replacement that states
+// confirm_removals must match it. The count is computed only while the current generation
+// is the expected one: otherwise the store itself decides (revision conflict, or the
+// idempotent replay of an already committed operation), so retries stay safe.
+func (h *HTTPAdminServer) removalConfirmationError(request recordset.Replacement, exactImport bool, confirmed int, stated bool) string {
+	if !exactImport && !stated {
+		return ""
+	}
+	view, e := h.versioned.Acquire()
+	if e != nil {
+		return ""
+	}
+	return removalConfirmationCode(view.Metadata(), view.Records(), request, exactImport, confirmed, stated)
+}
+
+// confirmRemovalsHeader carries confirm_removals from the record gateway to the authority.
+const confirmRemovalsHeader = "SecDNS-Confirm-Removals"
+
+// removalConfirmationCode is the shared rule for a base generation (local store or the
+// record authority behind the gateway): "" when the request may proceed.
+func removalConfirmationCode(base recordset.Metadata, baseRecords []recordset.Record, request recordset.Replacement, exactImport bool, confirmed int, stated bool) string {
+	if !exactImport && !stated {
+		return ""
+	}
+	if base.RulesetID != request.RulesetID || base.LineageID != request.LineageID || base.Revision != request.Revision {
+		return ""
+	}
+	removed := countRemovedRecords(baseRecords, request.Records)
+	switch {
+	case !stated && removed > 0:
+		return "removal_confirmation_required"
+	case stated && confirmed != removed:
+		return "removal_confirmation_mismatch"
+	}
+	return ""
+}
+
+func countRemovedRecords(before, after []recordset.Record) int {
+	key := func(r recordset.Record) string {
+		return strings.TrimSuffix(strings.ToLower(r.Name), ".") + "/" + strings.ToUpper(r.Type)
+	}
+	kept := make(map[string]struct{}, len(after))
+	for _, r := range after {
+		kept[key(r)] = struct{}{}
+	}
+	removed := 0
+	seen := make(map[string]struct{}, len(before))
+	for _, r := range before {
+		k := key(r)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		if _, ok := kept[k]; !ok {
+			removed++
+		}
+	}
+	return removed
 }

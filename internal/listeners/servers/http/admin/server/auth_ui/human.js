@@ -52,9 +52,16 @@
     ssoUI.signedOut.hidden=human;
     if(!human){title.textContent="Signed out of the console";help.textContent="Sign in again with WithMy ID to continue.";security.hidden=true;return;}
     title.textContent="Account security";help.textContent="Your sign-in is managed by WithMy ID.";
-    for(const key of ["password","totp","codes"])ssoUI.groups[key].hidden=true;
-    for(const el of ssoUI.reauthLocal)el.hidden=true;
-    ssoUI.stepUp.hidden=ssoUI.stepUpHint.hidden=false;ssoUI.breakGlass.hidden=false;
+    ssoUI.stepUp.hidden=ssoUI.stepUpHint.hidden=false;
+  }
+  // On the SSO path the console's local credential surfaces are detached from the document
+  // (not merely hidden): nothing about passwords, authenticators, recovery or the private
+  // break-glass path is present in the DOM. The socket break-glass page never enters this.
+  function purgeForSSO(){
+    if(!ssoUI||ssoUI.purged)return;ssoUI.purged=true;
+    for(const el of [form,alternatives,recovery,dismiss,download,ssoUI.groups.password,ssoUI.groups.totp,ssoUI.groups.codes,...ssoUI.reauthLocal])el.remove();
+    ssoUI.revokeOthers.textContent="Sign out other sessions";
+    const passkeys=document.getElementById("passkey-access");if(passkeys){passkeys.replaceChildren();passkeys.hidden=true;}
   }
   async function request(path,body,authenticated=false){if(location.origin!==origin)throw new Error("Use the configured HTTPS portal.");const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);try{const r=await fetch(new URL("auth/"+path,base),{method:body?"POST":"GET",headers:body?{...(authenticated?window.secDNSAgent.headers("","POST"):{}),"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined,credentials:"same-origin",cache:"no-store",redirect:"error",signal:controller.signal});if(!r.ok){void r.body?.cancel();throw authenticationError(r);}const reader=r.body.getReader();let bytes=0,parts=[];for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>16384){await reader.cancel();throw new Error("Unexpected authentication response.");}parts.push(value);}const data=new Uint8Array(bytes);let at=0;for(const p of parts){data.set(p,at);at+=p.length;}try{return JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(data));}catch{throw new Error("Unexpected authentication response.");}}finally{clearTimeout(timer);}}
   mode.addEventListener("change",()=>{if(mode.value==="setup"&&!setupRequired)mode.value="login";reset();});cancel.addEventListener("click",()=>{reset();fields.username.input.focus();note.textContent="Cancelled. Existing authentication methods are unchanged unless confirmation already completed.";});dismiss.addEventListener("click",()=>{recovery.value="";recovery.hidden=dismiss.hidden=true;note.textContent="Signed in. Keep your saved recovery codes private.";render();});
@@ -85,7 +92,7 @@
   for(const [key,text] of [["totp","Replace your authenticator after verifying your identity. Your current authenticator stays active until you confirm the new one."],["codes","Generate new backup codes. Previous recovery codes stop working when replaced."],["sessions","Sign out other browsers without ending this session."]]){const hint=document.createElement("p");hint.textContent=text;groups[key].append(hint);}
   for(const [text,path,kind] of [["Verify identity","reauth/password-totp","reauth"],["Change password","password","password"],["Replace authenticator","totp/begin","totp"],["Replace recovery codes","recovery-codes/regenerate","codes"],["Sign out other human sessions","sessions/revoke-others","sessions"]]){
     const b=document.createElement("button");b.type="button";b.textContent=text;groups[kind].append(b);
-    b.addEventListener("click",async()=>{if(busy||window.secDNSAgent.kind!=="human")return;busy=true;b.disabled=true;const captured=epoch;let body={};try{if(kind==="reauth"){body={password:currentPassword.value,code:currentCode.value};currentPassword.value=currentCode.value="";}else if(kind==="password"){body={password:newPassword.value};newPassword.value="";}const result=await request(path,body,true);body={};if(captured!==epoch||window.secDNSAgent.kind!=="human")return;if(kind==="totp"){replacement=true;challenge=result.challenge;step="otp";showEnrollment(result);form.hidden=false;render();}if(result.principal_type)window.secDNSAgent.acceptSession(result);if(result.recovery_codes){recovery.value=result.recovery_codes.join("\n");recovery.hidden=dismiss.hidden=false;note.textContent="Previous recovery codes are invalid. Save these new codes now.";}else note.textContent={reauth:"Identity verified. You can now update your security settings.",password:"Password changed.",totp:"Confirm the new authenticator code below.",sessions:"Other human sessions signed out."}[kind]||"Security settings updated.";}catch(error){body={};if(captured===epoch&&window.secDNSAgent.kind==="human")note.textContent=error.message;}finally{busy=false;b.disabled=false;if(window.secDNSAgent.kind!=="human")reset();else{render();if(replacement)fields.code.input.focus();}}});
+    b.addEventListener("click",async()=>{if(busy||window.secDNSAgent.kind!=="human")return;busy=true;b.disabled=true;const captured=epoch;let body={};try{if(kind==="reauth"){body={password:currentPassword.value,code:currentCode.value};currentPassword.value=currentCode.value="";}else if(kind==="password"){body={password:newPassword.value};newPassword.value="";}const result=await request(path,body,true);body={};if(captured!==epoch||window.secDNSAgent.kind!=="human")return;if(kind==="totp"){replacement=true;challenge=result.challenge;step="otp";showEnrollment(result);form.hidden=false;render();}if(result.principal_type)window.secDNSAgent.acceptSession(result);if(result.recovery_codes){recovery.value=result.recovery_codes.join("\n");recovery.hidden=dismiss.hidden=false;note.textContent="Previous recovery codes are invalid. Save these new codes now.";}else note.textContent={reauth:"Identity verified. You can now update your security settings.",password:"Password changed.",totp:"Confirm the new authenticator code below.",sessions:ssoMode?"Other sessions signed out.":"Other human sessions signed out."}[kind]||"Security settings updated.";}catch(error){body={};if(captured===epoch&&window.secDNSAgent.kind==="human")note.textContent=error.message;}finally{busy=false;b.disabled=false;if(window.secDNSAgent.kind!=="human")reset();else{render();if(replacement)fields.code.input.focus();}}});
   }
   const auditSection=document.createElement("section");auditSection.className="security-task security-events";auditSection.setAttribute("aria-labelledby","human-audit-title");
 const auditTitle=document.createElement("h3");auditTitle.id="human-audit-title";auditTitle.textContent="Recent security events";auditTitle.tabIndex=-1;
@@ -93,6 +100,7 @@ const auditButton=document.createElement("button");auditButton.type="button";aud
 const audit=document.createElement("div");audit.hidden=true;audit.id="human-audit";audit.setAttribute("role","status");
 auditSection.append(auditTitle,auditButton,audit);security.prepend(auditSection);
 let auditGeneration=0;
+const ssoAuditNeutral=new Set(["human_grant","human_grant_cancelled","human_recovered","human_codes","human_password","passkey_added","passkey_renamed","passkey_removed","passkey_login","passkey_reauth","passkey_test","passkey_warning"]);
 const auditLabels={bootstrap_created:"Setup started",bootstrap_cancelled:"Setup cancelled",agent_issued:"Agent access created",agent_revoked:"Agent access revoked",session_created:"Session started",session_revoked:"Session signed out",human_grant:"Account setup or recovery authorized",human_grant_cancelled:"Account authorization cancelled",human_setup:"Account created",human_recovered:"Account recovered",human_login:"Signed in",human_logout:"Signed out",human_reauth:"Identity verified",human_codes:"Recovery codes replaced",human_password:"Password changed",human_sessions_revoked:"Other sessions signed out",passkey_added:"Passkey added",passkey_renamed:"Passkey renamed",passkey_removed:"Passkey removed",passkey_login:"Signed in with a passkey",passkey_reauth:"Identity verified with a passkey",passkey_test:"Passkey tested",passkey_warning:"Passkey warning"};
 auditButton.addEventListener("click",async()=>{
  if(busy||window.secDNSAgent.kind!=="human"||auditButton.disabled)return;
@@ -108,7 +116,7 @@ auditButton.addEventListener("click",async()=>{
   const list=document.createElement("ol");list.className="security-event-list";list.tabIndex=0;list.setAttribute("aria-labelledby","human-audit-title");
   for(const event of result.events){
    const row=document.createElement("li"),name=document.createElement("strong"),time=document.createElement("time");
-   name.textContent=Object.hasOwn(auditLabels,event.Action)?auditLabels[event.Action]:"Security event";
+   name.textContent=ssoMode&&ssoAuditNeutral.has(event.Action)?"Account change made on the server":Object.hasOwn(auditLabels,event.Action)?auditLabels[event.Action]:"Security event";
    const date=new Date(event.At);time.textContent=Number.isNaN(date.getTime())?"Time unavailable":date.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"long"});
    if(!Number.isNaN(date.getTime())){time.dateTime=event.At;time.title=event.At;time.setAttribute("aria-label",time.textContent+"; exact time "+event.At);}
    row.append(name,time);list.append(row);
@@ -128,14 +136,14 @@ auditButton.addEventListener("click",async()=>{
     const stepUpHint=document.createElement("p");stepUpHint.textContent="Sensitive changes need a fresh WithMy ID sign-in within the last five minutes. Confirming signs you out and back in with WithMy ID.";
     const stepUp=document.createElement("button");stepUp.type="button";stepUp.textContent="Confirm with WithMy ID";stepUp.hidden=true;
     stepUp.addEventListener("click",()=>{if(busy)return;window.secDNSAgent.logout().catch(()=>{});});
-    const breakGlass=document.createElement("p");breakGlass.hidden=true;breakGlass.textContent="Password, authenticator and recovery codes are managed only on the local break-glass path.";
     const reauthLocal=[...groups.reauth.children].filter(el=>el.tagName!=="H3");
-    groups.reauth.append(stepUpHint,stepUp);security.append(breakGlass);
-    stepUpHint.hidden=true;ssoUI={signedOut,stepUp,stepUpHint,breakGlass,groups,reauthLocal:[...reauthLocal]};
+    const revokeOthers=[...groups.sessions.querySelectorAll("button")].find(b=>b.textContent==="Sign out other human sessions");
+    groups.reauth.append(stepUpHint,stepUp);
+    stepUpHint.hidden=true;ssoUI={signedOut,stepUp,stepUpHint,groups,revokeOthers,reauthLocal:[...reauthLocal],purged:false};
   }
-  const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;auditGeneration++;audit.textContent="";audit.hidden=true;audit.removeAttribute("aria-busy");auditButton.disabled=false;form.hidden=!security.hidden;title.textContent=security.hidden?"Sign in to secDNS":"Human account";currentPassword.value=currentCode.value=newPassword.value="";render();};
+  const sessionChanged=()=>{const human=window.secDNSAgent?.kind==="human";if(humanWasActive&&!human){reset();note.textContent="";}humanWasActive=human;security.hidden=!human;auditGeneration++;audit.textContent="";audit.hidden=true;audit.removeAttribute("aria-busy");auditButton.disabled=false;form.hidden=!security.hidden;title.textContent=security.hidden?(ssoMode?"Signed out of the console":"Sign in to secDNS"):(ssoMode?"Account security":"Human account");currentPassword.value=currentCode.value=newPassword.value="";render();};
   window.addEventListener("agentconnected",sessionChanged);window.addEventListener("agentexpired",()=>{sessionChanged();if(!busy)reset();});
   window.addEventListener("pagehide",reset);
-  const applyState=state=>{if(state?.human_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin){origin=state.public_origin;card.hidden=false;ssoMode=state.sso_login===true;setupRequired=state.setup_required===true;mode.value=setupRequired?"setup":"login";render();}};
+  const applyState=state=>{if(state?.human_access===true&&typeof state.public_origin==="string"&&location.origin===state.public_origin){origin=state.public_origin;card.hidden=false;ssoMode=state.sso_login===true;if(ssoMode)purgeForSSO();setupRequired=state.setup_required===true;mode.value=setupRequired?"setup":"login";render();}};
   window.addEventListener("authstate",event=>applyState(event.detail));if(window.secDNSAgent.state)applyState(window.secDNSAgent.state);
 })();
