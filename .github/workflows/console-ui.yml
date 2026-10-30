@@ -28,7 +28,7 @@ jobs:
       - name: Record removal confirmation (gateway and authority)
         run: |
           umask 077
-          go test -count=1 -run 'TestRecordGatewayRequiresConfirmationForEveryRemoval|TestRRsetDeletionRemovalConfirmationAuthority|TestRecordGatewayRemovalConfirmationOlderAuthority|TestSnapshotRemovalConfirmationHeader|TestSnapshotReplacementRemovalConfirmationCompatibility|TestSnapshotExactImportRequiresRemovalConfirmation' ./internal/listeners/servers/http/admin/server/
+          go test -count=1 -run 'TestRecordGatewayRequiresConfirmationForEveryRemoval|TestRecordGatewayDeletionKeyCanonical|TestNodeDrainRefusesLastHealthyProvider|TestRRsetDeletionRemovalConfirmationAuthority|TestRecordGatewayRemovalConfirmationOlderAuthority|TestSnapshotRemovalConfirmationHeader|TestSnapshotReplacementRemovalConfirmationCompatibility|TestSnapshotExactImportRequiresRemovalConfirmation' ./internal/listeners/servers/http/admin/server/
           go test -count=1 -run 'TestRRsetMutationConfirmRemovals|TestReplacementConfirmRemovals' ./internal/recordset/
       - name: Editor state (drafts, Undo, removal counts)
         run: node scripts/test-versioned-editor-state.cjs
