@@ -356,7 +356,7 @@ func TestRecordGatewayDeletionKeyCanonical(t *testing.T) {
 	}
 	for _, c := range []struct{ name, typ string }{
 		{" g1.invalid.", "A"}, {"g1.invalid. ", "A"}, {"G1.INVALID.", "A"}, {"g1.Invalid", "A"}, {"g1.invalid", "a"},
-		{"g1.invalid.", "a "}, {"g1.invalid.", " A"}, {"\tg1.invalid", " a\t"},
+		{"g1.invalid.", "a "}, {"g1.invalid.", " A"}, {`\tg1.invalid`, ` a\t`}, // JSON-escaped tabs
 	} {
 		f := newGatewayRemovalFixture(t, 2)
 		if w := f.post("/snapshot/rrset", keyDeletion("2", "k1", c.name, c.typ, "")); w.Code != 409 || !strings.Contains(w.Body.String(), "removal_confirmation_required") {
