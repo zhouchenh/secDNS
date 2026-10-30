@@ -53,8 +53,8 @@ o.identityLeak=leak;o.managedBy=[...document.querySelectorAll("#human-access p")
 o.sso=window.secDNSAgent?.state?.sso_login===true;if(window.__replaceResult)o.replace=window.__replaceResult;out.textContent=JSON.stringify(o);document.body.append(out);};
 if(q.get("replace")){const sleep=ms=>new Promise(r=>setTimeout(r,ms)),until=async(f,ms=8000)=>{const t=Date.now();while(Date.now()-t<ms){if(f())return true;await sleep(100);}return false;};(async()=>{const r={};try{
 await until(()=>window.secDNSAgent?.kind==="human"&&document.querySelectorAll("#rows tr").length>=8);await sleep(1000);
-for(let i=0;i<15&&document.querySelectorAll("#rows tr").length>3;i++){const b=[...document.querySelectorAll("#rows button")].find(x=>x.textContent==="Delete");b.click();await sleep(200);document.getElementById("delete-confirm").click();await sleep(250);}
-r.rowsBefore=document.querySelectorAll("#rows tr").length;
+for(let i=0;i<15&&document.querySelectorAll("#rows tr:not(.row-removed)").length>3;i++){const b=[...document.querySelectorAll("#rows tr:not(.row-removed) button")].find(x=>x.textContent==="Delete");b.click();await sleep(200);document.getElementById("delete-confirm").click();await sleep(250);}
+r.rowsBefore=document.querySelectorAll("#rows tr:not(.row-removed)").length;
 document.getElementById("review").click();await until(()=>document.getElementById("review-dialog").open);await sleep(400);
 const danger=document.getElementById("review-danger"),btn=document.getElementById("review-confirm"),typed=document.getElementById("review-typed");
 const inView=e=>{const b=e.getBoundingClientRect();return b.height>0&&b.top>=-0.5&&b.bottom<=innerHeight+0.5;};

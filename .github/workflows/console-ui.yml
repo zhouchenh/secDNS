@@ -1,8 +1,10 @@
 name: console-ui
 
-# CI-safe checks for the admin console UI: string catalogue, theme/tokens, and the
-# single sign-on path carrying no break-glass/recovery/password/TOTP wording. These
-# tests open no network listeners and need no browser.
+# CI-safe checks for the admin console UI: string catalogue, theme/tokens, the single
+# sign-on path carrying no break-glass/recovery/password/TOTP wording, and the slice-2
+# guards (drafts kept across step-up, dates re-rendered on a language switch). These
+# open no network listeners and need no browser. The record-gateway removal checks use
+# loopback test servers only (httptest), on the CI runner.
 on:
   pull_request:
   push:
@@ -22,4 +24,11 @@ jobs:
       - name: Console UI tests
         run: |
           umask 077
-          go test -count=1 -run 'TestConsoleCatalogueComplete|TestConsoleThemeAndTokens|TestSSOPathServesNoLocalCredentialWording|TestConsoleActualRoutes|TestConsoleHandoffPreservesExistingMechanism|TestTrustedSSOPageCarriesNoPasswordField' ./internal/listeners/servers/http/admin/server/
+          go test -count=1 -run 'TestConsoleCatalogueComplete|TestConsoleThemeAndTokens|TestSSOPathServesNoLocalCredentialWording|TestConsoleActualRoutes|TestConsoleHandoffPreservesExistingMechanism|TestTrustedSSOPageCarriesNoPasswordField|TestConsoleSlice2Static' ./internal/listeners/servers/http/admin/server/
+      - name: Record removal confirmation (gateway and authority)
+        run: |
+          umask 077
+          go test -count=1 -run 'TestRecordGatewayRequiresConfirmationForEveryRemoval|TestRRsetDeletionRemovalConfirmationAuthority|TestRecordGatewayRemovalConfirmationOlderAuthority|TestSnapshotRemovalConfirmationHeader|TestSnapshotReplacementRemovalConfirmationCompatibility|TestSnapshotExactImportRequiresRemovalConfirmation' ./internal/listeners/servers/http/admin/server/
+          go test -count=1 -run 'TestRRsetMutationConfirmRemovals|TestReplacementConfirmRemovals' ./internal/recordset/
+      - name: Editor state (drafts, Undo, removal counts)
+        run: node scripts/test-versioned-editor-state.cjs

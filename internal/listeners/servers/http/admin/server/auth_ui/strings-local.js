@@ -111,7 +111,8 @@
   "auth.passkey.signedIn": "Signed in with your passkey.",
   "auth.passkey.signOutFirst": "Sign out the current session before using a passkey.",
   "auth.passkey.cancelledServer": "Cancelled. An already completed server action may still have succeeded; refresh the list before retrying.",
-  "auth.passkey.unsupported": "This browser does not support the required passkey APIs. Use password and authenticator."
+  "auth.passkey.unsupported": "This browser does not support the required passkey APIs. Use password and authenticator.",
+  "local.reauth.refused": "Verify your identity first. Sensitive changes need a verification from the last five minutes."
  },
  "zh-Hant": {
   "auth.local.title": "登入 secDNS",
@@ -224,6 +225,7 @@
   "auth.passkey.signedIn": "已使用你的通行密鑰登入。",
   "auth.passkey.signOutFirst": "使用通行密鑰前，請先登出目前的工作階段。",
   "auth.passkey.cancelledServer": "已取消。已完成的伺服器操作可能仍已成功；重試前請重新整理清單。",
-  "auth.passkey.unsupported": "此瀏覽器不支援所需的通行密鑰 API。請改用密碼及驗證器。"
+  "auth.passkey.unsupported": "此瀏覽器不支援所需的通行密鑰 API。請改用密碼及驗證器。",
+  "local.reauth.refused": "請先驗證你的身分。進行敏感變更前，你需要在過去五分鐘內完成驗證。"
  }
 });

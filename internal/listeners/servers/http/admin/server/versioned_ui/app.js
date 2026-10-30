@@ -9,6 +9,13 @@
   let token = "", epoch = 0, getID = 0, connected = false, busy = false, selected = null, reviewedEdit = null, reviewGuard = {danger:false,typed:false,removed:0}, importChannel = null, importChannelID = "";
   const requests = new Set();
   let deletion = null;
+  // A date shown inside a sentence: i18n.js renders it in the current language from the ISO
+  // value and the English template, and renders it again when the language changes in place.
+  function stamp(el, iso, template = "{time}", format = "") {
+    el.dataset.i18nAt = iso; el.dataset.i18nTemplate = template; if (format) el.dataset.i18nFormat = format; el.title = iso;
+    el.textContent = template.split("{time}").join(window.secDNSI18n?.date(iso) || iso);
+    window.secDNSI18n?.stamp?.(el); return el;
+  }
   function status(text, kind = "", routine = false) { $("status").textContent = text; $("status").className = kind; $("status").hidden = !text || routine; }
   function comparisonVersion(title, record, unavailable = false) {
     const section = document.createElement("section"), heading = document.createElement("h4");
@@ -18,8 +25,8 @@
       absent.textContent = unavailable ? "Snapshot not loaded" : "Not present in this snapshot"; section.append(absent); return section;
     }
     const fields = document.createElement("dl");
-    for (const [label, value] of [["Name",record.name],["Type",record.type],["TTL (seconds)",String(record.ttl_seconds)],["Expiration",record.expires_at === undefined ? "Permanent (no expiration)" : (window.secDNSI18n?.date(record.expires_at) || record.expires_at)]]) {
-      const term = document.createElement("dt"), detail = document.createElement("dd"); term.textContent = label; detail.textContent = value; if (label === "Name") detail.translate = false; if (label === "Expiration" && record.expires_at !== undefined) detail.title = record.expires_at; fields.append(term,detail);
+    for (const [label, value] of [["Name",record.name],["Type",record.type],["TTL (seconds)",String(record.ttl_seconds)],["Expiration",record.expires_at === undefined ? "Permanent (no expiration)" : record.expires_at]]) {
+      const term = document.createElement("dt"), detail = document.createElement("dd"); term.textContent = label; if (label === "Expiration" && record.expires_at !== undefined) stamp(detail, record.expires_at); else detail.textContent = value; if (label === "Name") detail.translate = false; fields.append(term,detail);
     }
     const label = document.createElement("p"), values = document.createElement("ol"); label.className = "comparison-value-label"; label.textContent = "Ordered values / TXT chunks"; values.className = "comparison-values";
     for (const value of record.values) { const item = document.createElement("li"), text = document.createElement("code"); text.textContent = JSON.stringify(value); item.append(text); values.append(item); }
@@ -52,6 +59,8 @@
     review_changed:"The reviewed proposal changed. Review it again before applying.",
     removal_confirmation_required:"The server requires an explicit confirmation of how many records this replacement removes. Nothing was changed; review it again.",
     removal_confirmation_mismatch:"The confirmed number of removed records does not match the server. Nothing was changed; refresh and review again.",
+    removal_check_unavailable:"The DNS server could not be reached to check which records this change removes, so nothing was sent and nothing changed. Try again in a moment.",
+    draft_restore_refused:"Your kept changes could not be restored because the DNS server's records changed identity. Nothing was applied.",
     operator_provenance_unavailable:"This store has not been explicitly migrated for operator-supplied provenance. Nothing was changed.",
     receipt_capacity:"The operation receipt ledger is full. Operator intervention is required.",
     revision_exhausted:"The revision range is exhausted. Operator intervention is required.",
@@ -74,7 +83,7 @@
     $("pending-actions").hidden=!work;$("change-summary").hidden=!work;$("change-review").hidden=!work;
     $("local-work-warning").hidden=!(model.dirty()||model.pending);
     $("workspace").classList.toggle("editing",!$("record-editor").hidden);
-    const changes=S.changes(model.base?.records||[],model.draft);$("change-count").textContent=model.pending?.status==="uncertain"?"Change outcome uncertain":model.formDirty?"Unfinished record edit — add it to changes before review":`Unsaved changes: ${changes.added} added / ${changes.changed} changed / ${changes.removed} removed`;
+    const changes=S.changes(model.base?.records||[],model.draft);pendingCounts(changes);$("review").className=changes.removed>0?"danger-solid":"primary";$("change-count").textContent=model.pending?.status==="uncertain"?"Change outcome uncertain":model.formDirty?"Unfinished record edit — add it to changes before review":`Unsaved changes: ${changes.added} added / ${changes.changed} changed / ${changes.removed} removed`;
     for (const c of $("editor").querySelectorAll("input, select, textarea, button")) c.disabled = locked();
     $("name").disabled = $("type").disabled = locked() || !!selected;
     $("expiry").disabled = locked() || $("expiry-mode").value === "permanent";
@@ -91,6 +100,14 @@
     $("review-confirm").disabled = busy;
     $("review-cancel").disabled = busy;
     $("clear").disabled = busy;
+  }
+  // Toned counts in the sticky pending bar: added (ok), changed (warn), removed (danger).
+  function pendingCounts(d) {
+    const box=$("pending-counts");box.replaceChildren();
+    for (const [kind,n,label] of [["added",d.added,"{n} added"],["changed",d.changed,"{n} changed"],["removed",d.removed,"{n} removed"]]) {
+      if (!n) continue; const chip=document.createElement("span");chip.className="count-chip change-"+kind;chip.textContent=label.replace("{n}",String(n));box.append(chip);
+    }
+    if (!box.children.length) { const none=document.createElement("span");none.className="count-chip";none.textContent=model.formDirty?"Unfinished record edit":"No changes yet";box.append(none); }
   }
   function valueRow(text) {
     const row = document.createElement("div"); row.className = "value-row";
@@ -109,7 +126,7 @@
     $("values").replaceChildren(); for (const value of record?.values || [""]) valueRow(value);
     $("expiry-mode").value = record?.expires_at ? "absolute" : "permanent"; $("expiry").value = record?.expires_at || ""; controls();if(open)$("editor-title").focus();
   }
-  window.addEventListener("beforeunload",event=>{if(model.dirty()||model.pending){event.preventDefault();event.returnValue="";}});
+  window.addEventListener("beforeunload",event=>{if((model.dirty()||model.pending)&&!window.secDNSAgent?.leaving){event.preventDefault();event.returnValue="";}});
   $("close-editor").addEventListener("click",()=>{if(model.formDirty&&!confirm("Discard unfinished fields? Staged changes are retained."))return;edit(null,true);$("new-record").focus();});
   $("record-type-filter").addEventListener("change",render);
   $("pending-only").addEventListener("change",render);
@@ -131,28 +148,51 @@
       if (typeFilter && record.type!==typeFilter) continue;
       if ($("pending-only").checked) {const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(original&&JSON.stringify(original)===JSON.stringify(record))continue;}
       if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue; count++;
-      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; breakable(title, record.name); info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
+      const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div");tr.dataset.recordKey=S.key(record); title.className = "record-name"; breakable(title, record.name); info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
       for (const value of record.values) {const d = document.createElement("div");d.className="record-value";if(value==="")d.textContent="(empty string)";else if(record.type==="A"||record.type==="AAAA"){d.classList.add("record-ip");d.textContent=value;}else if(record.type==="CNAME"){d.classList.add("record-fqdn");breakable(d,value);}else d.textContent=value;valueCell.append(d);}
-      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+(window.secDNSI18n?.date(record.expires_at)||record.expires_at);d.title=record.expires_at;valueCell.append(d);}
+      if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";stamp(d,record.expires_at,expired?"Expired · retained {time}":"Expires {time}");valueCell.append(d);}
       const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;typeCell.translate=false;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
+      if(!original||JSON.stringify(original)!==JSON.stringify(record))actions.append(undoButton(record));
       change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});
-      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:remove};$("delete-record").textContent=record.name+" / "+record.type;$("delete-record").translate=false;$("delete-dialog").showModal();$("delete-cancel").focus();});
+      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:remove};deleteDetails(record);$("delete-dialog").showModal();$("delete-cancel").focus();});
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
+    // Records marked for deletion stay listed (struck through) until the change is applied, each with Undo.
+    if (model.base) for (const record of model.base.records) {
+      if (model.draft.some(r=>S.key(r)===S.key(record))) continue;
+      if (typeFilter && record.type!==typeFilter) continue;
+      if (![record.name,record.type,...record.values].some(v => v.toLowerCase().includes(filter))) continue;
+      const tr=document.createElement("tr");tr.className="row-removed";tr.dataset.recordKey=S.key(record);
+      const info=document.createElement("td"),title=document.createElement("div");title.className="record-name";breakable(title,record.name);const marker=document.createElement("span");marker.className="draft-marker removal-marker";marker.textContent="Will be deleted";info.append(title,marker);
+      const typeCell=document.createElement("td");typeCell.textContent=record.type;typeCell.translate=false;const valueCell=document.createElement("td");for(const value of record.values){const d=document.createElement("div");d.className="record-value";d.textContent=value===""?"(empty string)":value;valueCell.append(d);}
+      const ttlCell=document.createElement("td");ttlCell.textContent=record.ttl_seconds+" s";const actions=document.createElement("td");actions.append(undoButton(record));tr.append(info,typeCell,valueCell,ttlCell,actions);$("rows").append(tr);
+    }
     $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;
-    $("results-count").textContent=`${count} of ${model.draft.length} records`+($("pending-only").checked?" | Pending additions and edits; removals appear in Review changes.":" | Changes are reviewed before they are applied.");
+    $("results-count").textContent=`${count} of ${model.draft.length} records`+($("pending-only").checked?" | Pending changes, including records that will be deleted.":" | Changes are reviewed before they are applied.");
     $("reset-filters").hidden=!filter&&!typeFilter&&!$("pending-only").checked;
     $("empty").hidden=count>0;$("empty").textContent=model.draft.length?"No records match these filters. Reset filters to see all records.":model.base?.records.length?"All records are marked for removal. Review changes before applying.":"No records yet. Add a record or import an export to get started.";
     $("comparison").textContent=JSON.stringify({base:model.base?.records||[],draft:model.draft,current:model.current?.records||[]},null,2);renderComparison();controls();
   }
+  function undoButton(record) {
+    const b=document.createElement("button");b.type="button";b.className="row-undo";b.textContent="Undo";b.setAttribute("aria-label","Undo changes to "+record.name+" "+record.type);
+    b.addEventListener("click",()=>{if(locked()||model.formDirty){if(model.formDirty)status("Stage or discard unfinished fields before deleting a row.","error");return;}const k=S.key(record);if(model.undo(k)){if(selected===k)edit(null,true);render();status("Change undone. The record is back to its saved version.","success");$("rows").querySelector('tr[data-record-key="'+CSS.escape(k)+'"] button')?.focus();}});
+    return b;
+  }
+  // C23: the delete confirmation names the record it deletes (name, type and every value).
+  function deleteDetails(record) {
+    const list=$("delete-record");list.replaceChildren();
+    for (const [label,value] of [["Name",record.name],["Type",record.type],[record.values.length===1?"Value":"Values",record.values.map(v=>v===""?"(empty string)":v).join("\n")]]) {
+      const term=document.createElement("dt"),detail=document.createElement("dd");term.textContent=label;detail.textContent=value;detail.translate=false;if(label!=="Name")detail.className="record-value";list.append(term,detail);
+    }
+  }
   $("delete-cancel").addEventListener("click",()=>$("delete-dialog").close());
-  $("delete-dialog").addEventListener("close",()=>{const opener=deletion?.opener;deletion=null;if(!connected)return;if(opener?.isConnected&&!opener.disabled)opener.focus();else if(!$("review").disabled)$("review").focus();else $("new-record").focus();});
+  $("delete-dialog").addEventListener("close",()=>{const opener=deletion?.opener,k=deletion?.key;deletion=null;if(!connected)return;const undo=k&&$("rows").querySelector('tr[data-record-key="'+CSS.escape(k)+'"] .row-undo');if(opener?.isConnected&&!opener.disabled)opener.focus();else if(undo)undo.focus();else if(!$("review").disabled)$("review").focus();else $("new-record").focus();});
   $("delete-confirm").addEventListener("click",()=>{
     const target=deletion,record=target&&model.draft.find(item=>S.key(item)===target.key);
     $("delete-dialog").close();
     if(!target||target.epoch!==epoch||locked()||model.formDirty||!record||JSON.stringify(record)!==target.record){status("The draft changed. Review the current record before marking it for deletion.","error");return;}
-    model.remove(target.key);if(selected===target.key)edit(null,true);render();status("Record marked for deletion locally. Review changes before applying.");
+    model.remove(target.key);if(selected===target.key)edit(null,true);deletion={key:target.key};render();status("Record marked for deletion. Review changes before applying; Undo restores it.");
   });
   async function request(method, body, target = endpoint.href) {
     const captured=epoch, controller=new AbortController();requests.add(controller);const timeout=setTimeout(()=>controller.abort(),30000);
@@ -163,7 +203,7 @@
       if(response.status===401||response.status===403){const error=new Error("authentication");error.status=response.status;throw error;}
       let data;try{data=await response.json();}catch{throw new Error("unexpected_response");}
       if(captured!==epoch)throw new DOMException("Disconnected","AbortError");
-      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable","rrset_schema_required","removal_confirmation_required","removal_confirmation_mismatch"],503:["snapshot_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=[400,409,413].includes(response.status)&&e.message!=="unexpected_response";throw e;}
+      if(!response.ok){const e=new Error("unexpected_response");e.status=response.status;const allowed={400:["invalid_snapshot_request"],413:["snapshot_too_large"],409:["identity_conflict","revision_conflict","operation_conflict","receipt_capacity","revision_exhausted","operator_provenance_unavailable","rrset_schema_required","removal_confirmation_required","removal_confirmation_mismatch"],503:["snapshot_unavailable","removal_check_unavailable"]};if(allowed[response.status]?.includes(data?.error))e.message=data.error;e.definitive=([400,409,413].includes(response.status)&&e.message!=="unexpected_response")||e.message==="removal_check_unavailable";throw e;}
       const names=["SecDNS-Operator-Provenance-Profile","SecDNS-Operator-Provenance-Source-SHA256","SecDNS-Operator-Provenance-Content-SHA256"],present=names.map(name=>response.headers.has(name));
       let provenance=null;if(present.some(Boolean)){if(!present.every(Boolean))throw new Error("unexpected_response");provenance={profile:response.headers.get(names[0]),source_sha256:response.headers.get(names[1]),content_sha256:response.headers.get(names[2])};if(!S.operatorProvenance(provenance))throw new Error("unexpected_response");}
       return {data,provenance,rrsetCapability:response.headers.get("SecDNS-RRset-Mutations")};
@@ -190,7 +230,25 @@
   });
   $("disconnect").addEventListener("click",()=>{if(window.secDNSAgent?.active)void window.secDNSAgent.logout().catch(()=>{});disconnect();});
  window.addEventListener("agentexpired",()=>{disconnect(false);status("Authentication session ended. Local draft and pending recovery are preserved.","error");});
- window.addEventListener("agentconnected",async()=>{if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;status(model.pending?"Signed in. Pending changes preserved; nothing was submitted.":"Records loaded.","success",!model.pending);}catch(e){status(message(e),"error");}finally{render();}});
+ window.addEventListener("agentconnected",async()=>{if(busy)return;token="";const captured=epoch;try{await fetchCurrent();if(captured!==epoch)return;connected=true;if(restoreDraft())return;status(model.pending?"Signed in. Pending changes preserved; nothing was submitted.":"Records loaded.","success",!model.pending);}catch(e){status(message(e),"error");}finally{render();}});
+  // Unsaved work kept in this tab while the owner confirmed with WithMy ID (or signed in again):
+  // the draft, its base, an unfinished record form and an uncertain submitted change.
+  window.secDNSAgent?.drafts?.register("records",()=>{
+    const kept=model.exportDraft(),form=model.formDirty&&!$("record-editor").hidden?{selected,name:$("name").value,type:$("type").value,ttl:$("ttl").value,values:[...$("values").querySelectorAll("textarea")].map(v=>v.value),expiryMode:$("expiry-mode").value,expiry:$("expiry").value}:null;
+    if(!kept&&!form)return null;return {model:kept,form};
+  });
+  function restoreDraft(){
+    const saved=window.secDNSAgent?.drafts?.take("records");if(!saved||typeof saved!=="object")return false;
+    try{
+      if(saved.model)model.importDraft(saved.model,[endpoint.href,endpoint.href+"/rrset"]);
+      const f=saved.form;
+      if(f&&typeof f==="object"&&typeof f.name==="string"&&["A","AAAA","CNAME","TXT"].includes(f.type)&&Array.isArray(f.values)&&f.values.every(v=>typeof v==="string")){
+        const record=f.selected?model.draft.find(r=>S.key(r)===f.selected):null;edit(record||null,true,true);
+        if(!record){$("name").value=f.name;$("type").value=f.type;}$("ttl").value=String(f.ttl);$("values").replaceChildren();for(const v of f.values.length?f.values:[""])valueRow(v);$("expiry-mode").value=f.expiryMode==="absolute"?"absolute":"permanent";$("expiry").value=typeof f.expiry==="string"?f.expiry:"";model.touch();
+      }
+      render();status(model.pending?.status==="uncertain"?"Your unsaved changes were kept while you signed in. A submitted change is still unconfirmed; use Check submitted change.":"Your unsaved changes were kept while you signed in. Review them before applying.","success");return true;
+    }catch(e){render();status(message(new Error("draft_restore_refused")),"error");return true;}
+  }
   function randomID(){if(!globalThis.crypto?.getRandomValues)throw new Error("randomness_unavailable");const random=crypto.getRandomValues(new Uint8Array(24));return Array.from(random,x=>x.toString(16).padStart(2,"0")).join("");}
   $("open-import").addEventListener("click",event=>{
     if(typeof BroadcastChannel!=="function"||!globalThis.crypto?.getRandomValues)return;
@@ -207,7 +265,7 @@
   });
   window.addEventListener("pagehide",()=>{importChannel?.close();importChannel=null;importChannelID="";disconnect(false);});
   window.addEventListener("pageshow",e=>{if(e.persisted)disconnect();});
-  window.addEventListener("beforeunload",e=>{if(model.dirty()||model.pending){e.preventDefault();e.returnValue="";}});
+  window.addEventListener("beforeunload",e=>{if((model.dirty()||model.pending)&&!window.secDNSAgent?.leaving){e.preventDefault();e.returnValue="";}});
   $("filter").addEventListener("input",render);
   $("new-record").addEventListener("click",()=>edit(null,false,true));
   $("add-value").addEventListener("click",()=>{if(locked())return;valueRow("");model.touch();controls();});
@@ -222,16 +280,41 @@
   $("refresh").addEventListener("click",async()=>{if(busy||!connected)return;const captured=epoch;try{const accepted=await fetchCurrent();if(accepted&&captured===epoch)status(model.pending?.status==="uncertain"?"Records refreshed. The change is still unconfirmed; use Check submitted change to send the identical request and check its result safely.":model.pending?.status==="acknowledged"?"Changes saved. Review your remaining local edits before saving again.":model.dirty()?"Records refreshed. Your unsaved edits are preserved.":"Records refreshed.",model.pending?.status==="uncertain"?"error":"success");}catch(e){if(captured===epoch)status(message(e),"error");}finally{if(captured===epoch)render();}});
   $("adopt").addEventListener("click",()=>{if($("adopt").disabled)return;if(confirm("Discard all staged and unfinished edits and the previous attempt, then load the full current snapshot? Re-enter desired edits manually. A prior request may already have committed.")){try{model.adopt();edit(null,true);render();status("Loaded current snapshot as a new clean base.","success");}catch(e){status(message(e),"error");}}});
   $("clear").addEventListener("click",()=>{if(confirm("Clear all local drafts, pending request identity and receipt, then disconnect? This cannot cancel or undo any server operation. Closing or reloading also loses this recovery information.")){disconnect(false);model.clear();edit(null,true);render();status("Local work cleared. Reconnect explicitly to load a server snapshot.");}});
-  $("review").addEventListener("click",()=>{
-    if($("review").disabled)return;reviewedEdit=model.review(endpoint.href);const proposal=model.proposal(endpoint.href),d=S.changes(model.base.records,model.draft);
+  function reviewValues(record) {
+    const box=document.createElement("div");box.className="review-values";
+    for(const value of record.values){const v=document.createElement("div");v.className="record-value";v.translate=false;v.textContent=value===""?"(empty string)":value;box.append(v);}
+    const meta=document.createElement("div");meta.className="review-meta";meta.textContent="TTL "+record.ttl_seconds+" s";box.append(meta);
+    if(record.expires_at){const e=document.createElement("div");e.className="review-meta";stamp(e,record.expires_at,"Expires {time}");box.append(e);}
+    return box;
+  }
+  function reviewGroups(rows) {
+    const out=[];
+    for(const [kind,title] of [["removed","Will be deleted"],["added","Will be added"],["changed","Will be changed"]]){
+      const group=rows.filter(r=>r.localChange===kind);if(!group.length)continue;
+      const details=document.createElement("details");details.className="review-group review-group-"+kind;details.open=kind!=="removed"||group.length<=10;
+      const summary=document.createElement("summary"),label=document.createElement("span"),count=document.createElement("span");label.textContent=title;count.className="count-chip change-"+kind;count.textContent=String(group.length);summary.append(label,count);details.append(summary);
+      for(const row of group){
+        const record=row.draft||row.base,item=document.createElement("article"),head=document.createElement("div"),name=document.createElement("strong"),type=document.createElement("span"),undo=document.createElement("button");
+        item.className="review-row";item.dataset.recordKey=row.key;head.className="review-row-head";name.className="record-name";breakable(name,record.name);type.className="review-type";type.textContent=record.type;type.translate=false;
+        undo.type="button";undo.className="row-undo";undo.textContent="Undo";undo.setAttribute("aria-label","Undo changes to "+record.name+" "+record.type);
+        undo.addEventListener("click",()=>{if(busy||model.pending)return;model.undo(row.key);render();if(model.dirty()&&!model.formDirty){openReview();status("Change undone. Review the remaining changes.","success");}else{$("review-dialog").close();status("Change undone. Nothing is left to apply.","success");}});
+        head.append(name,type,undo);item.append(head);
+        if(kind==="changed"){const pair=document.createElement("div");pair.className="review-change";for(const [label,version] of [["Before",row.base],["After",row.draft]]){const side=document.createElement("div"),h=document.createElement("span");h.className="review-label";h.textContent=label;side.append(h,reviewValues(version));pair.append(side);}item.append(pair);}
+        else item.append(reviewValues(record));
+        details.append(item);
+      }
+      out.push(details);
+    }
+    return out;
+  }
+  $("review").addEventListener("click",()=>{if(!$("review").disabled)openReview();});
+  function openReview(){
+    reviewedEdit=model.review(endpoint.href);const proposal=model.proposal(endpoint.href),d=S.changes(model.base.records,model.draft);
     $("review-title").textContent=proposal.mode==="rrset"?"Apply one record change?":"Apply record changes?";
-    $("review-description").textContent=`${d.added} added, ${d.changed} changed, ${d.removed} removed.`;
+    $("review-description").replaceChildren();for(const [kind,n,label] of [["added",d.added,"{n} added"],["changed",d.changed,"{n} changed"],["removed",d.removed,"{n} removed"]]){const chip=document.createElement("span");chip.className="count-chip"+(n?" change-"+kind:"");chip.textContent=label.replace("{n}",String(n));$("review-description").append(chip);}
     $("review-scope").textContent=proposal.mode==="rrset"?"Other records remain unchanged.":"This sends the complete record list, including retained expired records. The server checks that no newer changes conflict before saving.";
     $("review-technical").textContent=`Base revision ${model.base.revision}. ${proposal.mode==="rrset"?"Conditional single-record operation":"Complete snapshot replacement"}.`;
-    $("review-records").replaceChildren();
-    for(const row of S.comparisonRows(model.base.records,model.draft,model.current?.records||null).filter(r=>r.localChange!=="unchanged")){
-      const group=document.createElement("section");group.className="comparison-versions";group.append(comparisonVersion("Before",row.base),comparisonVersion("After",row.draft));$("review-records").append(group);
-    }
+    $("review-records").replaceChildren(...reviewGroups(S.comparisonRows(model.base.records,model.draft,model.current?.records||null).filter(r=>r.localChange!=="unchanged")));
     // Replacing the record list so that records disappear is destructive: pin the impact above
     // the scrolling change list, make the action a danger button naming the count, and above a
     // threshold (5 records or 20% of the list) require typing the count or REPLACE.
@@ -244,10 +327,11 @@
       $("review-danger-detail").textContent=`${d.removed} of ${total} current ${plural(total)} will be deleted and stop resolving. Only the ${model.draft.length} ${plural(model.draft.length)} in this list will remain.`;
       $("review-typed-label").textContent=`Type ${d.removed} (or REPLACE) to confirm`;
     }
-    $("review-confirm").className=danger?"danger-solid":"primary";
-    $("review-confirm").textContent=danger?`Replace — remove ${d.removed} ${plural(d.removed)}`:proposal.mode==="rrset"?"Apply record change":"Apply changes";
-    reviewGuardSync();$("review-dialog").showModal();if(typed)$("review-typed").focus();
-  });
+    // Any change that removes records is a danger action, also a single deletion.
+    $("review-confirm").className=d.removed>0?"danger-solid":"primary";
+    $("review-confirm").textContent=danger?`Replace — remove ${d.removed} ${plural(d.removed)}`:d.removed>0?`Apply — delete ${d.removed} ${plural(d.removed)}`:proposal.mode==="rrset"?"Apply record change":"Apply changes";
+    reviewGuardSync();if(!$("review-dialog").open)$("review-dialog").showModal();if(typed)$("review-typed").focus();else $("review-cancel").focus();
+  }
   function reviewGuardMet(){if(!reviewGuard.typed)return true;const v=$("review-typed").value.trim();return v===String(reviewGuard.removed)||v.toUpperCase()==="REPLACE";}
   function reviewGuardSync(){$("review-confirm").disabled=!reviewGuardMet();}
   $("review-typed").addEventListener("input",reviewGuardSync);
