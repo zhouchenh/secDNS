@@ -12,7 +12,7 @@
   label.htmlFor = input.id; label.textContent = "Agent credential"; button.textContent = "Sign in as agent"; button.className = "primary";
   const note = document.createElement("p"); note.role = "status"; note.setAttribute("aria-live", "polite");
   const identity = document.createElement("p"); identity.id = "agent-identity"; identity.hidden = true;
-  const logout = document.createElement("button"); logout.type = "button"; logout.textContent = "Sign out agent"; logout.hidden = true;
+  const logout = document.createElement("button"); logout.id = "agent-logout"; logout.type = "button"; logout.textContent = "Sign out agent"; logout.hidden = true;
   form.append(label,input,button); panel.append(title,description,form,note); const login=document.getElementById("login");if(login)login.before(panel);else document.querySelector("main")?.prepend(panel);
   const warning=document.createElement("p");warning.id="auth-session-warning";warning.role="status";warning.setAttribute("aria-live","polite");
   document.querySelector("header")?.append(identity,logout,warning);

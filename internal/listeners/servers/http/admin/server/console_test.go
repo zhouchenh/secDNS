@@ -3,6 +3,7 @@ package server
 import (
 	"github.com/zhouchenh/secDNS/internal/recordstore"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -56,7 +57,7 @@ func TestConsoleActualRoutes(t *testing.T) {
 		t.Fatal(r.Code)
 	}
 	body := r.Body.String()
-	if !strings.Contains(body, `aria-current="page">Local replication`) || strings.Contains(body, `>DNS records</a>`) || strings.Contains(body, `>Import records</a>`) || strings.Contains(body, `id="console-account"`) {
+	if !regexp.MustCompile(`aria-current="page"><svg[^>]*><path[^>]*/></svg><span>Local replication</span>`).MatchString(body) || strings.Contains(body, `>DNS records</span></a>`) || strings.Contains(body, `>Import records</span></a>`) || strings.Contains(body, `id="console-account"`) {
 		t.Fatal("follower-only role navigation")
 	}
 	if r := do(h, "GET", "/owned-static/ui/console.css", "", ""); r.Code != 200 {

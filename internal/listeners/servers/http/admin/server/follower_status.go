@@ -84,7 +84,7 @@ func (h *HTTPAdminServer) followerRoutes(mux *http.ServeMux, base string) {
 	}, false, adminauth.RecordsRead))
 }
 func (h *HTTPAdminServer) followerUIRoutes(mux *http.ServeMux, base string) {
-	for _, asset := range []struct{ name, kind string }{{"index.html", "text/html"}, {"app.js", "text/javascript"}, {"style.css", "text/css"}} {
+	for _, asset := range []struct{ name, kind string }{{"index.html", "text/html"}, {"app.js", "text/javascript"}} {
 		data, e := editorAssets.ReadFile("follower_ui/" + asset.name)
 		if e != nil {
 			panic(e)
@@ -110,4 +110,4 @@ func (h *HTTPAdminServer) followerUIRoutes(mux *http.ServeMux, base string) {
 	}
 }
 
-const followerAuthAssets = `<link rel="stylesheet" href="../../auth/auth.css"><script defer src="../../auth/agent.js"></script><script defer src="../../auth/human.js"></script><script defer src="../../auth/passkey.js"></script>`
+const followerAuthAssets = `<script defer src="../../auth/agent.js"></script><script defer src="../../auth/human.js"></script><script defer src="../../auth/passkey.js"></script>`

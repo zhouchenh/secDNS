@@ -1,0 +1,25 @@
+name: console-ui
+
+# CI-safe checks for the admin console UI: string catalogue, theme/tokens, and the
+# single sign-on path carrying no break-glass/recovery/password/TOTP wording. These
+# tests open no network listeners and need no browser.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  console-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+      - name: Console UI tests
+        run: |
+          umask 077
+          go test -count=1 -run 'TestConsoleCatalogueComplete|TestConsoleThemeAndTokens|TestSSOPathServesNoLocalCredentialWording|TestConsoleActualRoutes|TestConsoleHandoffPreservesExistingMechanism|TestTrustedSSOPageCarriesNoPasswordField' ./internal/listeners/servers/http/admin/server/

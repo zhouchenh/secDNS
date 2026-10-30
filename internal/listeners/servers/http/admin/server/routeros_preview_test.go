@@ -75,7 +75,7 @@ func TestRouterOSPreviewModesRoutesAndNoMutation(t *testing.T) {
 				if versioned && !bytes.Equal(before, do(h, "GET", h.basePath()+"/snapshot", testToken, "").Body.Bytes()) {
 					t.Fatal("preview changed snapshot/revision")
 				}
-				for _, path := range []string{"/", "/app.js", "/state.js", "/style.css"} {
+				for _, path := range []string{"/", "/app.js", "/state.js"} {
 					w = do(h, "GET", h.basePath()+"/ui/import-preview"+path, "", "")
 					if w.Code != 200 || w.Header().Get("Content-Security-Policy") != editorCSP || strings.Contains(w.Body.String(), testToken) {
 						t.Fatal("asset/auth/header", path, w.Code)

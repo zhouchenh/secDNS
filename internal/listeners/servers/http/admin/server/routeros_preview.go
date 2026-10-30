@@ -314,18 +314,24 @@ func (h *HTTPAdminServer) routerOSPreviewRoutes(mux *http.ServeMux, base string)
 		{"/{$}", "index.html", "text/html; charset=utf-8"},
 		{"/app.js", "app.js", "text/javascript; charset=utf-8"},
 		{"/state.js", "state.js", "text/javascript; charset=utf-8"},
-		{"/style.css", "style.css", "text/css; charset=utf-8"},
 	} {
 		data, err := editorAssets.ReadFile("preview_ui/" + asset.file)
 		if err != nil {
 			panic(err)
 		}
+		ssoData := data
 		if asset.file == "index.html" {
 			data = h.consolePage(data, base, "import")
+			ssoData = withoutLegacyImportToken(data)
 		}
 		mux.HandleFunc("GET "+base+"/ui/import-preview"+asset.route, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
 			w.Header().Set("Content-Type", asset.contentType)
+			// As on the records page: the single sign-on path never receives a credential field.
+			if h.trustedSSOAvailable(r) {
+				_, _ = w.Write(ssoData)
+				return
+			}
 			_, _ = w.Write(data)
 		})
 	}

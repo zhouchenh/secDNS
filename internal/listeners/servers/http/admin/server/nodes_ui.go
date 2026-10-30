@@ -19,15 +19,11 @@ func (h *HTTPAdminServer) nodeUIRoutes(mux *http.ServeMux, base string) {
 			w.Write(data)
 		})
 	}
-	for _, asset := range []string{"nodes.js", "nodes-bgp.js", "nodes-health.js", "nodes.css"} {
+	for _, asset := range []string{"nodes.js", "nodes-bgp.js", "nodes-health.js"} {
 		data, _ := editorAssets.ReadFile("console_ui/" + asset)
 		mux.HandleFunc("GET "+base+"/ui/"+asset, func(w http.ResponseWriter, r *http.Request) {
 			editorHeaders(w)
-			kind := "text/javascript"
-			if asset == "nodes.css" {
-				kind = "text/css"
-			}
-			w.Header().Set("Content-Type", kind+"; charset=utf-8")
+			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 			w.Write(data)
 		})
 	}
