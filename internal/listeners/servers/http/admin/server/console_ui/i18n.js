@@ -1,7 +1,8 @@
 // secDNS console UI language: catalogue lookup, DOM translation and locale-correct
-// formatting. Page scripts keep building their DOM in English; after they have run
-// (DOMContentLoaded) the document is translated once and then kept translated by a
-// MutationObserver. The English source of every translated node is remembered, so the
+// formatting. Page scripts keep building their DOM in English; this file is the last
+// deferred script and starts at DOMContentLoaded, after every page and shell script has
+// run, so they all read English sources. The document is then translated once and kept
+// translated by a MutationObserver. The English source of every translated node is remembered, so the
 // language can be switched in place without reloading (a reload would lose drafts).
 // User data (record names and values, code, hashes, identities) is never translated.
 (() => {
@@ -42,6 +43,10 @@
   };
   let lang = LANGS.includes(root.dataset.uiLang) ? root.dataset.uiLang : "en";
 
+  // Placeholders whose captured text is itself UI wording (never user or server data) and may
+  // be localized. Every other captured value (names, values, ids, paths, revisions, server
+  // text) is inserted verbatim into the translated sentence.
+  const LOCALIZED = new Set(["state", "page", "note", "message", "kind", "access", "change"]);
   // Translate one English string into the current language; unknown text is returned as is.
   const translate = (text, into = lang) => {
     if (into === "en" || typeof text !== "string") return text;
@@ -53,8 +58,11 @@
     for (const p of patterns) {
       const m = p.re.exec(core);
       if (!m) continue;
-      let out = target[into].get(p.key);
-      p.names.forEach((name, i) => { out = out.split("{" + name + "}").join(translate(m[i + 1], into)); });
+      const captured = {};
+      p.names.forEach((name, i) => { captured[name] = m[i + 1]; });
+      // One pass over the template: inserted data is never re-scanned or translated.
+      const out = target[into].get(p.key).replace(/\{([a-zA-Z0-9_]+)\}/g, (all, name) =>
+        !Object.hasOwn(captured, name) ? all : LOCALIZED.has(name) ? translate(captured[name], into) : captured[name]);
       return lead + out + trail;
     }
     return text;
@@ -67,7 +75,7 @@
   };
 
   // --- DOM translation -------------------------------------------------------------
-  const SKIP = "script,style,textarea,pre,code,svg,[translate=no],.notranslate,.record-name,.record-value,.record-fqdn,.record-ip,.hash,#candidate,#agent-identity,#endpoint,.node-observation-address,.comparison-values,.fields dt,#human-seed";
+  const SKIP = "script,style,textarea,pre,code,svg,[translate=no],[data-i18n-skip],.notranslate,.record-name,.record-value,.record-fqdn,.record-ip,.hash,#candidate,#agent-identity,#endpoint,.node-observation-address,.comparison-values,.fields dt,#human-seed";
   const ATTRS = ["placeholder", "aria-label", "title", "alt"];
   const textSource = new WeakMap(), attrSource = new WeakMap();
   let writing = false;
@@ -195,6 +203,8 @@
     observe();
     root.classList.remove("i18n-pending");
   };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
-  else start();
+  let started = false;
+  const once = () => { if (!started) { started = true; start(); } };
+  if (document.readyState === "complete") once();
+  else document.addEventListener("DOMContentLoaded", once, { once: true });
 })();

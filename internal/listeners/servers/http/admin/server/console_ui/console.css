@@ -39,7 +39,7 @@ body{margin:0;font-family:var(--font-sans);font-size:var(--fs-md);line-height:va
 :where(input:not([type=checkbox]):not([type=radio]):not([type=file]),select,textarea){width:100%;max-width:100%;min-width:0;font:inherit;font-size:var(--fs-md);color:var(--ink);background:var(--bg-elev);border:1px solid var(--field-line);border-radius:var(--r-sm);padding:8px 10px;min-height:var(--control-h);line-height:1.4;transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
 :where(textarea){resize:vertical;min-height:88px}
 :where(input[type=file]){font:inherit;font-size:var(--fs-sm);color:var(--ink-2);max-width:100%}
-:where(input,select,textarea)::placeholder{color:var(--muted-2)}
+:where(input,select,textarea)::placeholder{color:var(--muted)}
 :where(input,select,textarea):focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in oklch,var(--primary) 25%,transparent)}
 :where(input,select,textarea):disabled{opacity:.6;cursor:not-allowed}
 :where(input[aria-invalid=true],select[aria-invalid=true],textarea[aria-invalid=true]){border-color:var(--danger-line)}

@@ -212,6 +212,23 @@ func TestConsoleThemeAndTokens(t *testing.T) {
 			t.Fatal("shell asset not linked:", want)
 		}
 	}
+	// The language pass starts last, after the shell has read its English sources.
+	if strings.Index(page, `/admin/ui/console.js"`) > strings.Index(page, `/admin/ui/i18n.js"`) || !strings.Contains(i18n, `addEventListener("DOMContentLoaded", once`) {
+		t.Fatal("i18n.js must start after console.js has built the shell")
+	}
+	// Data is never translated: captured pattern values are inserted verbatim unless the
+	// placeholder is UI wording, and data containers are skipped.
+	if !strings.Contains(i18n, `const LOCALIZED = new Set(["state", "page", "note", "message", "kind", "access", "change"]);`) ||
+		!strings.Contains(i18n, `LOCALIZED.has(name) ? translate(captured[name], into) : captured[name]`) || !strings.Contains(i18n, "[translate=no],[data-i18n-skip]") {
+		t.Fatal("i18n.js must insert captured data verbatim and skip data containers")
+	}
+	preview, _ := editorAssets.ReadFile("preview_ui/index.html")
+	if !strings.Contains(string(preview), `<tbody id="candidate-rows" translate="no">`) {
+		t.Fatal("import candidate table must be excluded from translation")
+	}
+	if strings.Contains(css, "::placeholder{color:var(--muted-2)}") {
+		t.Fatal("placeholder text must use a 4.5:1 token")
+	}
 	// Dark mode: the system preference (unless forced light) and the forced dark theme
 	// define exactly the same palette, and it covers every light palette variable.
 	block := func(selector string) string {

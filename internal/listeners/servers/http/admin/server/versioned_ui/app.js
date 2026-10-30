@@ -35,7 +35,7 @@
     $("comparison-rows").replaceChildren();
     for (const row of shown) {
       const record = row.draft || row.base || row.current, card = document.createElement("article"), heading = document.createElement("h3"), labels = document.createElement("p"), versions = document.createElement("div");
-      card.className = "comparison-record"; card.dataset.recordKey = row.key; heading.textContent = record.name + " · " + record.type; labels.className = "comparison-labels";
+      card.className = "comparison-record"; card.dataset.recordKey = row.key; heading.textContent = record.name + " · " + record.type; heading.translate = false; labels.className = "comparison-labels";
       for (const [scope, change] of [["Your changes",row.localChange],["Server changes",row.serverChange]]) { const badge = document.createElement("span"); badge.className = "change-badge change-" + change; badge.textContent = scope + ": " + change; labels.append(badge); }
       versions.className = "comparison-versions"; versions.append(comparisonVersion("Saved version",row.base),comparisonVersion("Your changes",row.draft),comparisonVersion("Latest server version",row.current,row.serverChange === "unavailable")); card.append(heading,labels,versions); $("comparison-rows").append(card);
     }
@@ -134,10 +134,10 @@
       const tr = document.createElement("tr"), info = document.createElement("td"), title = document.createElement("div"); title.className = "record-name"; breakable(title, record.name); info.append(title);const original=model.base?.records.find(r=>S.key(r)===S.key(record));if(!original||JSON.stringify(original)!==JSON.stringify(record)){const pending=document.createElement("span");pending.className="draft-marker";pending.textContent="Pending";info.append(pending);} const valueCell=document.createElement("td");
       for (const value of record.values) {const d = document.createElement("div");d.className="record-value";if(value==="")d.textContent="(empty string)";else if(record.type==="A"||record.type==="AAAA"){d.classList.add("record-ip");d.textContent=value;}else if(record.type==="CNAME"){d.classList.add("record-fqdn");breakable(d,value);}else d.textContent=value;valueCell.append(d);}
       if (record.expires_at) {const d=document.createElement("div");const expired=Date.parse(record.expires_at)<=Date.now();d.className=expired?"record-expired":"record-expiry";d.textContent=(expired?"Expired · retained ":"Expires ")+(window.secDNSI18n?.date(record.expires_at)||record.expires_at);d.title=record.expires_at;valueCell.append(d);}
-      const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
+      const typeCell=document.createElement("td"),ttlCell=document.createElement("td");typeCell.textContent=record.type;typeCell.translate=false;ttlCell.textContent=record.ttl_seconds+" s";tr.append(info,typeCell,valueCell,ttlCell);
       const actions=document.createElement("td"), change=document.createElement("button"), remove=document.createElement("button");change.textContent="Edit";remove.textContent="Delete";change.setAttribute("aria-label","Edit "+record.name+" "+record.type);remove.setAttribute("aria-label","Delete "+record.name+" "+record.type);
       change.addEventListener("click",()=>{if(!locked()) edit(record,false,true);});
-      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:remove};$("delete-record").textContent=record.name+" / "+record.type;$("delete-dialog").showModal();$("delete-cancel").focus();});
+      remove.addEventListener("click",()=>{if(locked())return;if(model.formDirty){status("Stage or discard unfinished fields before deleting a row.","error");return;}deletion={key:S.key(record),record:JSON.stringify(record),epoch,opener:remove};$("delete-record").textContent=record.name+" / "+record.type;$("delete-record").translate=false;$("delete-dialog").showModal();$("delete-cancel").focus();});
       actions.append(change,remove);tr.append(actions);$("rows").append(tr);
     }
     $("count").textContent=count===model.draft.length?String(count):count+" of "+model.draft.length;

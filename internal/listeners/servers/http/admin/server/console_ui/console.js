@@ -75,7 +75,7 @@
  Object.defineProperty(userMenu,"open",{get:()=>!panel.hidden,set:v=>v?openMenu():closeMenu(false)});
 
  if(!human||!agent){identityBlock.hidden=securityButton.hidden=true;accountName.textContent="";accountRole.textContent="";userMenu.classList.add("anonymous");return;}
- const identity=document.getElementById("agent-identity"),logout=[...header.querySelectorAll("button")].find(b=>b.textContent.startsWith("Sign out"));
+ const identity=document.getElementById("agent-identity"),logout=document.getElementById("agent-logout")||[...header.querySelectorAll("button")].find(b=>b.textContent.startsWith("Sign out"));
  if(logout){logout.classList.add("menu-item","menu-signout");panel.insertBefore(logout,divider.nextSibling);}
  const warning=document.getElementById("auth-session-warning");if(warning)status.append(warning);
  const sessionDetails=document.createElement("details");sessionDetails.id="session-details";const detailsTitle=document.createElement("summary");detailsTitle.textContent="Advanced session details";sessionDetails.append(detailsTitle);if(identity)sessionDetails.append(identity);

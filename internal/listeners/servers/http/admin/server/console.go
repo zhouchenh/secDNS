@@ -15,8 +15,8 @@ var consoleAssets = []struct{ name, kind string }{
 	{"tokens.css", "text/css"},
 	{"console.css", "text/css"},
 	{"strings.js", "text/javascript"},
-	{"i18n.js", "text/javascript"},
 	{"console.js", "text/javascript"},
+	{"i18n.js", "text/javascript"},
 }
 
 // consoleFonts are the self-hosted Hanken Grotesk faces (SIL OFL 1.1, latin subset).
