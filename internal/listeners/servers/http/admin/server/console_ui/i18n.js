@@ -114,18 +114,22 @@
     });
     for (let n = tw.nextNode(); n; n = tw.nextNode()) { if (n.nodeType === 3) doText(n); else doAttrs(n); }
   };
-  const run = fn => { writing = true; try { fn(); } finally { writing = false; observer.takeRecords(); } };
+  const handle = records => {
+    for (const r of records) {
+      if (r.type === "characterData") doText(r.target);
+      else if (r.type === "attributes") doAttrs(r.target);
+      else for (const n of r.addedNodes) { walk(n); stamps(n); }
+    }
+  };
+  // Changes other scripts made before this write are translated first, never dropped with this
+  // write's own records.
+  const run = fn => { const earlier = observing ? observer.takeRecords() : []; writing = true; try { handle(earlier); fn(); } finally { writing = false; observer.takeRecords(); } };
+  let observing = false;
   const observer = new MutationObserver(records => {
     if (writing) return;
-    run(() => {
-      for (const r of records) {
-        if (r.type === "characterData") doText(r.target);
-        else if (r.type === "attributes") doAttrs(r.target);
-        else for (const n of r.addedNodes) { walk(n); stamps(n); }
-      }
-    });
+    run(() => handle(records));
   });
-  const observe = () => observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ATTRS });
+  const observe = () => { observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ATTRS }); observing = true; };
 
   // --- formatting --------------------------------------------------------------------
   const intlLocale = () => (lang === "zh-Hant" ? "zh-Hant-TW" : "en-US");

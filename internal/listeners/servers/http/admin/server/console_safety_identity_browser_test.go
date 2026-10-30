@@ -90,6 +90,15 @@ const S={
   o.en1=T(el());window.secDNSI18n.setLanguage("zh-Hant");await sleep(300);o.zh=T(el());window.secDNSI18n.setLanguage("en");await sleep(300);o.en2=T(el());
   return o;
  },
+ async zh(o){
+  await records();await sleep(300);window.secDNSI18n.setLanguage("zh-Hant");await sleep(400);
+  const del=[...document.querySelectorAll("#rows button")].find(b=>T(b)==="刪除");o.deleteFound=!!del;
+  del.click();await until(()=>document.getElementById("delete-dialog").open);document.getElementById("delete-confirm").click();await sleep(400);
+  o.englishButtons=[...document.querySelectorAll("#rows button")].filter(b=>/^(Edit|Delete|Undo)$/.test(T(b))).length;
+  o.pendingBar=T(document.getElementById("pending-counts"));o.expiry=T(document.querySelector("#rows .record-expiry"));o.marker=T(document.querySelector("#rows .removal-marker"));
+  o.managed=[...document.querySelectorAll("#human-access p")].some(p=>T(p)==="你的登入由 WithMy ID 管理。");o.cards=[...document.querySelectorAll("#human-security .sso-card > h3")].map(T);
+  return o;
+ },
  async busy(o){
   await until(()=>vis(document.querySelector(".sso-busy")));o.title=T(document.querySelector("#human-access h2"));o.reason=T(document.querySelector(".sso-signed-out-reason"));
   o.signInLinkVisible=vis(document.querySelector(".sso-signed-out"));const retry=btn(document.querySelector(".sso-busy"),"Try again");o.retry=!!retry;
@@ -372,6 +381,12 @@ func TestConsoleSafetyIdentityBrowser(t *testing.T) {
 	r = run(1280, 900, "/admin/ui/?scenario=dates")
 	if !strings.Contains(str(r, "en1"), "Dec 31, 2030") || !strings.Contains(str(r, "zh"), "2030年12月31日") || strings.Contains(str(r, "zh"), "Dec") || !strings.HasSuffix(str(r, "zh"), "到期") || str(r, "en2") != str(r, "en1") {
 		t.Fatalf("record expiry not re-rendered on a language switch: %v", r)
+	}
+	// zh-Hant: text built in the same task as a re-rendered date is still translated.
+	r = run(1280, 900, "/admin/ui/?scenario=zh")
+	if r["deleteFound"] != true || num(r, "englishButtons") != 0 || str(r, "pendingBar") != "移除 1 項" || !strings.HasPrefix(str(r, "expiry"), "於 ") || str(r, "marker") != "將會刪除" ||
+		r["managed"] != true || fmt.Sprint(r["cards"]) != "[目前登入身分 確認是你本人 工作階段]" {
+		t.Fatalf("zh-Hant page left English text: %v", r)
 	}
 	// C31: all session slots in use, then Retry in place.
 	busyLeft.Store(1)
