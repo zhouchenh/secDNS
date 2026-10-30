@@ -16,7 +16,8 @@
  const sidebar=document.querySelector('.console-sidebar');
  const backdrop=node('div','console-nav-backdrop');backdrop.hidden=true;
  const menu=node('button','topbar-icon console-menu-toggle');menu.type='button';menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-label','Open navigation');menu.append(svg("M4 6h16M4 12h16M4 18h16"));
- const setNav=open=>{if(!sidebar)return;sidebar.classList.toggle('menu-open',open);backdrop.hidden=!open;menu.setAttribute('aria-expanded',String(open));menu.setAttribute('aria-label',open?'Close navigation':'Open navigation');document.body.classList.toggle('nav-open',open);if(open)sidebar.querySelector('a,button:not([hidden])')?.focus();};
+ // While the drawer is open the page behind it is inert (C42): not focusable, not read out.
+ const setNav=open=>{if(!sidebar)return;sidebar.classList.toggle('menu-open',open);backdrop.hidden=!open;main.inert=open;document.getElementById('console-auth-screen')?.toggleAttribute('inert',open);menu.setAttribute('aria-expanded',String(open));menu.setAttribute('aria-label',open?'Close navigation':'Open navigation');document.body.classList.toggle('nav-open',open);if(open)sidebar.querySelector('a,button:not([hidden])')?.focus();};
  if(sidebar){sidebar.id='console-navigation';menu.setAttribute('aria-controls',sidebar.id);sidebar.after(backdrop);
   menu.addEventListener('click',()=>setNav(!sidebar.classList.contains('menu-open')));backdrop.addEventListener('click',()=>{setNav(false);menu.focus();});
   sidebar.addEventListener('keydown',event=>{if(event.key==='Escape'&&sidebar.classList.contains('menu-open')){setNav(false);menu.focus();}});
@@ -34,6 +35,8 @@
  const badge=node("span","env-badge",foot?.querySelector('strong')?.textContent.trim()||"");badge.hidden=!badge.textContent;
  const scope=foot?.querySelector('span')?.textContent.trim();if(scope)badge.title=scope;
  context.append(label,badge);
+ // Truthful connection state (C32): pages report what they observed; the badge dot follows it.
+ window.addEventListener('secdns:connection',e=>{const state=e.detail?.state;if(!state)return;badge.dataset.state=state;});
  const status=node("div","topbar-status");status.setAttribute('aria-live','polite');
  for(const old of [...header.children]){if(old.tagName==="STRONG")old.remove();else if(old.id==="connection"||old.id==="authentication")status.append(old);}
  const followerLink=header.querySelector(':scope>a');if(followerLink)followerLink.classList.add('topbar-link');
@@ -65,8 +68,9 @@
  panel.append(identityBlock,securityButton,theme.group,language.group,divider,host);
  userMenu.append(userButton,panel);header.append(userMenu);
  const syncMenu=()=>{const current=I()?.getTheme()||"system",lang=I()?.lang||document.documentElement.lang;for(const b of theme.buttons){const on=b.dataset.value===current;b.setAttribute("aria-checked",String(on));b.tabIndex=on?0:-1;}for(const b of language.buttons){const on=b.dataset.value===lang;b.setAttribute("aria-checked",String(on));b.tabIndex=on?0:-1;}};
- const openMenu=()=>{syncMenu();panel.hidden=false;userButton.setAttribute("aria-expanded","true");userMenu.classList.add("open");(panel.querySelector(".menu-item:not([hidden])")||panel.querySelector('[aria-checked="true"]'))?.focus();};
- const closeMenu=(focus=true)=>{if(panel.hidden)return;panel.hidden=true;userButton.setAttribute("aria-expanded","false");userMenu.classList.remove("open");if(focus)userButton.focus();};
+ const phone=matchMedia("(max-width: 639px)");
+ const openMenu=()=>{syncMenu();panel.hidden=false;userButton.setAttribute("aria-expanded","true");userMenu.classList.add("open");if(phone.matches)main.inert=true;(panel.querySelector(".menu-item:not([hidden])")||panel.querySelector('[aria-checked="true"]'))?.focus();};
+ const closeMenu=(focus=true)=>{if(panel.hidden)return;panel.hidden=true;if(!sidebar?.classList.contains('menu-open'))main.inert=false;userButton.setAttribute("aria-expanded","false");userMenu.classList.remove("open");if(focus)userButton.focus();};
  userButton.addEventListener("click",()=>panel.hidden?openMenu():closeMenu());
  userMenu.addEventListener("keydown",e=>{if(e.key==="Escape"){e.stopPropagation();closeMenu();}});
  document.addEventListener("click",e=>{if(!userMenu.contains(e.target))closeMenu(false);});
