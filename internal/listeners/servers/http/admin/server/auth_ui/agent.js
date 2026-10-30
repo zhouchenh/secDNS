@@ -6,13 +6,17 @@
   let actor = null, csrf = "", epoch = 0, timer = null, warningTimer=null;
   // Why the last session ended ("expired", "ended", "signed_out", "busy"), and when; the
   // signed-out card states it. "busy" is the sign-in service refusing a new session (503).
-  let ended = null, leaving = false;
+  let ended = null, leaving = false, lastWho = "";
   // Session-scoped drafts: pages register a saver; before a WithMy ID round trip (step-up or
   // signing in again) their unsaved work is kept in this tab's sessionStorage, keyed by page,
   // for at most 30 minutes, and restored on return. Signing out clears every saved draft.
   const DRAFTS = "secdns.draft.", DRAFT_TTL = 30 * 60000, savers = new Map();
   const draftKey = () => DRAFTS + location.pathname;
-  const readDrafts = () => { try { const raw = sessionStorage.getItem(draftKey()); if (!raw) return null; const entry = JSON.parse(raw); if (!entry || entry.v !== 1 || entry.page !== location.pathname || !Number.isFinite(entry.at) || Date.now() - entry.at > DRAFT_TTL || Date.now() < entry.at - 60000 || !entry.items || typeof entry.items !== "object") { sessionStorage.removeItem(draftKey()); return null; } return entry; } catch { return null; } };
+  // Kept work belongs to the signed-in principal that made it (realm, node and principal of the
+  // session; the single sign-on owner is the WithMy ID subject mapped to the console owner). It is
+  // handed out only to that principal; any other principal signing in on this tab clears it all.
+  const who = () => actor ? [actor.principal_type, actor.principal_id, actor.realm_id, actor.node_id].join("|") : "";
+  const readDrafts = () => { try { const raw = sessionStorage.getItem(draftKey()); if (!raw) return null; const entry = JSON.parse(raw); if (!entry || entry.v !== 1 || entry.page !== location.pathname || !Number.isFinite(entry.at) || Date.now() - entry.at > DRAFT_TTL || Date.now() < entry.at - 60000 || !entry.items || typeof entry.items !== "object") { sessionStorage.removeItem(draftKey()); return null; } if (typeof entry.who !== "string" || !entry.who || entry.who !== who()) { clearDrafts(); return null; } return entry; } catch { return null; } };
   const writeDrafts = entry => { try { if (!entry || (!Object.keys(entry.items).length && !entry.intent)) sessionStorage.removeItem(draftKey()); else sessionStorage.setItem(draftKey(), JSON.stringify(entry)); return true; } catch { return false; } };
   const clearDrafts = () => { try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const k = sessionStorage.key(i); if (k && k.startsWith(DRAFTS)) sessionStorage.removeItem(k); } } catch { /* storage unavailable */ } };
   // The only places a round trip may return to: this console's own pages (same origin, a
@@ -23,7 +27,9 @@
     async preserve(intent = null) {
       const items = {};
       for (const [name, save] of savers) { try { const value = await save(); if (value !== undefined && value !== null) items[name] = value; } catch { return false; } }
-      return writeDrafts({ v: 1, page: location.pathname, at: Date.now(), items, intent: intent && typeof intent.action === "string" ? { action: intent.action, at: Date.now() } : null });
+      const owner = who() || lastWho;
+      if (!owner) return false;
+      return writeDrafts({ v: 1, page: location.pathname, at: Date.now(), who: owner, items, intent: intent && typeof intent.action === "string" ? { action: intent.action, at: Date.now() } : null });
     },
     // Each saved item and the intent are handed out once.
     take(name) { const entry = readDrafts(); if (!entry || !Object.hasOwn(entry.items, name)) return null; const value = entry.items[name]; delete entry.items[name]; writeDrafts(entry); return value; },
@@ -57,7 +63,7 @@
   }
   function accept(data) {
     if(!Number.isFinite(Date.parse(data.expires_at))||!Number.isFinite(Date.parse(data.idle_expires_at))||data.record_role!=="writable_authority"||!["agent","human"].includes(data.principal_type)||typeof data.csrf!=="string"||!Array.isArray(data.scopes)||!data.scopes.includes("ui:view"))throw new Error("Unexpected authentication response.");
-    actor=data;csrf=data.csrf;ended=null;panel.hidden=true;logout.textContent=data.principal_type==="human"?"Sign out":"Sign out agent";form.hidden=true;identity.hidden=logout.hidden=false;
+    actor=data;csrf=data.csrf;ended=null;lastWho=who();panel.hidden=true;logout.textContent=data.principal_type==="human"?"Sign out":"Sign out agent";form.hidden=true;identity.hidden=logout.hidden=false;
     identity.textContent=`${data.principal_type==="human"?"Human":"Agent"} · ${data.display_name} · realm ${data.realm_id} · node ${data.node_id} · ${data.scopes.includes("records:write")?"Edit access":"Read-only access"} | ${data.scopes.join(" · ")} · expires ${new Date(Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))).toISOString()}`;
     clearTimeout(timer);const remaining=Math.min(Date.parse(data.expires_at),Date.parse(data.idle_expires_at))-Date.now();
     clearTimeout(warningTimer);warning.textContent="";if(data.principal_type==="human")warningTimer=setTimeout(()=>{warning.textContent="Your session expires in two minutes. Continue working or sign in again; local drafts are preserved.";},Math.max(0,remaining-120000));

@@ -265,9 +265,16 @@ func rrsetRemovalCode(base recordset.Metadata, baseRecords []recordset.Record, r
 	if base.RulesetID != request.RulesetID || base.LineageID != request.LineageID || base.Revision != request.Revision {
 		return ""
 	}
+	// The key is matched exactly as the record store matches it when it deletes: both sides go
+	// through the record server's own canonicaliser (trimmed, lower-case, fully qualified name;
+	// upper-case type). A key it cannot canonicalise is refused, never counted as "nothing".
+	name, typ, err := recordset.CanonicalKey(request.Key.Name, request.Key.Type)
+	if err != nil {
+		return "invalid_snapshot_request"
+	}
 	removed := 0
 	for _, r := range baseRecords {
-		if strings.TrimSuffix(strings.ToLower(r.Name), ".") == strings.TrimSuffix(strings.ToLower(request.Key.Name), ".") && strings.EqualFold(r.Type, request.Key.Type) {
+		if n, t, e := recordset.CanonicalKey(r.Name, r.Type); e == nil && n == name && t == typ {
 			removed = 1
 			break
 		}
@@ -304,8 +311,13 @@ func removalConfirmationCode(base recordset.Metadata, baseRecords []recordset.Re
 }
 
 func countRemovedRecords(before, after []recordset.Record) int {
+	// the record server's canonical owner/type key (records that cannot be canonicalised keep a
+	// raw key: they are refused by the parser before they get here)
 	key := func(r recordset.Record) string {
-		return strings.TrimSuffix(strings.ToLower(r.Name), ".") + "/" + strings.ToUpper(r.Type)
+		if n, t, e := recordset.CanonicalKey(r.Name, r.Type); e == nil {
+			return n + "/" + t
+		}
+		return "raw:" + r.Name + "/" + r.Type
 	}
 	kept := make(map[string]struct{}, len(after))
 	for _, r := range after {

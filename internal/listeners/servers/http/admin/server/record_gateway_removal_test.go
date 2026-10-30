@@ -347,3 +347,58 @@ func TestRRsetDeletionRemovalConfirmationAuthority(t *testing.T) {
 		t.Fatal("replay", w.Code, w.Body.String())
 	}
 }
+
+// Review M1: a deletion key is matched exactly as the record server canonicalises it (padding,
+// case, trailing dot, type case), so no spelling of an existing key counts as "nothing removed".
+func TestRecordGatewayDeletionKeyCanonical(t *testing.T) {
+	keyDeletion := func(revision, op, name, typ, extra string) string {
+		return `{"expected":{"ruleset_id":"r","lineage_id":"l","revision":"` + revision + `"},"operation_id":"` + op + `","action":"delete","key":{"name":"` + name + `","type":"` + typ + `"}` + extra + `}`
+	}
+	for _, c := range []struct{ name, typ string }{
+		{" g1.invalid.", "A"}, {"g1.invalid. ", "A"}, {"G1.INVALID.", "A"}, {"g1.Invalid", "A"}, {"g1.invalid", "a"},
+		{"g1.invalid.", "a "}, {"g1.invalid.", " A"}, {"\tg1.invalid", " a\t"},
+	} {
+		f := newGatewayRemovalFixture(t, 2)
+		if w := f.post("/snapshot/rrset", keyDeletion("2", "k1", c.name, c.typ, "")); w.Code != 409 || !strings.Contains(w.Body.String(), "removal_confirmation_required") {
+			t.Fatalf("key %q/%q unconfirmed: %d %s", c.name, c.typ, w.Code, w.Body.String())
+		}
+		if w := f.post("/snapshot/rrset", keyDeletion("2", "k2", c.name, c.typ, `,"confirm_removals":0`)); w.Code != 409 || !strings.Contains(w.Body.String(), "removal_confirmation_mismatch") {
+			t.Fatalf("key %q/%q stated 0: %d %s", c.name, c.typ, w.Code, w.Body.String())
+		}
+		if f.forwardedCount() != 0 {
+			t.Fatalf("key %q/%q: a refused deletion reached the authority", c.name, c.typ)
+		}
+		if w := f.post("/snapshot/rrset", keyDeletion("2", "k3", c.name, c.typ, `,"confirm_removals":1`)); w.Code != 200 {
+			t.Fatalf("key %q/%q confirmed: %d %s", c.name, c.typ, w.Code, w.Body.String())
+		}
+		if rev, n := f.revision(); rev != 3 || n != 1 {
+			t.Fatalf("key %q/%q: revision %d, %d records", c.name, c.typ, rev, n)
+		}
+	}
+	f := newGatewayRemovalFixture(t, 2)
+	for _, typ := range []string{"MX", "", "A A"} {
+		if w := f.post("/snapshot/rrset", keyDeletion("2", "u", "g1.invalid.", typ, `,"confirm_removals":1`)); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_snapshot_request") {
+			t.Fatalf("type %q: %d %s", typ, w.Code, w.Body.String())
+		}
+	}
+	if f.forwardedCount() != 0 {
+		t.Fatal("an unknown type reached the authority")
+	}
+	// The shared rule itself canonicalises a key that did not come through the parser.
+	view, _ := f.store.Acquire()
+	for _, key := range []recordset.RecordKey{{Name: " G1.invalid", Type: "a "}, {Name: "g1.INVALID.", Type: "A"}} {
+		req := recordset.RRsetMutation{RulesetID: "r", LineageID: "l", Revision: 2, Action: "delete", Key: &key}
+		if code := rrsetRemovalCode(view.Metadata(), view.Records(), req, true); code != "removal_confirmation_required" {
+			t.Fatalf("raw key %+v: %q", key, code)
+		}
+	}
+	bad := recordset.RRsetMutation{RulesetID: "r", LineageID: "l", Revision: 2, Action: "delete", Key: &recordset.RecordKey{Name: "g1.invalid.", Type: "MX"}}
+	if code := rrsetRemovalCode(view.Metadata(), view.Records(), bad.WithConfirmRemovals(0, true), true); code != "invalid_snapshot_request" {
+		t.Fatalf("unknown type: %q", code)
+	}
+	// Replacements: a non-canonical spelling of a kept record is not counted as a removal.
+	kept := []recordset.Record{{Name: " G1.Invalid", Type: "a", Values: []string{"192.0.2.1"}, TTLSeconds: 60}, {Name: "g2.invalid", Type: "A", Values: []string{"192.0.2.2"}, TTLSeconds: 60}}
+	if n := countRemovedRecords(view.Records(), kept); n != 0 {
+		t.Fatalf("canonical replacement count: %d", n)
+	}
+}

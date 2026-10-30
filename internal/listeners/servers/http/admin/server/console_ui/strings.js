@@ -812,7 +812,8 @@
   "auth.sso.signedInAsTitle": "Signed in as",
   "auth.stepUp.notRenewed": "Your WithMy ID sign-in was not renewed, so nothing changed. Choose Confirm with WithMy ID to try again.",
   "auth.stepUp.confirmed": "Confirmed with WithMy ID.",
-  "import.status.kept": "Your export was kept while you signed in. Review it again to continue."
+  "import.status.kept": "Your export was kept while you signed in. Review it again to continue.",
+  "nodes.error.lastProvider": "This node is the last healthy node serving a prefix it announces"
  },
  "zh-Hant": {
   "shell.nav.open": "開啟導覽",
@@ -1626,6 +1627,7 @@
   "auth.sso.signedInAsTitle": "目前登入身分",
   "auth.stepUp.notRenewed": "你的 WithMy ID 登入未有更新，因此沒有任何變更。請選擇「使用 WithMy ID 確認」再試一次。",
   "auth.stepUp.confirmed": "已使用 WithMy ID 確認。",
-  "import.status.kept": "你登入期間已保留匯出內容。請再次審查以繼續。"
+  "import.status.kept": "你登入期間已保留匯出內容。請再次審查以繼續。",
+  "nodes.error.lastProvider": "此節點是其通告前綴的最後一個健康節點"
  }
 });

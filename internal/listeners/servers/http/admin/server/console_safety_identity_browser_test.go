@@ -99,6 +99,16 @@ const S={
   o.managed=[...document.querySelectorAll("#human-access p")].some(p=>T(p)==="你的登入由 WithMy ID 管理。");o.cards=[...document.querySelectorAll("#human-security .sso-card > h3")].map(T);
   return o;
  },
+ async foreign(o){
+  if(phase==="1"){
+   await records();await sleep(300);btn(rowOf("mail.office.invalid."),"Delete").click();await until(()=>document.getElementById("delete-dialog").open);document.getElementById("delete-confirm").click();await sleep(300);
+   o.saved=await window.secDNSAgent.drafts.preserve(null);const k="secdns.draft."+location.pathname,e=JSON.parse(sessionStorage.getItem(k));o.ownerStored=typeof e.who==="string"&&e.who.length>0;
+   e.who="human|another-principal|realm|node";sessionStorage.setItem(k,JSON.stringify(e));sessionStorage.setItem("fx-phase","2");sessionStorage.setItem("fx-phase1",JSON.stringify(o));location.assign(location.pathname);return null;
+  }
+  Object.assign(o,JSON.parse(sessionStorage.getItem("fx-phase1")||"{}"));o.phase=2;sessionStorage.removeItem("fx-phase");
+  await records();await sleep(800);o.status=T(document.getElementById("status"));o.removed=document.querySelectorAll("#rows tr.row-removed").length;
+  o.leftover=Object.keys(sessionStorage).filter(k=>k.startsWith("secdns.draft.")).length;return o;
+ },
  async busy(o){
   await until(()=>vis(document.querySelector(".sso-busy")));o.title=T(document.querySelector("#human-access h2"));o.reason=T(document.querySelector(".sso-signed-out-reason"));
   o.signInLinkVisible=vis(document.querySelector(".sso-signed-out"));const retry=btn(document.querySelector(".sso-busy"),"Try again");o.retry=!!retry;
@@ -387,6 +397,12 @@ func TestConsoleSafetyIdentityBrowser(t *testing.T) {
 	if r["deleteFound"] != true || num(r, "englishButtons") != 0 || str(r, "pendingBar") != "移除 1 項" || !strings.HasPrefix(str(r, "expiry"), "於 ") || str(r, "marker") != "將會刪除" ||
 		r["managed"] != true || fmt.Sprint(r["cards"]) != "[目前登入身分 確認是你本人 工作階段]" {
 		t.Fatalf("zh-Hant page left English text: %v", r)
+	}
+	// Review R1: kept work is handed out only to the principal that kept it; a mismatch clears it.
+	reseed()
+	r = run(390, 900, "/admin/ui/?scenario=foreign")
+	if r["phase"] != 2.0 || r["saved"] != true || r["ownerStored"] != true || num(r, "removed") != 0 || num(r, "leftover") != 0 || strings.Contains(str(r, "status"), "kept") {
+		t.Fatalf("kept work restored to another principal: %v", r)
 	}
 	// C31: all session slots in use, then Retry in place.
 	busyLeft.Store(1)

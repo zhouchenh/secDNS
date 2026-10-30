@@ -162,6 +162,13 @@ func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
 			agentError(w, 409, "node_state_changed_refresh")
 			return
 		}
+		// Never drain the last healthy provider of a prefix this node announces: every such
+		// prefix needs another fresh, reachable, announcing node whose check for it passes.
+		// Checked here, before any receipt or adapter mutation; the console dialog shows the same.
+		if body["action"] == "drain" && len(h.lastProviderPrefixes(ctx, node, before)) > 0 {
+			agentError(w, 409, "last_healthy_provider")
+			return
+		}
 		if err = os.MkdirAll(h.NodeAuditDirectory, 0700); err != nil {
 			agentError(w, 503, "node_audit_unavailable")
 			return
@@ -201,6 +208,57 @@ func (h *HTTPAdminServer) nodeRoutes(mux *http.ServeMux, base string) {
 		}
 		writeJSON(w, 200, result)
 	}))
+}
+
+// lastProviderPrefixes lists the prefixes node currently announces that no other node serves:
+// another node counts only with a fresh reachable observation, an active DNS process, no
+// maintenance withdrawal, and an enabled, healthy, advertised profile for the same prefix. An
+// unavailable or stale observation counts as not serving (fail closed).
+func (h *HTTPAdminServer) lastProviderPrefixes(ctx context.Context, node string, target nodeSnapshot) []string {
+	var prefixes []string
+	seen := map[string]bool{}
+	for _, p := range target.Profiles {
+		if p.Advertised && (p.Enabled == nil || *p.Enabled) && p.Prefix != "" && !seen[p.Prefix] {
+			seen[p.Prefix] = true
+			prefixes = append(prefixes, p.Prefix)
+		}
+	}
+	if len(prefixes) == 0 {
+		return nil
+	}
+	others := make([]nodeSnapshot, len(nodeIDs))
+	ok := make([]bool, len(nodeIDs))
+	var wg sync.WaitGroup
+	for i, other := range nodeIDs {
+		if other == node {
+			continue
+		}
+		wg.Add(1)
+		go func(i int, other string) {
+			defer wg.Done()
+			s, err := h.runNode(ctx, "status", other, "")
+			others[i], ok[i] = s, err == nil
+		}(i, other)
+	}
+	wg.Wait()
+	var last []string
+	for _, prefix := range prefixes {
+		served := false
+		for i, s := range others {
+			if !ok[i] || !s.Reachable || s.Stale || !s.Daemon.Active || s.Maintenance.Withdraw {
+				continue
+			}
+			for _, p := range s.Profiles {
+				if p.Prefix == prefix && (p.Enabled == nil || *p.Enabled) && p.Healthy != nil && *p.Healthy && p.Advertised {
+					served = true
+				}
+			}
+		}
+		if !served {
+			last = append(last, prefix)
+		}
+	}
+	return last
 }
 
 // Receipt paths are derived from a fixed-length digest, never from a request

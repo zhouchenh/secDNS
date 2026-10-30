@@ -55,6 +55,9 @@ func TestConsoleSlice2Static(t *testing.T) {
 	if !strings.Contains(between(t, agent, "async logout(){", "\n"), "clearDrafts();") || !strings.Contains(between(t, agent, "async switchToLegacy(){", "\n      if(allowedOrigin)"), "clearDrafts();") {
 		t.Fatal("signing out must clear kept drafts")
 	}
+	if !strings.Contains(between(t, agent, "const readDrafts = () =>", "\n"), "entry.who !== who()) { clearDrafts();") || !strings.Contains(agent, "who: owner,") {
+		t.Fatal("kept drafts must be bound to the signed-in principal and cleared on a mismatch")
+	}
 	if strings.Contains(between(t, agent, "const DRAFTS =", "const drafts ="), "localStorage") {
 		t.Fatal("kept drafts must be session-scoped")
 	}
