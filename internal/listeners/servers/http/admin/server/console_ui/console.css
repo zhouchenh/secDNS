@@ -724,6 +724,7 @@ dialog:focus,dialog:focus-visible{outline:none}
   :where(input,select,textarea){font-size:var(--fs-lg)}
   .icon-button{min-height:var(--control-h-touch);width:var(--control-h-touch)}
   .segment,.lang-pill-option{min-height:var(--control-h-touch)}
+  .lang-pill-option{min-width:var(--control-h-touch)}
   .console-record-table td:last-child button{min-height:var(--control-h-touch)}
   :where(input[type=checkbox],input[type=radio]){width:20px;height:20px}
   .topbar-icon{min-height:var(--control-h-touch);width:var(--control-h-touch)}
